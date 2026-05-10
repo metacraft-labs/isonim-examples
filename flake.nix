@@ -55,6 +55,12 @@
               markdownlint-cli2
               shellcheck
               shfmt
+              # EX-M2: the migrated TUI leaves import the full
+              # `isonim_tui` module, which transitively pulls the M19
+              # tree-sitter FFI (`{.passl: "-ltree-sitter".}`). Provide
+              # the runtime library here so leaf-driving tests link.
+              tree-sitter
+              pkg-config
             ];
             shellHook = ''
               ${preCommit.shellHook}

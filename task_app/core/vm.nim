@@ -24,9 +24,10 @@
 ## Migration history: this module was previously hosted at
 ## `isonim-tui/examples/task_app/core/vm.nim`; EX-M1 (see
 ## `codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org`)
-## promoted it to its canonical location here. The `isonim-tui` copy
-## now exists only as a re-export shim so the M22 test surface keeps
-## passing without churn.
+## promoted it to its canonical location here. EX-M2 then migrated the
+## TUI/web Layer-1 leaves and Layer-4 composition roots, deleting the
+## EX-M1 re-export shim — every consumer now imports from the canonical
+## `task_app/core/vm` path.
 
 import isonim/core/signals
 

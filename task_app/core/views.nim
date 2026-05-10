@@ -14,9 +14,12 @@
 ## leaves. This keeps `views.nim` byte-identical across all targets.
 ##
 ## This module lives in the `isonim-examples` repository (the canonical
-## home for IsoNim showcase apps). The `isonim-tui` copy is a re-export
-## shim per EX-M1; future renderer repos consume this file directly via
-## the include pattern.
+## home for IsoNim showcase apps). Renderer repositories consume this
+## file directly via the include pattern (see `task_app/main_tui.nim`,
+## `task_app/main_web.nim` for the canonical use). EX-M1 promoted this
+## module from `isonim-tui/examples/task_app/core/views.nim`; EX-M2
+## migrated the leaves + composition roots and deleted the include
+## shim that briefly lived in `isonim-tui` for the EX-M1 transition.
 ##
 ## Cross-platform architecture:
 ## `codetracer-specs/Front-Ends/IsoNim/isonim-cross-platform-architecture.md`
