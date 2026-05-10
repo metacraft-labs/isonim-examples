@@ -25,3 +25,12 @@ switch("path", "$config/../nim-faststreams")
 switch("path", "$config/../isonim-tui/src")
 switch("path", "$config/../nim-termctl/src")
 switch("path", "$config/../nim-pty/src")
+
+# EX-M3: GPUI leaves consume `isonim_gpui/renderer` (and its raw
+# bindings module). The renderer FFI loads `libgpui_nim_shim.so` at
+# run time via `dynlib`; the `LD_LIBRARY_PATH` (or a copy of the
+# shared object next to the binary) must point at
+# `../isonim-gpui/rust/target/debug` for tests that build the GPUI
+# composition root to actually run. Compile-time resolution only needs
+# the path switch below.
+switch("path", "$config/../isonim-gpui/src")
