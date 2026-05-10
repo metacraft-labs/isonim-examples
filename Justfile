@@ -3,10 +3,17 @@
 alias t := test
 alias fmt := format
 
+# Sibling-repo paths are wired in `config.nims` (so direct `nim c`
+# invocations outside `just` resolve them too); the only explicit
+# search path here is `tests/` so per-test helpers under
+# `tests/helpers/` resolve via `import ./helpers/...` in driver tests.
 src-paths := "--path:tests"
 nim-flags := "--styleCheck:usages --styleCheck:error"
 
-tests := "tests/test_repo_requirements_skeleton.nim"
+# Test list — every top-level `tests/test_*.nim` (helpers under
+# `tests/helpers/` are libraries, not tests, and intentionally
+# excluded by anchoring the glob at the `tests/` root).
+tests := `find tests -maxdepth 1 -type f -name 'test_*.nim' | sort | tr '\n' ' '`
 
 build:
     @mkdir -p test-logs
@@ -29,7 +36,11 @@ test-unit:
 
 test-integration:
     @mkdir -p test-logs
-    @echo "isonim-examples has no integration tests yet - EX-M1+ will add them."
+    @for t in {{tests}}; do \
+      echo "[integration] $t"; \
+      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
+          -r $t 2>&1 | tee -a test-logs/test-integration.log; \
+    done
 
 test-orc:
     just _matrix orc release on
