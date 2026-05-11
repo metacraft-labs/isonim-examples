@@ -34,3 +34,12 @@ switch("path", "$config/../nim-pty/src")
 # composition root to actually run. Compile-time resolution only needs
 # the path switch below.
 switch("path", "$config/../isonim-gpui/src")
+
+# EX-M4: Freya leaves consume `isonim_freya/renderer` (and its raw
+# bindings module). The renderer FFI loads `libfreya_nim_shim.so` at
+# run time via `dynlib`; the `LD_LIBRARY_PATH` (or a copy of the
+# shared object next to the binary) must point at
+# `../isonim-freya/rust/target/debug` for tests that build the Freya
+# composition root to actually run. Compile-time resolution only needs
+# the path switch below.
+switch("path", "$config/../isonim-freya/src")

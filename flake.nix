@@ -79,6 +79,16 @@
                 # the additional GPU/font/X11/Wayland deps live in the
                 # `isonim-gpui` flake — switch into that dev shell when
                 # rebuilding the shim with the real GPUI backend.
+                #
+                # EX-M4: same arrangement for `libfreya_nim_shim.so`.
+                # In stub mode (no `freya-backend` Cargo feature), the
+                # shim has no extra link-time deps; the additional
+                # Skia/WGPU/X11/Wayland deps for full Freya rendering
+                # live in the `isonim-freya` flake — switch into that
+                # dev shell when rebuilding the shim with the real
+                # Freya backend. The shellHook extension below adds
+                # `../isonim-freya/rust/target/debug` to the loader
+                # search path.
               ];
             shellHook = ''
               ${preCommit.shellHook}
@@ -88,6 +98,13 @@
               # rust-build`; this hook just makes the loader find it.
               if [ -d "$PWD/../isonim-gpui/rust/target/debug" ]; then
                 export LD_LIBRARY_PATH="$PWD/../isonim-gpui/rust/target/debug''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              fi
+              # EX-M4: same shape for `isonim_freya/renderer`'s shim
+              # cdylib (`libfreya_nim_shim.so`). The shim is built once
+              # via `cd ../isonim-freya && just rust-build`; this hook
+              # just makes the loader find it.
+              if [ -d "$PWD/../isonim-freya/rust/target/debug" ]; then
+                export LD_LIBRARY_PATH="$PWD/../isonim-freya/rust/target/debug''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               fi
               echo "isonim-examples dev shell - nim $(nim --version 2>&1 | head -1)"
             '';
