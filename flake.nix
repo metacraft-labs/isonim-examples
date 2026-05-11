@@ -105,6 +105,32 @@
                 # Foundation framework search paths if the macOS
                 # `nim` toolchain doesn't already pick them up via
                 # Xcode's Command Line Tools.
+                #
+                # EX-M6 (Android): the Android target needs either an
+                # Android emulator (real JNI runtime, end-to-end tests)
+                # or the in-process MockJNI shim (`-d:mockJni`,
+                # host-side smoke tests). The Android emulator runs
+                # natively on Apple Silicon — that's why EX-M6 is split
+                # the same partial-linux way as EX-M5: the Linux side
+                # ships the scaffold + cross-compile gate; the macOS M1
+                # engineer runs the emulator-driven integration test.
+                # The Linux dev shell provides nothing here on purpose
+                # — the leaves and composition root in
+                # `task_app/android/` and `task_app/main_android.nim`
+                # are gated `when defined(android)` and the
+                # cross-compile gate
+                # (`tests/test_android_leaves_compile.nim`) drives
+                # `nim check --os:android -d:mockJni` over an
+                # Android-only fixture without needing the NDK at
+                # compile time (the `isonim_android/renderer` Nim
+                # module is portable Nim — no `{.passL.}` / `{.emit.}`
+                # C blocks — and `mockJni` satisfies the JNI-callbacks
+                # error gate). When the macOS engineer ships the
+                # emulator-host portion (per the EX-M6 status notes'
+                # hand-off checklist), they should add a `darwin`-
+                # gated branch here that exposes the Android NDK / SDK
+                # paths if the macOS `nim` toolchain doesn't already
+                # pick them up via Android Studio.
               ];
             shellHook = ''
               ${preCommit.shellHook}

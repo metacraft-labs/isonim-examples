@@ -56,3 +56,22 @@ switch("path", "$config/../isonim-freya/src")
 # `nim check` runs (no `--os:macosx`) on Linux are unaffected — the
 # Cocoa modules collapse to empty shells.
 switch("path", "$config/../isonim-cocoa/src")
+
+# EX-M6: Android leaves consume `isonim_android/renderer`. The renderer
+# itself is portable Nim (no `{.passL.}` / `{.emit.}` C blocks), but
+# `isonim_android/jni_callbacks` requires either `-d:mockJni` (host-side
+# test shim) or `-d:commandBuffer` (real Android JNI bridge) to be set
+# at compile time — without one of those, `jni_callbacks` raises a
+# hard `{.error.}`. The Android leaves and composition root
+# (`task_app/android/leaves.nim`, `task_app/main_android.nim`) gate
+# every import behind `when defined(android)` so plain `nim check` runs
+# on Linux are unaffected (the Android modules collapse to empty
+# shells). The `--path` switches below stay unconditional so the
+# cross-compile gate test (`tests/test_android_leaves_compile.nim`) can
+# drive `nim check --os:android -d:mockJni` over the Android-only
+# fixture from this Linux host. The `nim-lib/src` path is needed
+# because `isonim_android/renderer` lives under
+# `isonim-android/nim-lib/src/isonim_android/`, separate from the
+# `isonim-android/src/` directory that holds the broader package.
+switch("path", "$config/../isonim-android/nim-lib/src")
+switch("path", "$config/../isonim-android/src")
