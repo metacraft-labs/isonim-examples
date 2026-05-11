@@ -43,3 +43,16 @@ switch("path", "$config/../isonim-gpui/src")
 # composition root to actually run. Compile-time resolution only needs
 # the path switch below.
 switch("path", "$config/../isonim-freya/src")
+
+# EX-M5: Cocoa leaves consume `isonim_cocoa/renderer`, which transitively
+# imports `isonim_cocoa/objc_runtime`, `isonim_cocoa/foundation` and
+# `isonim_cocoa/appkit/*`. Those modules need AppKit / the Objective-C
+# runtime, so the Cocoa leaves themselves and the Cocoa composition root
+# (`task_app/cocoa/leaves.nim`, `task_app/main_cocoa.nim`) gate every
+# import behind `when defined(macosx)`. The `--path` switch below stays
+# unconditional so the cross-compile gate test
+# (`tests/test_cocoa_leaves_compile.nim`) can drive `nim check
+# --os:macosx` over the Cocoa-only fixture from this Linux host. Plain
+# `nim check` runs (no `--os:macosx`) on Linux are unaffected — the
+# Cocoa modules collapse to empty shells.
+switch("path", "$config/../isonim-cocoa/src")

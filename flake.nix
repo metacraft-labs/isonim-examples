@@ -89,6 +89,22 @@
                 # Freya backend. The shellHook extension below adds
                 # `../isonim-freya/rust/target/debug` to the loader
                 # search path.
+                #
+                # EX-M5 (Cocoa): the Cocoa target needs AppKit and the
+                # Objective-C runtime, both macOS-only. The Linux dev
+                # shell provides nothing here on purpose — the leaves
+                # and composition root in `task_app/cocoa/` and
+                # `task_app/main_cocoa.nim` are gated `when
+                # defined(macosx)` and the cross-compile gate
+                # (`tests/test_cocoa_leaves_compile.nim`) drives `nim
+                # check --os:macosx` over a Cocoa-only fixture without
+                # needing AppKit at compile time. When the macOS
+                # engineer ships the macOS-host portion (per the EX-M5
+                # status notes' hand-off checklist), they should add a
+                # `darwin`-gated branch here that exposes AppKit /
+                # Foundation framework search paths if the macOS
+                # `nim` toolchain doesn't already pick them up via
+                # Xcode's Command Line Tools.
               ];
             shellHook = ''
               ${preCommit.shellHook}
