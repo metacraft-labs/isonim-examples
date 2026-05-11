@@ -28,11 +28,13 @@
 ## pipeline stays consistent: VM state, tree topology, list-row text,
 ## summary-row text, filter-button selection state.
 ##
-## EX-M7 will land the formal cross-renderer parity check; an
-## additional VM-state parity assertion across (TUI, web, GPUI, Freya)
-## lives here too as an early proof point per the EX-M4 milestone brief.
-## EX-M3 already shipped the (TUI, web, GPUI) trio — EX-M4 extends it
-## to four flavours.
+## The cross-renderer VM-state parity check that previously lived
+## here as an embedded sub-suite has been promoted to its canonical
+## standalone home in `tests/test_vm_parity_across_renderers.nim`
+## (EX-M7). That file owns the 5-scenario × 4-renderer parity matrix
+## and the `RendererDriver` extension point future renderers append
+## to. This file now focuses solely on the Freya leaves end-to-end
+## scenario.
 
 import std/[unittest, strutils]
 
@@ -42,25 +44,6 @@ import isonim_freya/renderer
 # Composition root — drags in the leaves + the Layer-2 view template
 # (including `bindings.fireEvent`, `bindings.freya_reset_tree`, ...).
 import task_app/main_freya as freya_app
-
-# Pull in the TUI + web + GPUI flavours for the cross-renderer parity
-# check. Each flavour exposes its own `buildTaskApp` / `runTaskApp`; we
-# alias them so the parity test names are unambiguous.
-#
-# `main_gpui` re-exports `isonim_gpui/renderer` and `isonim_gpui/bindings`
-# whose `childCount` / `getAttribute` / etc. take `GpuiElement = pointer`.
-# `main_freya`'s helpers + the `isonim_freya/renderer` import above take
-# `FreyaElement = pointer`. Both are aliases of `pointer`, so a bare
-# `childCount(x)` call from inside a `unittest.check` macro would be
-# ambiguous to overload resolution. We import the GPUI flavour with
-# `from ... import ...` listing only the names we use in the parity
-# test, which keeps the bare `childCount(...)` etc. resolving against
-# the Freya overloads imported above.
-import task_app/main_tui as tui_app
-import task_app/main_web as web_app
-from task_app/main_gpui as gpui_app import
-  runTaskApp, rerender, resetGpuiLeaves
-import isonim_tui  # newTerminalTestHarness
 
 suite "EX-M4: Freya leaves drive the canonical core through the real shim":
 
@@ -176,73 +159,3 @@ suite "EX-M4: Freya leaves drive the canonical core through the real shim":
     check verifyRenderPlan(root)
     check renderPlanElementCount(root) > 0
 
-suite "EX-M4: cross-renderer VM-state parity (TUI, web, GPUI, Freya)":
-
-  test "same scripted scenario yields byte-identical VM snapshots":
-    ## Drive the same script through every renderer and verify that the
-    ## VM's terminal state (tasks + filter + inputText) is byte-
-    ## identical. This is the EX-M7 invariant landed early as part of
-    ## EX-M3 (TUI/web/GPUI); EX-M4 extends it to include Freya so all
-    ## four Linux-buildable flavours stay locked together.
-
-    proc script(vm: TaskAppVM) =
-      vm.addTask("alpha")
-      vm.addTask("beta")
-      vm.addTask("gamma")
-      let id1 = vm.tasks.val[0].id
-      vm.toggleTask(id1)
-      vm.setFilter(fmActive)
-
-    # ── TUI flavour
-    let vmTui = newTaskAppVM()
-    let h = newTerminalTestHarness(60, 14)
-    discard tui_app.runTaskApp(h, vmTui)
-    script(vmTui)
-    tui_app.rerender(vmTui)
-    let snapTui = vmTui.snapshot
-
-    # ── Web flavour (MockRenderer)
-    let vmWeb = newTaskAppVM()
-    let rWeb = MockRenderer()
-    discard web_app.buildTaskApp(rWeb, vmWeb)
-    script(vmWeb)
-    web_app.rerender(vmWeb)
-    let snapWeb = vmWeb.snapshot
-
-    # ── GPUI flavour
-    let vmGpui = newTaskAppVM()
-    discard gpui_app.runTaskApp(vmGpui)
-    script(vmGpui)
-    gpui_app.rerender(vmGpui)
-    let snapGpui = vmGpui.snapshot
-
-    # ── Freya flavour
-    let vmFreya = newTaskAppVM()
-    discard freya_app.runTaskApp(vmFreya)
-    script(vmFreya)
-    freya_app.rerender(vmFreya)
-    let snapFreya = vmFreya.snapshot
-
-    # All four snapshots are byte-identical (same field values, same
-    # task ids — `nextId` is deterministic per fresh VM).
-    check snapTui == snapWeb
-    check snapWeb == snapGpui
-    check snapGpui == snapFreya
-    # Spot-check the actual values so a cross-renderer regression
-    # surfaces as a meaningful failure rather than just a generic
-    # snapshot diff.
-    check snapFreya.tasks.len == 3
-    check snapFreya.tasks[0].name == "alpha"
-    check snapFreya.tasks[0].completed == true
-    check snapFreya.tasks[1].completed == false
-    check snapFreya.tasks[2].completed == false
-    check snapFreya.filter == fmActive
-    check snapFreya.inputText == ""
-
-    h.dispose()
-    # Reset per-thread leaf tables so subsequent test cases (in
-    # whatever order Nim's unittest picks) start clean.
-    tui_app.resetTuiLeaves()
-    web_app.resetWebLeaves()
-    gpui_app.resetGpuiLeaves()
-    freya_app.resetFreyaLeaves()
