@@ -62,7 +62,7 @@ import isonim_tui  # newTerminalTestHarness
 # pick the entries up automatically.
 when defined(macosx):
   from task_app/main_cocoa as cocoa_app import
-    runTaskApp, resetCocoaLeaves
+    runTaskApp, rerender, resetCocoaLeaves
 when defined(android):
   from task_app/main_android as android_app import
     runTaskApp, resetAndroidLeaves
@@ -233,9 +233,7 @@ when defined(macosx):
       mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
         discard cocoa_app.runTaskApp(vm)
         script(vm)
-        # Cocoa leaves don't yet expose a `rerender(vm)` proc; the
-        # macOS host completes EX-M5 by adding it (see status notes
-        # for the hand-off checklist) and uncommenting the call here.
+        cocoa_app.rerender(vm)
         cocoa_app.resetCocoaLeaves())
   drivers.add cocoaDriver()
 

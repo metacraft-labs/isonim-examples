@@ -5,11 +5,10 @@
 ## `core/views.nim` resolves those names against the imported leaves
 ## here.
 ##
-## EX-M5 status: **partial-linux**. The whole composition root body is
-## gated with `when defined(macosx)` because `isonim_cocoa/renderer`
-## (and the AppKit wrappers it transitively imports) cannot be compiled
-## on a Linux host (see `task_app/cocoa/leaves.nim` docstring for the
-## full rationale and the macOS engineer's hand-off checklist). On
+## The whole composition root body is gated with `when defined(macosx)`
+## because `isonim_cocoa/renderer` (and the AppKit wrappers it
+## transitively imports) cannot be compiled on a Linux host (see
+## `task_app/cocoa/leaves.nim` docstring for the full rationale). On
 ## Linux this module compiles as an empty shell so that
 ## `isonim-examples`'s default `just test` keeps working unchanged
 ## while the cross-compile gate (`tests/test_cocoa_leaves_compile.nim`)
@@ -20,14 +19,12 @@
 ##   - Headless (default): builds the tree against `CocoaRenderer` for
 ##     programmatic interaction. Suitable for automated testing — no
 ##     window server required.
-##   - Window mode (`-d:cocoaGui`): TODO for the macOS engineer —
-##     `isonim-cocoa` already ships `app_entry_native.nim` /
-##     `app_entry.nim` which the macOS host can wire here in the same
-##     shape as EX-M3's `gpuiGui` / EX-M4's `freyaGui` blocks. RS-M5
-##     will provide the production rendering surface.
+##   - Window mode (`-d:cocoaGui`): wires an `NSWindow` via
+##     `isonim_cocoa/appkit/window` and starts the AppKit event loop
+##     with `nsAppRun`. RS-M5 supplies the streaming/screencap surface
+##     for headless display use.
 ##
-## To run the headless demo on a macOS host once the macOS portion of
-## EX-M5 is complete (from the workspace root):
+## To run the headless demo on a macOS host (from the workspace root):
 ##
 ##   nim c -r isonim-examples/task_app/main_cocoa.nim
 
@@ -60,14 +57,19 @@ when defined(macosx):
   when isMainModule:
     import isonim/core/owner
     when defined(cocoaGui):
-      # Window-mode placeholder: the macOS engineer should wire
-      # `isonim_cocoa/app_entry_native` here (see EX-M5 status notes).
+      import isonim_cocoa/appkit/window as cocoa_window
       createRoot proc(dispose: proc()) =
         let appVm = newTaskAppVM()
         let root = runTaskApp(appVm)
-        discard root
-        echo "Cocoa window mode placeholder (event loop not yet wired; ",
-             "see RS-M5 for the streaming bridge)."
+        discard cocoa_window.sharedApplication()
+        let win = cocoa_window.newNSWindow(100.0, 100.0, 800.0, 600.0)
+        cocoa_window.setWindowTitle(win, "Task Manager — IsoNim Cocoa")
+        cocoa_window.setContentView(win, root)
+        cocoa_window.makeKeyAndOrderFront(win)
+        echo "Cocoa window mounted; entering NSApplication run loop."
+        echo "(Close the window to terminate. RS-M5 supplies the ",
+             "streaming/headless capture path.)"
+        cocoa_window.nsAppRun()
         dispose()
     else:
       createRoot proc(dispose: proc()) =
