@@ -106,6 +106,56 @@ AGENTS.md                               # this file (README/CLAUDE symlink)
   imported there are the reactive primitives + the DSL builder. Never
   import a Layer 1 module from `core/`.
 
+## Try the editor
+
+EX-M14 ships an IsoNim Editor instance configured with the two demo
+apps. Build the per-backend launcher binaries, build the editor JS
+bundle, and serve it on port 8091 (port 8090 is reserved for the
+upstream `isonim` wanderlust editor):
+
+```sh
+direnv exec ~/metacraft/isonim-examples just build-backends
+direnv exec ~/metacraft/isonim-examples just editor-build
+direnv exec ~/metacraft/isonim-examples just editor-serve
+```
+
+The editor renders a combined catalog (Foundations / Components /
+Patterns / Pages / Flows for both `task_app` and `settings_app`),
+plus the M57 edge-strip chrome: the left-edge strip exposes the
+Web / TUI / GPUI / Freya / Cocoa / Android backends (Cocoa and
+Android surface as unavailable on Linux per the spec), and the
+right-edge strip exposes the View / Comment / Edit mode toggle.
+
+Per-backend dispatch convention: one launcher per Linux backend
+(`build/backends/isonim-examples-{web,tui,gpui,freya}`). Each
+launcher constructs the real demo Layer-4 composition for its
+renderer (a `TaskAppVM` seeded with three sample tasks, or the
+`SettingsVM` with the demo catalog when `--demo=settings`), wraps
+the resulting tree in the matching `isonim-render-serve` adapter
+(TUI rasteriser, GPUI tree raster, Freya tree raster, web stub
+fingerprint), and streams real demo frames to the bridge.
+
+What this means in practice:
+
+- For the **Web** backend the editor renders the demo in-iframe via
+  `srcdoc` (the launcher's WebSocket stream is the symmetric "every
+  backend has a registered binary" entry; the iframe path is the
+  surface the user sees inside the editor).
+- For **TUI**, the launcher mounts a `TerminalTestHarness`, runs
+  the demo's TUI composition root, and the bridge rasterises the
+  resulting `ScreenBuffer` cell grid through an 8x8 ASCII bitmap
+  font. Streamed frames carry real demo text (task names, settings
+  group labels).
+- For **GPUI** and **Freya**, the launcher builds the demo's
+  headless element tree and the bridge rasterises it via the
+  existing adapter. Each adapter adds a 2-pixel backend-identifier
+  band (teal for GPUI, purple for Freya) so the canvas hashes stay
+  pairwise distinct even when the two tree layouts converge.
+
+The `settings_app` Freya port is not yet shipped — the Freya
+launcher renders `task_app` regardless of the `--demo` flag.
+Cocoa / Android remain visibly disabled on Linux per spec.
+
 ## Specs
 
 - The architecture is governed by

@@ -75,3 +75,11 @@ switch("path", "$config/../isonim-cocoa/src")
 # `isonim-android/src/` directory that holds the broader package.
 switch("path", "$config/../isonim-android/nim-lib/src")
 switch("path", "$config/../isonim-android/src")
+
+# EX-M14: the demo editor's per-backend launcher binaries
+# (`editor/backends/<renderer>.nim`) reuse the isonim-render-serve
+# bridge to serve frames over the streaming protocol. The launcher
+# imports `isonim_render_serve` directly and announces a fixed
+# backend identifier per launcher so the editor's left-edge strip
+# can route to the correct one.
+switch("path", "$config/../isonim-render-serve/src")

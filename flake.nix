@@ -64,6 +64,13 @@
                 # the runtime library here so leaf-driving tests link.
                 tree-sitter
                 pkg-config
+                # EX-M14: the demo editor's `just editor-serve` target
+                # uses python3's http.server to serve the static bundle
+                # on port 8091, and the Playwright spec under
+                # `tests/browser/` invokes `npx playwright` for the
+                # end-to-end M57 chrome + RS-M7 streaming-preview test.
+                python3
+                nodejs_22
               ]
               ++ pkgs.lib.optionals isLinux [
                 # EX-M3: the GPUI leaves load `libgpui_nim_shim.so` from

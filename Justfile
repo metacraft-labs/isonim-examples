@@ -108,3 +108,47 @@ bench-quick:
 
 clean:
     rm -rf test-logs nim-cache build
+
+# --- IsoNim Editor (EX-M14) ---
+#
+# The editor instance ships a single Nim → JS bundle plus per-backend
+# demo binaries built natively from this repo. The bundle is served on
+# port 8091 (8090 is the upstream wanderlust editor in `isonim`).
+
+# Build per-backend demo binaries (Linux: web, tui, gpui, freya). Each
+# binary is a single launcher that dispatches to the right demo via
+# the `--demo=<task|settings>` CLI flag; the editor's BackendBinaryRegistry
+# registers one launcher per backend (see editor/workspace.nim).
+build-backends:
+    @mkdir -p build/backends
+    @for renderer in tui web gpui freya; do \
+      echo "[build-backends] isonim-examples-$renderer"; \
+      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
+          -o:build/backends/isonim-examples-$renderer \
+          editor/backends/$renderer.nim 2>&1 | tee -a test-logs/build-backends.log; \
+    done
+
+# Build the editor (Nim → JS).
+editor-build:
+    @mkdir -p build/editor
+    nim js --path:. --path:../isonim/src --path:../nim-everywhere/src \
+        -o:build/editor/editor.js editor/main.nim
+    cp editor/index.html build/editor/index.html
+    @echo "Built: build/editor/ - open build/editor/index.html"
+
+# Serve the editor at http://localhost:8091.
+editor-serve: editor-build build-backends
+    @echo "Serving editor on http://localhost:8091"
+    cd build/editor && python3 -m http.server 8091
+
+# Screenshot all editor views at all sizes -> build/editor/screenshots/.
+editor-screenshot:
+    node tools/editor-screenshot.mjs
+
+# Screenshot a specific view (shell, sidebar-only, ...).
+editor-screenshot-view view:
+    node tools/editor-screenshot.mjs --view {{view}}
+
+# Screenshot at a specific size (wide, laptop, ...).
+editor-screenshot-size size:
+    node tools/editor-screenshot.mjs --size {{size}}

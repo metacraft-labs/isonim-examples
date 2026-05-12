@@ -21,3 +21,8 @@ tests/test_*
 *.exe
 *.pdb
 nimcache/
+
+# Playwright browser-test artifacts (EX-M14).
+tests/browser/node_modules/
+tests/browser/test-results/
+tests/browser/playwright-report/
