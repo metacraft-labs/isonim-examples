@@ -46,7 +46,14 @@ const
       # unregistered so the M57 left-edge strip surfaces Cocoa as
       # aria-disabled per the spec's "host can't serve the backend;
       # surface, don't hide" rule.
-    pbAndroid: "",
+    pbAndroid: (when defined(macosx) or defined(linux):
+                  "isonim-examples-android" else: ""),
+      # EX-M21: registered on macOS + Linux hosts (the launcher binary
+      # is produced by `just build-backends-android`). The launcher
+      # itself is a host-side process that talks to a connected
+      # Android device via `adb`; both macOS and Linux dev hosts can
+      # build + run it. Other hosts (Windows in principle) remain
+      # unregistered.
   ]
 
   LinuxRegistrableBackends* = [pbWeb, pbTui, pbGpui, pbFreya]
@@ -62,6 +69,12 @@ const
     ## The Cocoa launcher binary that the macOS-only
     ## ``just build-backends-macos`` Justfile target produces (EX-M19).
 
+  AndroidRegistrableBackends* = [pbAndroid]
+    ## The Android launcher binary that the
+    ## ``just build-backends-android`` Justfile target produces
+    ## (EX-M21). The launcher itself runs on the host (macOS or Linux);
+    ## it drives a connected Android device via `adb`.
+
 proc backendBinaryPath*(buildDir: string; backend: PreviewBackend): string =
   ## Resolve the absolute path of the binary that hosts the streaming
   ## bridge for ``backend``. Returns the empty string for backends that
@@ -74,11 +87,14 @@ proc backendBinaryPath*(buildDir: string; backend: PreviewBackend): string =
 proc newDemoBackendRegistry*(buildDir: string): BackendBinaryRegistry =
   ## Populate a `BackendBinaryRegistry` with the demo-app launcher paths
   ## available on the current host:
-  ##   * Linux:  Web, TUI, GPUI, Freya (the four Linux backends).
-  ##   * macOS:  the Linux four PLUS Cocoa (EX-M19's launcher).
-  ##   * Android remains unregistered everywhere until EX-M21 lands the
-  ##     `isonim-examples-android` launcher; the M57 strip surfaces it
-  ##     as aria-disabled there.
+  ##   * Linux:  Web, TUI, GPUI, Freya, Android (EX-M21's launcher;
+  ##             host-side process that talks to a connected device
+  ##             over `adb`).
+  ##   * macOS:  the Linux five PLUS Cocoa (EX-M19's launcher).
+  ##   * Other (e.g. Windows): only the four Linux launchers; both
+  ##     Cocoa and Android remain unregistered and the M57 strip
+  ##     surfaces them as aria-disabled per the spec's "host can't
+  ##     serve the backend; surface, don't hide" rule.
   result = newBackendBinaryRegistry()
   for backend in LinuxRegistrableBackends:
     let path = backendBinaryPath(buildDir, backend)
@@ -86,6 +102,11 @@ proc newDemoBackendRegistry*(buildDir: string): BackendBinaryRegistry =
       result.registerBackendBinary(backend, path)
   when defined(macosx):
     for backend in MacosRegistrableBackends:
+      let path = backendBinaryPath(buildDir, backend)
+      if path.len > 0:
+        result.registerBackendBinary(backend, path)
+  when defined(macosx) or defined(linux):
+    for backend in AndroidRegistrableBackends:
       let path = backendBinaryPath(buildDir, backend)
       if path.len > 0:
         result.registerBackendBinary(backend, path)

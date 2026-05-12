@@ -123,10 +123,15 @@ when defined(macosx):
     buildSettingsApp, runSettingsApp
   import isonim_cocoa/renderer as cocoaR
 when defined(android):
-  # NOTE: not yet built. The Android settings_app shell is a future
-  # milestone (settings analogue of EX-M6). When it lands, replace
-  # this comment with the actual import + driver registration below.
-  discard
+  # EX-M22 wires the Android settings_app shell into the parity matrix.
+  # The composition root lives in `settings_app/main_android.nim`; the
+  # driver helpers + `androidApply` proc + `androidDriver()` registration
+  # are defined below under the matching `when defined(android):` guard.
+  # Compile this test with `-d:android -d:mockJni` (host-side shim) to
+  # exercise the Android row from a non-emulator host.
+  from settings_app/main_android as android_app import
+    buildSettingsApp, runSettingsApp
+  import isonim_android/renderer as androidR
 
 # ---------------------------------------------------------------------------
 # Scenarios — every entry mutates the VM through the renderer's native
@@ -894,6 +899,168 @@ when defined(macosx):
       discard vm.setChoice("appearance.theme", "InvalidName"); drv.flush()
 
 # ---------------------------------------------------------------------------
+# Android driver. Drives `click` for everything; for number/choice the
+# data-value is mutated via `setAttribute` then `click` is fired (same
+# shape as the GPUI/Freya/Cocoa drivers). The Android bottom-sheet shell
+# only mounts the *active* group's items in the bottom-sheet pane; the
+# sheet-list rows show only their headers. The driver MUST activate the
+# target group first by clicking the group header. Activating a group
+# triggers the shell's `createRenderEffect` over `vm.activeGroupId.val`,
+# which repopulates the bottom-sheet pane with the newly-active group's
+# items.
+# ---------------------------------------------------------------------------
+
+when defined(android):
+  proc androidSheetList(r: androidR.AndroidRenderer;
+                        root: androidR.AndroidElement): androidR.AndroidElement =
+    for i in 0 ..< r.childCount(root):
+      let c = r.nthChild(root, i)
+      if r.getAttribute(c, "class") == "settings-sheet-list":
+        return c
+    androidR.AndroidElement(0)
+
+  proc androidBottomSheet(r: androidR.AndroidRenderer;
+                          root: androidR.AndroidElement): androidR.AndroidElement =
+    for i in 0 ..< r.childCount(root):
+      let c = r.nthChild(root, i)
+      if r.getAttribute(c, "class") == "settings-bottom-sheet":
+        return c
+    androidR.AndroidElement(0)
+
+  proc androidSheetRow(r: androidR.AndroidRenderer;
+                       root: androidR.AndroidElement;
+                       groupId: string): androidR.AndroidElement =
+    let listNode = androidSheetList(r, root)
+    if listNode == 0: return androidR.AndroidElement(0)
+    for i in 0 ..< r.childCount(listNode):
+      let c = r.nthChild(listNode, i)
+      if r.getAttribute(c, "data-sheet-id") == groupId:
+        return c
+    androidR.AndroidElement(0)
+
+  proc androidSheetGroupSection(r: androidR.AndroidRenderer;
+                                row: androidR.AndroidElement): androidR.AndroidElement =
+    if row == 0: return androidR.AndroidElement(0)
+    for i in 0 ..< r.childCount(row):
+      let c = r.nthChild(row, i)
+      if r.getAttribute(c, "class") == "settings-group":
+        return c
+    androidR.AndroidElement(0)
+
+  proc androidSheetRowHeader(r: androidR.AndroidRenderer;
+                             row: androidR.AndroidElement): androidR.AndroidElement =
+    let section = androidSheetGroupSection(r, row)
+    if section == 0: return androidR.AndroidElement(0)
+    for i in 0 ..< r.childCount(section):
+      let c = r.nthChild(section, i)
+      if r.getAttribute(c, "class") == "settings-group-header":
+        return c
+    androidR.AndroidElement(0)
+
+  proc androidItemRows(r: androidR.AndroidRenderer;
+                       sheet: androidR.AndroidElement): seq[androidR.AndroidElement] =
+    if sheet == 0: return @[]
+    for i in 0 ..< r.childCount(sheet):
+      let c = r.nthChild(sheet, i)
+      if r.getAttribute(c, "class") == "settings-item":
+        result.add c
+
+  proc androidItemRowByLabel(r: androidR.AndroidRenderer;
+                             sheet: androidR.AndroidElement;
+                             label: string): androidR.AndroidElement =
+    for row in androidItemRows(r, sheet):
+      if r.childCount(row) == 0: continue
+      let labelNode = r.nthChild(row, 0)
+      if r.getAttribute(labelNode, "class") == "settings-label" and
+         r.textContent(labelNode) == label:
+        return row
+    androidR.AndroidElement(0)
+
+  proc androidToggleOf(r: androidR.AndroidRenderer;
+                       row: androidR.AndroidElement): androidR.AndroidElement =
+    let last = r.nthChild(row, r.childCount(row) - 1)
+    if r.getAttribute(last, "type") == "checkbox":
+      return last
+    androidR.AndroidElement(0)
+
+  proc androidNumberHostOf(r: androidR.AndroidRenderer;
+                           row: androidR.AndroidElement): androidR.AndroidElement =
+    let last = r.nthChild(row, r.childCount(row) - 1)
+    if r.getAttribute(last, "class") == "settings-number":
+      return last
+    androidR.AndroidElement(0)
+
+  proc androidNumberInputOf(r: androidR.AndroidRenderer;
+                            row: androidR.AndroidElement): androidR.AndroidElement =
+    let host = androidNumberHostOf(r, row)
+    if host == 0: return androidR.AndroidElement(0)
+    for i in 0 ..< r.childCount(host):
+      let c = r.nthChild(host, i)
+      if r.getAttribute(c, "type") == "number":
+        return c
+    androidR.AndroidElement(0)
+
+  proc androidChoiceHostOf(r: androidR.AndroidRenderer;
+                           row: androidR.AndroidElement): androidR.AndroidElement =
+    let last = r.nthChild(row, r.childCount(row) - 1)
+    if r.getAttribute(last, "class") == "settings-choice":
+      return last
+    androidR.AndroidElement(0)
+
+  proc androidChoiceSelectOf(r: androidR.AndroidRenderer;
+                             row: androidR.AndroidElement): androidR.AndroidElement =
+    let host = androidChoiceHostOf(r, row)
+    if host == 0: return androidR.AndroidElement(0)
+    for i in 0 ..< r.childCount(host):
+      let c = r.nthChild(host, i)
+      # The Android renderer materialises `<select>` as a tag-less
+      # element (its `class` attribute is empty by default). Same
+      # trick the Freya/Cocoa drivers use for their `<select>` lookups.
+      if r.getAttribute(c, "class") == "":
+        return c
+    androidR.AndroidElement(0)
+
+  proc androidApply(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
+    androidR.resetRenderer()
+    let r = androidR.AndroidRenderer()
+    let root = buildSettingsApp(r, vm)
+    drv.flush()
+    case s.kind
+    of skBasic:
+      let appearance = androidSheetRow(r, root, "appearance")
+      r.fireEvent(androidSheetRowHeader(r, appearance), "click"); drv.flush()
+      let sheet = androidBottomSheet(r, root)
+      let darkCb = androidToggleOf(r, androidItemRowByLabel(r, sheet, "Dark mode"))
+      r.fireEvent(darkCb, "click"); drv.flush()
+      let fontInp = androidNumberInputOf(r, androidItemRowByLabel(r, sheet, "Font size"))
+      r.setAttribute(fontInp, "data-value", "18")
+      r.fireEvent(fontInp, "click"); drv.flush()
+      let themeSel = androidChoiceSelectOf(r, androidItemRowByLabel(r, sheet, "Theme"))
+      r.setAttribute(themeSel, "data-value", "Solarized")
+      r.fireEvent(themeSel, "click"); drv.flush()
+    of skEmpty:
+      discard
+    of skAllGroups:
+      for g in vm.catalog.groups:
+        let row = androidSheetRow(r, root, g.id)
+        r.fireEvent(androidSheetRowHeader(r, row), "click"); drv.flush()
+        let sheet = androidBottomSheet(r, root)
+        for itemRow in androidItemRows(r, sheet):
+          let cb = androidToggleOf(r, itemRow)
+          if cb != 0:
+            r.fireEvent(cb, "click"); drv.flush()
+            break
+    of skClamp:
+      let appearance = androidSheetRow(r, root, "appearance")
+      r.fireEvent(androidSheetRowHeader(r, appearance), "click"); drv.flush()
+      let sheet = androidBottomSheet(r, root)
+      let fontInp = androidNumberInputOf(r, androidItemRowByLabel(r, sheet, "Font size"))
+      r.setAttribute(fontInp, "data-value", "5")
+      r.fireEvent(fontInp, "click"); drv.flush()
+    of skChoiceReject:
+      discard vm.setChoice("appearance.theme", "InvalidName"); drv.flush()
+
+# ---------------------------------------------------------------------------
 # Driver registration.
 # ---------------------------------------------------------------------------
 
@@ -932,9 +1099,13 @@ when defined(macosx):
 
   drivers.add cocoaDriver()
 when defined(android):
-  # Future: append an `androidDriver()` here once the settings_app
-  # Android shell lands (analogue of EX-M6 for task_app).
-  discard
+  proc androidDriver(): RendererDriver =
+    RendererDriver(
+      name: "android",
+      mountAndDrive: proc(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
+        androidApply(vm, s, drv))
+
+  drivers.add androidDriver()
 
 # ---------------------------------------------------------------------------
 # Test bodies.

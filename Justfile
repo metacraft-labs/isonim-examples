@@ -181,6 +181,23 @@ build-backends-macos:
         -o:build/backends/isonim-examples-cocoa \
         editor/backends/cocoa.nim 2>&1 | tee -a test-logs/build-backends.log
 
+# Build the Android launcher (EX-M21). The launcher
+# `editor/backends/android.nim` is a host-side binary (macOS or Linux)
+# that talks to a connected Android device via `adb` and streams the
+# device's framebuffer through the bridge. Gated `when defined(macosx)
+# or defined(linux)`; other hosts compile as an empty shell and the
+# editor's BackendBinaryRegistry leaves `pbAndroid` unregistered.
+#
+# Pairs with EX-M22's settings_app Android composition root and the
+# RS-M6 Android adapter; the on-device runtime is the `nimexamples`
+# flavor of `isonim-android` (`MainActivity` + `libtask_app.so`).
+build-backends-android:
+    @mkdir -p build/backends
+    @echo "[build-backends-android] isonim-examples-android"
+    nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
+        -o:build/backends/isonim-examples-android \
+        editor/backends/android.nim 2>&1 | tee -a test-logs/build-backends.log
+
 # Build the editor (Nim → JS).
 editor-build:
     @mkdir -p build/editor
