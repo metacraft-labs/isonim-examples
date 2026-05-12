@@ -40,13 +40,27 @@ const
     pbTui:     "isonim-examples-tui",
     pbGpui:    "isonim-examples-gpui",
     pbFreya:   "isonim-examples-freya",
-    pbCocoa:   "",  # left unregistered on Linux — M57 strip surfaces as disabled
+    pbCocoa:   (when defined(macosx): "isonim-examples-cocoa" else: ""),
+      # EX-M19: registered on macOS hosts (the launcher binary is
+      # produced by `just build-backends-macos`). On Linux remains
+      # unregistered so the M57 left-edge strip surfaces Cocoa as
+      # aria-disabled per the spec's "host can't serve the backend;
+      # surface, don't hide" rule.
     pbAndroid: "",
   ]
 
   LinuxRegistrableBackends* = [pbWeb, pbTui, pbGpui, pbFreya]
     ## The four backends whose binaries the
     ## ``just build-backends`` Justfile target produces on Linux.
+    ## Cocoa registration happens via the macOS-only build path
+    ## (`just build-backends-macos`); the editor's
+    ## ``newDemoBackendRegistry`` proc consults
+    ## ``BackendBinaryNames[pbCocoa]`` at runtime, which evaluates to
+    ## non-empty on macOS hosts.
+
+  MacosRegistrableBackends* = [pbCocoa]
+    ## The Cocoa launcher binary that the macOS-only
+    ## ``just build-backends-macos`` Justfile target produces (EX-M19).
 
 proc backendBinaryPath*(buildDir: string; backend: PreviewBackend): string =
   ## Resolve the absolute path of the binary that hosts the streaming
@@ -59,14 +73,22 @@ proc backendBinaryPath*(buildDir: string; backend: PreviewBackend): string =
 
 proc newDemoBackendRegistry*(buildDir: string): BackendBinaryRegistry =
   ## Populate a `BackendBinaryRegistry` with the demo-app launcher paths
-  ## for every Linux backend. Cocoa and Android remain unregistered —
-  ## the M57 strip surfaces them as unavailable, matching the spec's
-  ## EX-M5 / EX-M6 treatment of those scaffolds.
+  ## available on the current host:
+  ##   * Linux:  Web, TUI, GPUI, Freya (the four Linux backends).
+  ##   * macOS:  the Linux four PLUS Cocoa (EX-M19's launcher).
+  ##   * Android remains unregistered everywhere until EX-M21 lands the
+  ##     `isonim-examples-android` launcher; the M57 strip surfaces it
+  ##     as aria-disabled there.
   result = newBackendBinaryRegistry()
   for backend in LinuxRegistrableBackends:
     let path = backendBinaryPath(buildDir, backend)
     if path.len > 0:
       result.registerBackendBinary(backend, path)
+  when defined(macosx):
+    for backend in MacosRegistrableBackends:
+      let path = backendBinaryPath(buildDir, backend)
+      if path.len > 0:
+        result.registerBackendBinary(backend, path)
 
 proc defaultDemoBuildDir*(): string =
   ## Convenience for tests + the standalone editor: resolve the

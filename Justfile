@@ -163,6 +163,24 @@ build-backends:
           editor/backends/$renderer.nim 2>&1 | tee -a test-logs/build-backends.log; \
     done
 
+# Build the macOS-only Cocoa launcher (EX-M19). The launcher
+# `editor/backends/cocoa.nim` is gated `when defined(macosx)`: on
+# Linux it compiles as an empty shell (no `runDemoBridge` symbol)
+# and the editor's BackendBinaryRegistry leaves `pbCocoa`
+# unregistered. On macOS this recipe produces
+# `build/backends/isonim-examples-cocoa`, which the registry picks
+# up via `BackendBinaryNames[pbCocoa]`.
+#
+# Run AFTER `just build-backends` so the four Linux launchers are
+# already built; together they give the macOS host's editor a 5-backend
+# matrix (Web / TUI / GPUI / Freya / Cocoa).
+build-backends-macos:
+    @mkdir -p build/backends
+    @echo "[build-backends-macos] isonim-examples-cocoa"
+    nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
+        -o:build/backends/isonim-examples-cocoa \
+        editor/backends/cocoa.nim 2>&1 | tee -a test-logs/build-backends.log
+
 # Build the editor (Nim → JS).
 editor-build:
     @mkdir -p build/editor

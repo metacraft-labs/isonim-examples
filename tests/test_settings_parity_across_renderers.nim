@@ -115,10 +115,13 @@ import isonim_freya/bindings as freyaB
 
 # Cocoa / Android — Linux build skips the body entirely.
 when defined(macosx):
-  # NOTE: not yet built. The Cocoa settings_app shell is a future
-  # milestone (settings analogue of EX-M5). When it lands, replace
-  # this comment with the actual import + driver registration below.
-  discard
+  # EX-M20 wires the Cocoa settings_app shell into the parity matrix.
+  # The composition root lives in `settings_app/main_cocoa.nim`; the
+  # driver helpers + `cocoaApply` proc + `cocoaDriver()` registration
+  # are defined below under the matching `when defined(macosx):` guard.
+  from settings_app/main_cocoa as cocoa_app import
+    buildSettingsApp, runSettingsApp
+  import isonim_cocoa/renderer as cocoaR
 when defined(android):
   # NOTE: not yet built. The Android settings_app shell is a future
   # milestone (settings analogue of EX-M6). When it lands, replace
@@ -745,6 +748,152 @@ proc freyaApply(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
     discard vm.setChoice("appearance.theme", "InvalidName"); drv.flush()
 
 # ---------------------------------------------------------------------------
+# Cocoa driver. Drives `click` for everything; for number/choice the
+# data-value is mutated via `setAttribute` then `click` is fired (same
+# shape as the GPUI / Freya drivers). The Cocoa disclosure-list shell
+# only mounts the *active* group's items — other groups show just their
+# headers — so the driver MUST activate the target group first by
+# clicking the group header. Activating a group triggers the shell's
+# `createRenderEffect` over `vm.activeGroupId.val`, which materialises
+# the item rows under the newly-active group.
+# ---------------------------------------------------------------------------
+
+when defined(macosx):
+  proc cocoaDisclosure(r: cocoaR.CocoaRenderer;
+                       root: cocoaR.CocoaElement;
+                       groupId: string): cocoaR.CocoaElement =
+    for i in 0 ..< r.childCount(root):
+      let c = r.nthChild(root, i)
+      if r.getAttribute(c, "data-disclosure-id") == groupId:
+        return c
+    cast[cocoaR.CocoaElement](nil)
+
+  proc cocoaGroupSection(r: cocoaR.CocoaRenderer;
+                         disclosure: cocoaR.CocoaElement): cocoaR.CocoaElement =
+    if pointer(disclosure) == nil: return cast[cocoaR.CocoaElement](nil)
+    for i in 0 ..< r.childCount(disclosure):
+      let c = r.nthChild(disclosure, i)
+      if r.getAttribute(c, "class") == "settings-group":
+        return c
+    cast[cocoaR.CocoaElement](nil)
+
+  proc cocoaDisclosureHeader(r: cocoaR.CocoaRenderer;
+                             disclosure: cocoaR.CocoaElement): cocoaR.CocoaElement =
+    let section = cocoaGroupSection(r, disclosure)
+    if pointer(section) == nil: return cast[cocoaR.CocoaElement](nil)
+    for i in 0 ..< r.childCount(section):
+      let c = r.nthChild(section, i)
+      if r.getAttribute(c, "class") == "settings-group-header":
+        return c
+    cast[cocoaR.CocoaElement](nil)
+
+  proc cocoaItemRows(r: cocoaR.CocoaRenderer;
+                     disclosure: cocoaR.CocoaElement): seq[cocoaR.CocoaElement] =
+    let section = cocoaGroupSection(r, disclosure)
+    if pointer(section) == nil: return @[]
+    for i in 0 ..< r.childCount(section):
+      let c = r.nthChild(section, i)
+      if r.getAttribute(c, "class") == "settings-item":
+        result.add c
+
+  proc cocoaItemRowByLabel(r: cocoaR.CocoaRenderer;
+                           disclosure: cocoaR.CocoaElement;
+                           label: string): cocoaR.CocoaElement =
+    for row in cocoaItemRows(r, disclosure):
+      if r.childCount(row) == 0: continue
+      let labelNode = r.nthChild(row, 0)
+      if r.getAttribute(labelNode, "class") == "settings-label" and
+         r.textContent(labelNode) == label:
+        return row
+    cast[cocoaR.CocoaElement](nil)
+
+  proc cocoaToggleOf(r: cocoaR.CocoaRenderer;
+                     row: cocoaR.CocoaElement): cocoaR.CocoaElement =
+    let last = r.nthChild(row, r.childCount(row) - 1)
+    if r.getAttribute(last, "type") == "checkbox":
+      return last
+    cast[cocoaR.CocoaElement](nil)
+
+  proc cocoaNumberHostOf(r: cocoaR.CocoaRenderer;
+                        row: cocoaR.CocoaElement): cocoaR.CocoaElement =
+    let last = r.nthChild(row, r.childCount(row) - 1)
+    if r.getAttribute(last, "class") == "settings-number":
+      return last
+    cast[cocoaR.CocoaElement](nil)
+
+  proc cocoaNumberInputOf(r: cocoaR.CocoaRenderer;
+                         row: cocoaR.CocoaElement): cocoaR.CocoaElement =
+    let host = cocoaNumberHostOf(r, row)
+    if pointer(host) == nil: return cast[cocoaR.CocoaElement](nil)
+    for i in 0 ..< r.childCount(host):
+      let c = r.nthChild(host, i)
+      if r.getAttribute(c, "type") == "number":
+        return c
+    cast[cocoaR.CocoaElement](nil)
+
+  proc cocoaChoiceHostOf(r: cocoaR.CocoaRenderer;
+                        row: cocoaR.CocoaElement): cocoaR.CocoaElement =
+    let last = r.nthChild(row, r.childCount(row) - 1)
+    if r.getAttribute(last, "class") == "settings-choice":
+      return last
+    cast[cocoaR.CocoaElement](nil)
+
+  proc cocoaChoiceSelectOf(r: cocoaR.CocoaRenderer;
+                          row: cocoaR.CocoaElement): cocoaR.CocoaElement =
+    let host = cocoaChoiceHostOf(r, row)
+    if pointer(host) == nil: return cast[cocoaR.CocoaElement](nil)
+    for i in 0 ..< r.childCount(host):
+      let c = r.nthChild(host, i)
+      # The Cocoa renderer materialises `<select>` as a tag-less element
+      # (its `class` attribute is empty by default). Same trick as the
+      # Freya driver uses for its `<select>` lookups.
+      if r.getAttribute(c, "class") == "":
+        return c
+    cast[cocoaR.CocoaElement](nil)
+
+  proc cocoaApply(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
+    let r = cocoaR.CocoaRenderer()
+    let root = buildSettingsApp(r, vm)
+    drv.flush()
+    case s.kind
+    of skBasic:
+      # `appearance` is the default active group, so its items are
+      # already mounted; clicking the header is idempotent (mirrors the
+      # spec text on the basic scenario).
+      let appearance = cocoaDisclosure(r, root, "appearance")
+      r.fireEvent(cocoaDisclosureHeader(r, appearance), "click"); drv.flush()
+      let darkCb = cocoaToggleOf(r, cocoaItemRowByLabel(r, appearance, "Dark mode"))
+      r.fireEvent(darkCb, "click"); drv.flush()
+      let fontInp = cocoaNumberInputOf(r, cocoaItemRowByLabel(r, appearance, "Font size"))
+      r.setAttribute(fontInp, "data-value", "18")
+      r.fireEvent(fontInp, "click"); drv.flush()
+      let themeSel = cocoaChoiceSelectOf(r, cocoaItemRowByLabel(r, appearance, "Theme"))
+      r.setAttribute(themeSel, "data-value", "Solarized")
+      r.fireEvent(themeSel, "click"); drv.flush()
+    of skEmpty:
+      discard
+    of skAllGroups:
+      for g in vm.catalog.groups:
+        let disclosure = cocoaDisclosure(r, root, g.id)
+        # Click header to activate this group — the reactive
+        # `createRenderEffect` over `activeGroupId` then materialises
+        # the items under this group's section.
+        r.fireEvent(cocoaDisclosureHeader(r, disclosure), "click"); drv.flush()
+        for row in cocoaItemRows(r, disclosure):
+          let cb = cocoaToggleOf(r, row)
+          if pointer(cb) != nil:
+            r.fireEvent(cb, "click"); drv.flush()
+            break
+    of skClamp:
+      let appearance = cocoaDisclosure(r, root, "appearance")
+      r.fireEvent(cocoaDisclosureHeader(r, appearance), "click"); drv.flush()
+      let fontInp = cocoaNumberInputOf(r, cocoaItemRowByLabel(r, appearance, "Font size"))
+      r.setAttribute(fontInp, "data-value", "5")
+      r.fireEvent(fontInp, "click"); drv.flush()
+    of skChoiceReject:
+      discard vm.setChoice("appearance.theme", "InvalidName"); drv.flush()
+
+# ---------------------------------------------------------------------------
 # Driver registration.
 # ---------------------------------------------------------------------------
 
@@ -775,9 +924,13 @@ proc freyaDriver(): RendererDriver =
 var drivers = @[tuiDriver(), webDriver(), gpuiDriver(), freyaDriver()]
 
 when defined(macosx):
-  # Future: append a `cocoaDriver()` here once the settings_app Cocoa
-  # shell lands (analogue of EX-M5 for task_app).
-  discard
+  proc cocoaDriver(): RendererDriver =
+    RendererDriver(
+      name: "cocoa",
+      mountAndDrive: proc(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
+        cocoaApply(vm, s, drv))
+
+  drivers.add cocoaDriver()
 when defined(android):
   # Future: append an `androidDriver()` here once the settings_app
   # Android shell lands (analogue of EX-M6 for task_app).
