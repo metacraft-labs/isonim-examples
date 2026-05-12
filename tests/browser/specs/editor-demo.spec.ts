@@ -35,6 +35,7 @@ const bridgePorts = JSON.parse(process.env.BRIDGE_PORTS || "{}") as {
   tui: number;
   gpui: number;
   freya: number;
+  freyaSettings: number;
 };
 
 const backendIds = ["web", "tui", "gpui", "freya"] as const;
@@ -379,6 +380,42 @@ test.describe("EX-M14: per-backend bridge visual proof", () => {
       uniq.size,
       `four distinct canvas hashes required; got ${JSON.stringify(probes)}`,
     ).toBe(backendIds.length);
+  });
+});
+
+// --------------------------------------------------------------------------
+// 4b. EX-M15: Freya --demo=settings dispatches to the settings composition
+// --------------------------------------------------------------------------
+
+test.describe("EX-M15: Freya backend dispatches --demo=settings", () => {
+  test("freya tasks vs freya settings produce distinct canvas hashes", async ({
+    page,
+  }) => {
+    // The Freya launcher binary is the same on both ports; only the
+    // --demo flag differs. Pre-EX-M15 the settings branch silently fell
+    // back to task_app, so both bridges produced byte-identical pixel
+    // buffers (and identical hashes). EX-M15 fixes the dispatch: the
+    // launcher now wires `--demo=settings` to
+    // `settings_app/main_freya.buildSettingsApp`, which composes a
+    // visibly distinct card-stack layout (every group renders its own
+    // settings-card simultaneously) against the SettingsVM. The
+    // distinct-hash assertion below is the load-bearing proof that the
+    // dispatch lands.
+    const tasks = await probeBridge(page, bridgePorts.freya);
+    const settings = await probeBridge(page, bridgePorts.freyaSettings);
+    expect(
+      tasks.nonBgPixels,
+      "freya --demo=tasks bridge must paint non-empty canvas",
+    ).toBeGreaterThan(0);
+    expect(
+      settings.nonBgPixels,
+      "freya --demo=settings bridge must paint non-empty canvas",
+    ).toBeGreaterThan(0);
+    expect(
+      settings.hash,
+      `freya tasks vs freya settings must differ; ` +
+        `got tasks=${tasks.hash} settings=${settings.hash}`,
+    ).not.toBe(tasks.hash);
   });
 });
 

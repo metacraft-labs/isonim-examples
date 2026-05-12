@@ -152,9 +152,15 @@ What this means in practice:
   band (teal for GPUI, purple for Freya) so the canvas hashes stay
   pairwise distinct even when the two tree layouts converge.
 
-The `settings_app` Freya port is not yet shipped — the Freya
-launcher renders `task_app` regardless of the `--demo` flag.
-Cocoa / Android remain visibly disabled on Linux per spec.
+EX-M15: the Freya backend now dispatches `--demo=tasks|settings`
+end-to-end. `--demo=settings` mounts `settings_app/main_freya.nim`,
+a vertically stacked card layout where every group renders as its
+own `<div class="settings-card">` with the inner shared group
+section showing all of its items simultaneously. This makes the
+Freya chrome visibly distinct from the TUI accordion (one expanded
+section), the web sidebar+pane (only the active group's items), and
+the GPUI two-column grid (only the active group's items in the right
+column). Cocoa / Android remain visibly disabled on Linux per spec.
 
 ## Specs
 

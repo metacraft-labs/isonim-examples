@@ -8,12 +8,12 @@
 ## task_app demo — the same shape, the same `RendererDriver` table, the
 ## same `assertParity` helper.
 ##
-## Coverage on Linux (today, 2026-05-10):
-##   * 3 renderers   — TUI, web (MockRenderer), GPUI.
+## Coverage on Linux (today, 2026-05-11):
+##   * 4 renderers   — TUI, web (MockRenderer), GPUI, Freya.
 ##   * 5 scenarios   — basic life-cycle, empty/re-init, all-groups,
 ##                     number clamp, choice rejection.
-##   * 15 byte-identical SettingsVMSnapshot assertions per run
-##     (5 scenarios * 3 renderers).
+##   * 20 byte-identical SettingsVMSnapshot assertions per run
+##     (5 scenarios * 4 renderers).
 ##
 ## Cocoa / Android: the EX-M10..M12 series only built TUI/web/GPUI
 ## settings_app shells. The Cocoa + Android shells (would be the
@@ -41,6 +41,12 @@
 ##   * GPUI uses `click` for everything (the shim only exposes a click
 ##     listener registry); for number/choice the test mutates
 ##     `data-value` via `setAttribute` then fires `click`.
+##   * Freya uses `click` for everything (same as GPUI — the shim's
+##     `<input>` / `<select>`-mapped elements expose no native change /
+##     submit event). The Freya shell stacks every group as its own
+##     visible card simultaneously, so the driver locates rows by
+##     `data-card-id` + the shared `settings-item` row class regardless
+##     of which group is currently active.
 ##
 ## Each scripted scenario therefore *drives the VM through whatever
 ## event path that renderer exposes* — the parity invariant is that
@@ -82,6 +88,8 @@ from settings_app/main_web as web_app import
   buildSettingsApp, rebuildSettingsApp
 from settings_app/main_gpui as gpui_app import
   buildSettingsApp, rebuildSettingsApp, runSettingsApp
+from settings_app/main_freya as freya_app import
+  buildSettingsApp, rebuildSettingsApp, runSettingsApp
 
 # GPUI: keep the renderer / bindings under a qualified name to avoid
 # overload clashes with the TUI / web `textContent`, `setAttribute`,
@@ -89,6 +97,11 @@ from settings_app/main_gpui as gpui_app import
 # compiler picks the GPUI variant explicitly.
 import isonim_gpui/renderer as gpuiR
 import isonim_gpui/bindings as gpuiB
+
+# Freya: same pattern as GPUI — qualified imports keep the introspection
+# helpers (`textContent`, `getAttribute`, `fireEvent`, ...) unambiguous.
+import isonim_freya/renderer as freyaR
+import isonim_freya/bindings as freyaB
 
 # Cocoa / Android — Linux build skips the body entirely.
 when defined(macosx):
@@ -597,6 +610,145 @@ proc gpuiApply(vm: SettingsVM; s: Scenario) =
     discard vm.setChoice("appearance.theme", "InvalidName")
 
 # ---------------------------------------------------------------------------
+# Freya driver. Drives `click` for everything; for number/choice the
+# data-value is mutated via `setAttribute` then `click` is fired.
+# Mirrors the GPUI driver's surface; the only structural difference is
+# that the Freya shell renders *every* group's items simultaneously
+# (each wrapped in a `settings-card`), so the row helpers below look
+# inside the per-group `<section>` keyed by `data-group-id` rather than
+# the GPUI shell's flat items column.
+# ---------------------------------------------------------------------------
+
+proc freyaCard(root: freyaR.FreyaElement;
+               groupId: string): freyaR.FreyaElement =
+  for i in 0 ..< freyaR.childCount(root):
+    let c = freyaR.nthChild(root, i)
+    let cls = freyaR.getAttribute(c, "class")
+    if cls.startsWith("settings-card") and
+       freyaR.getAttribute(c, "data-card-id") == groupId:
+      return c
+  nil
+
+proc freyaGroupSection(card: freyaR.FreyaElement): freyaR.FreyaElement =
+  if card == nil: return nil
+  for i in 0 ..< freyaR.childCount(card):
+    let c = freyaR.nthChild(card, i)
+    if freyaR.getAttribute(c, "class") == "settings-group":
+      return c
+  nil
+
+proc freyaCardHeader(card: freyaR.FreyaElement): freyaR.FreyaElement =
+  let section = freyaGroupSection(card)
+  if section == nil: return nil
+  for i in 0 ..< freyaR.childCount(section):
+    let c = freyaR.nthChild(section, i)
+    if freyaR.getAttribute(c, "class") == "settings-group-header":
+      return c
+  nil
+
+proc freyaItemRows(card: freyaR.FreyaElement): seq[freyaR.FreyaElement] =
+  let section = freyaGroupSection(card)
+  if section == nil: return @[]
+  for i in 0 ..< freyaR.childCount(section):
+    let c = freyaR.nthChild(section, i)
+    if freyaR.getAttribute(c, "class") == "settings-item":
+      result.add c
+
+proc freyaItemRowByLabel(card: freyaR.FreyaElement;
+                         label: string): freyaR.FreyaElement =
+  for row in freyaItemRows(card):
+    if freyaR.childCount(row) == 0: continue
+    let labelNode = freyaR.nthChild(row, 0)
+    if freyaR.getAttribute(labelNode, "class") == "settings-label" and
+       freyaR.textContent(labelNode) == label:
+      return row
+  nil
+
+proc freyaToggleOf(row: freyaR.FreyaElement): freyaR.FreyaElement =
+  let last = freyaR.nthChild(row, freyaR.childCount(row) - 1)
+  if freyaR.getAttribute(last, "type") == "checkbox":
+    return last
+  nil
+
+proc freyaNumberHostOf(row: freyaR.FreyaElement): freyaR.FreyaElement =
+  let last = freyaR.nthChild(row, freyaR.childCount(row) - 1)
+  if freyaR.getAttribute(last, "class") == "settings-number":
+    return last
+  nil
+
+proc freyaNumberInputOf(row: freyaR.FreyaElement): freyaR.FreyaElement =
+  let host = freyaNumberHostOf(row)
+  if host == nil: return nil
+  for i in 0 ..< freyaR.childCount(host):
+    let c = freyaR.nthChild(host, i)
+    if freyaR.getAttribute(c, "type") == "number":
+      return c
+  nil
+
+proc freyaChoiceHostOf(row: freyaR.FreyaElement): freyaR.FreyaElement =
+  let last = freyaR.nthChild(row, freyaR.childCount(row) - 1)
+  if freyaR.getAttribute(last, "class") == "settings-choice":
+    return last
+  nil
+
+proc freyaChoiceSelectOf(row: freyaR.FreyaElement): freyaR.FreyaElement =
+  let host = freyaChoiceHostOf(row)
+  if host == nil: return nil
+  for i in 0 ..< freyaR.childCount(host):
+    let c = freyaR.nthChild(host, i)
+    if freyaR.getAttribute(c, "class") == "":
+      return c
+  nil
+
+proc freyaApply(vm: SettingsVM; s: Scenario) =
+  freyaB.freya_reset_tree()
+  freyaR.resetCallbacks()
+  let r = freyaR.FreyaRenderer()
+  var root = buildSettingsApp(r, vm)
+  case s.kind
+  of skBasic:
+    let appearanceCard = freyaCard(root, "appearance")
+    freyaR.fireEvent(freyaCardHeader(appearanceCard), "click")
+    root = rebuildSettingsApp(r, vm)
+    let darkCb = freyaToggleOf(freyaItemRowByLabel(
+      freyaCard(root, "appearance"), "Dark mode"))
+    freyaR.fireEvent(darkCb, "click")
+    root = rebuildSettingsApp(r, vm)
+    let fontInp = freyaNumberInputOf(freyaItemRowByLabel(
+      freyaCard(root, "appearance"), "Font size"))
+    freyaR.setAttribute(r, fontInp, "data-value", "18")
+    freyaR.fireEvent(fontInp, "click")
+    root = rebuildSettingsApp(r, vm)
+    let themeSel = freyaChoiceSelectOf(freyaItemRowByLabel(
+      freyaCard(root, "appearance"), "Theme"))
+    freyaR.setAttribute(r, themeSel, "data-value", "Solarized")
+    freyaR.fireEvent(themeSel, "click")
+  of skEmpty:
+    discard
+  of skAllGroups:
+    for g in vm.catalog.groups:
+      let cardHeader = freyaCardHeader(freyaCard(root, g.id))
+      freyaR.fireEvent(cardHeader, "click")
+      root = rebuildSettingsApp(r, vm)
+      let card = freyaCard(root, g.id)
+      for row in freyaItemRows(card):
+        let cb = freyaToggleOf(row)
+        if cb != nil:
+          freyaR.fireEvent(cb, "click")
+          break
+      root = rebuildSettingsApp(r, vm)
+  of skClamp:
+    let appearanceHeader = freyaCardHeader(freyaCard(root, "appearance"))
+    freyaR.fireEvent(appearanceHeader, "click")
+    root = rebuildSettingsApp(r, vm)
+    let fontInp = freyaNumberInputOf(freyaItemRowByLabel(
+      freyaCard(root, "appearance"), "Font size"))
+    freyaR.setAttribute(r, fontInp, "data-value", "5")
+    freyaR.fireEvent(fontInp, "click")
+  of skChoiceReject:
+    discard vm.setChoice("appearance.theme", "InvalidName")
+
+# ---------------------------------------------------------------------------
 # Driver registration.
 # ---------------------------------------------------------------------------
 
@@ -618,7 +770,13 @@ proc gpuiDriver(): RendererDriver =
     mountAndDrive: proc(vm: SettingsVM; s: Scenario) =
       gpuiApply(vm, s))
 
-var drivers = @[tuiDriver(), webDriver(), gpuiDriver()]
+proc freyaDriver(): RendererDriver =
+  RendererDriver(
+    name: "freya",
+    mountAndDrive: proc(vm: SettingsVM; s: Scenario) =
+      freyaApply(vm, s))
+
+var drivers = @[tuiDriver(), webDriver(), gpuiDriver(), freyaDriver()]
 
 when defined(macosx):
   # Future: append a `cocoaDriver()` here once the settings_app Cocoa
@@ -662,11 +820,12 @@ proc assertParity(s: Scenario; snaps: seq[SettingsVMSnapshot]) =
 
 suite "EX-M13: cross-renderer SettingsVM-parity across all available renderers":
 
-  test "driver matrix is non-empty and includes the three Linux renderers":
-    check drivers.len >= 3
+  test "driver matrix is non-empty and includes the four Linux renderers":
+    check drivers.len >= 4
     check drivers[0].name == "tui"
     check drivers[1].name == "web"
     check drivers[2].name == "gpui"
+    check drivers[3].name == "freya"
     when defined(macosx):
       check "cocoa" in drivers.mapIt(it.name)
     when defined(android):

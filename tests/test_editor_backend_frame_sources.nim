@@ -29,6 +29,7 @@ import task_app/main_freya as task_freya
 import settings_app/core/vm as settings_vm
 import settings_app/core/demo_catalog
 import settings_app/main_tui as settings_tui
+import settings_app/main_freya as settings_freya
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -170,6 +171,28 @@ suite "EX-M14 Gap 1 — graphical adapters stream real demo trees":
       check countNonBackgroundPixels(frame, 0x18u8, 0x18u8, 0x18u8) > 0
       dispose()
 
+  test "Freya adapter rasterizes the headless settings_app tree to RGBA":
+    ## EX-M15: proves the Freya settings composition root mounts
+    ## successfully and yields a non-empty rasterised frame. Pre-EX-M15
+    ## the Freya launcher silently fell back to task_app for the
+    ## settings demo; the dispatch wiring tested by the bridge spec
+    ## relies on this composition returning a real tree.
+    createRoot do (dispose: proc()):
+      freya_bindings.freya_reset_tree()
+      freya_renderer.resetCallbacks()
+      let r = FreyaRenderer()
+      let catalog = buildDemoSettingsCatalog()
+      let vm = newSettingsVM(catalog)
+      let root = settings_freya.buildSettingsApp(r, vm)
+      check root != nil
+
+      let src = newFreyaFrameSource(r, root, 320, 200)
+      let frame = src.renderFrame()
+      check frame.width == 320
+      check frame.height == 200
+      check countNonBackgroundPixels(frame, 0x18u8, 0x18u8, 0x18u8) > 0
+      dispose()
+
 # ---------------------------------------------------------------------------
 # Cross-backend distinctness — every backend's frame must be byte-distinct
 # from every other so the Playwright spec's "four distinct preview hashes"
@@ -223,3 +246,38 @@ suite "EX-M14 Gap 1 — backends produce byte-distinct frames":
     check not framesByteEqual(tuiFrame, gpuiFrame)
     check not framesByteEqual(tuiFrame, freyaFrame)
     check not framesByteEqual(gpuiFrame, freyaFrame)
+
+  test "EX-M15: Freya task_app vs Freya settings_app frames are byte-distinct":
+    ## Pre-EX-M15, the Freya launcher's `--demo=settings` branch fell
+    ## back to task_app and produced byte-identical pixels to the task
+    ## demo. The launcher's settings branch now wires the
+    ## `settings_app/main_freya` composition root, which builds a
+    ## visibly distinct card-stack tree. Rasterising both trees through
+    ## the same adapter at the same dimensions must therefore yield
+    ## byte-distinct frame buffers.
+    var freyaTaskFrame, freyaSettingsFrame: packet.Frame
+
+    createRoot do (dispose: proc()):
+      freya_bindings.freya_reset_tree()
+      freya_renderer.resetCallbacks()
+      let r = FreyaRenderer()
+      let vm = newTaskAppVM()
+      vm.addTask("Buy groceries")
+      vm.addTask("Walk the dog")
+      let root = task_freya.buildTaskApp(r, vm)
+      let src = newFreyaFrameSource(r, root, 320, 200)
+      freyaTaskFrame = src.renderFrame()
+      dispose()
+
+    createRoot do (dispose: proc()):
+      freya_bindings.freya_reset_tree()
+      freya_renderer.resetCallbacks()
+      let r = FreyaRenderer()
+      let catalog = buildDemoSettingsCatalog()
+      let vm = newSettingsVM(catalog)
+      let root = settings_freya.buildSettingsApp(r, vm)
+      let src = newFreyaFrameSource(r, root, 320, 200)
+      freyaSettingsFrame = src.renderFrame()
+      dispose()
+
+    check not framesByteEqual(freyaTaskFrame, freyaSettingsFrame)

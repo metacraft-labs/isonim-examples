@@ -25,12 +25,16 @@ const chromiumExecutable =
     : undefined);
 
 // Per-backend bridge ports. Exposed to the specs via the BRIDGE_PORTS
-// env var so a single source of truth lives here.
+// env var so a single source of truth lives here. The `freyaSettings`
+// entry (EX-M15) is the same launcher binary as `freya` started with
+// `--demo=settings` so the spec can prove the Freya backend dispatches
+// to the settings composition rather than falling back to task_app.
 const bridgePorts = {
   web: 8101,
   tui: 8102,
   gpui: 8103,
   freya: 8104,
+  freyaSettings: 8105,
 };
 process.env.BRIDGE_PORTS = JSON.stringify(bridgePorts);
 
@@ -83,6 +87,17 @@ export default defineConfig({
     {
       command: `${buildBackendsDir}/isonim-examples-freya --port ${bridgePorts.freya} --demo=tasks --static ${staticDir} --width 320 --height 200 --fps 8`,
       url: `http://127.0.0.1:${bridgePorts.freya}/`,
+      reuseExistingServer: true,
+      timeout: 30_000,
+    },
+    // EX-M15: a second Freya launcher instance, started with
+    // --demo=settings. The spec probes this bridge and asserts the
+    // canvas hash is *distinct* from the `freya --demo=tasks` bridge
+    // above, proving the Freya backend's --demo dispatch now lands
+    // (no fallback to task_app).
+    {
+      command: `${buildBackendsDir}/isonim-examples-freya --port ${bridgePorts.freyaSettings} --demo=settings --static ${staticDir} --width 320 --height 200 --fps 8`,
+      url: `http://127.0.0.1:${bridgePorts.freyaSettings}/`,
       reuseExistingServer: true,
       timeout: 30_000,
     },
