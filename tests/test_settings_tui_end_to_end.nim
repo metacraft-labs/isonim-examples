@@ -50,11 +50,36 @@
 
 import std/[strutils, tables, unittest]
 
+import nim_everywhere
+import nim_everywhere/async_compat
+
 import isonim/core/signals
 import isonim_tui
 import isonim_tui/events
 
 import settings_app/main_tui
+
+# EX-M17: install a global FakeAsyncContext so every async VM write
+# resolves on the next drain.
+
+var fakeCtx {.threadvar.}: FakeAsyncContext
+
+template installFakeCtx() =
+  if fakeCtx == nil:
+    fakeCtx = newFakeAsyncContext()
+    fakeCtx.install()
+
+proc flushAll() =
+  if fakeCtx != nil:
+    for _ in 0 ..< 2:
+      fakeCtx.advance(100)
+      fakeCtx.runPending()
+      drainPlatformCallbacks()
+
+proc mountSettingsVM(catalog: SettingsCatalog): SettingsVM =
+  installFakeCtx()
+  result = newSettingsVM(catalog)
+  flushAll()
 
 # ---------------------------------------------------------------------------
 # Helpers — locate the rendered group section / item row by attribute. Each
@@ -116,7 +141,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "mount: shell paints every group header and only expanded items":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     let root = runSettingsApp(h, vm)
 
@@ -147,7 +172,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "group header text + description land in the cell-grid root":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     let root = runSettingsApp(h, vm)
 
@@ -164,7 +189,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "expanded group renders one row per catalog item, in order":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     let root = runSettingsApp(h, vm)
 
@@ -182,7 +207,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "appearance.dark_mode toggle: Switch widget paints + VM flips":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     var root = runSettingsApp(h, vm)
 
@@ -203,7 +228,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
     let switchEv = TerminalEvent(
       kind: ekKey,
       key: KeyEvent(key: "space", kind: kkNamed, rune: 0))
-    fireEventWith(switchNode, "keydown", switchEv)
+    fireEventWith(switchNode, "keydown", switchEv); flushAll()
 
     check vm.toggleValue("appearance.dark_mode") == true
 
@@ -217,7 +242,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "appearance.font_size: Input submit clamps + writes through VM":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     var root = runSettingsApp(h, vm)
 
@@ -245,7 +270,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
           kind: kkChar,
           rune: uint32('u'.ord),
           modifiers: {modCtrl}))
-      fireEventWith(inputNode, "keydown", ctrlU)
+      fireEventWith(inputNode, "keydown", ctrlU); flushAll()
       for ch in ['1', '8']:
         let ev = TerminalEvent(
           kind: ekKey,
@@ -253,11 +278,11 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
             key: $ch,
             kind: kkChar,
             rune: uint32(ch.ord)))
-        fireEventWith(inputNode, "keydown", ev)
+        fireEventWith(inputNode, "keydown", ev); flushAll()
       let enter = TerminalEvent(
         kind: ekKey,
         key: KeyEvent(key: "enter", kind: kkNamed, rune: 0))
-      fireEventWith(inputNode, "keydown", enter)
+      fireEventWith(inputNode, "keydown", enter); flushAll()
 
     # After the Enter submit the captured onSubmit closure clamps + writes
     # to the VM via `setNumber`. 18 is within [10, 32] so it commits as-is.
@@ -271,7 +296,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "appearance.theme: OptionList select dispatches choice to VM":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     var root = runSettingsApp(h, vm)
 
@@ -293,10 +318,10 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
       key: KeyEvent(key: "up", kind: kkNamed, rune: 0))
     let enter = TerminalEvent(kind: ekKey,
       key: KeyEvent(key: "enter", kind: kkNamed, rune: 0))
-    fireEventWith(optionListNode, "keydown", down)
-    fireEventWith(optionListNode, "keydown", down)
-    fireEventWith(optionListNode, "keydown", up)
-    fireEventWith(optionListNode, "keydown", enter)
+    fireEventWith(optionListNode, "keydown", down); flushAll()
+    fireEventWith(optionListNode, "keydown", down); flushAll()
+    fireEventWith(optionListNode, "keydown", up); flushAll()
+    fireEventWith(optionListNode, "keydown", enter); flushAll()
 
     check vm.choiceValue("appearance.theme") == "Solarized"
 
@@ -309,7 +334,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "setActiveGroup to editor: accordion expands editor, collapses appearance":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     let root = runSettingsApp(h, vm)
 
@@ -330,7 +355,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "editor.tabs_to_spaces toggle off-state-and-flip":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     discard vm.setActiveGroup("editor")
     var root = runSettingsApp(h, vm)
@@ -345,7 +370,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
     let switchEv = TerminalEvent(kind: ekKey,
       key: KeyEvent(key: "space", kind: kkNamed, rune: 0))
-    fireEventWith(switchNode, "keydown", switchEv)
+    fireEventWith(switchNode, "keydown", switchEv); flushAll()
 
     check vm.toggleValue("editor.tabs_to_spaces") == false
 
@@ -356,7 +381,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "number clamping: above-max submit clamps to numberMax":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     discard vm.setActiveGroup("editor")
     var root = runSettingsApp(h, vm)
@@ -374,17 +399,17 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
         kind: kkChar,
         rune: uint32('u'.ord),
         modifiers: {modCtrl}))
-    fireEventWith(inputNode, "keydown", ctrlU)
+    fireEventWith(inputNode, "keydown", ctrlU); flushAll()
     for ch in ['9', '9']:
       let ev = TerminalEvent(kind: ekKey,
         key: KeyEvent(
           key: $ch,
           kind: kkChar,
           rune: uint32(ch.ord)))
-      fireEventWith(inputNode, "keydown", ev)
+      fireEventWith(inputNode, "keydown", ev); flushAll()
     let enter = TerminalEvent(kind: ekKey,
       key: KeyEvent(key: "enter", kind: kkNamed, rune: 0))
-    fireEventWith(inputNode, "keydown", enter)
+    fireEventWith(inputNode, "keydown", enter); flushAll()
 
     check vm.numberValue("editor.tab_width") == 8
 
@@ -396,7 +421,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "choice rejection: invalid programmatic write leaves VM unchanged":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     discard runSettingsApp(h, vm)
 
@@ -412,7 +437,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "collapseAll: no group renders any item rows":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     var root = runSettingsApp(h, vm)
 
@@ -429,7 +454,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "header click activates the group via setActiveGroup":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     var root = runSettingsApp(h, vm)
     check vm.activeGroupId.val == "appearance"
@@ -439,7 +464,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
     check header.tag == "header"
     let click = TerminalEvent(kind: ekMouseDown, `type`: "click",
       mouse: MouseEvent(button: mbLeft, row: 0, col: 0))
-    fireEventWith(header, "click", click)
+    fireEventWith(header, "click", click); flushAll()
 
     check vm.activeGroupId.val == "notifications"
     # Header click → setActiveGroup → shell's `createRenderEffect`
@@ -451,7 +476,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
   test "every group's items render with the catalog's labels and order":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
     let root = runSettingsApp(h, vm)
     for groupIdx in 0 ..< catalog.groups.len:

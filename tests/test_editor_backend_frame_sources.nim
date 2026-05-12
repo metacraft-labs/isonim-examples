@@ -9,8 +9,12 @@
 
 import std/[strutils, unicode, unittest]
 
+import nim_everywhere
+import nim_everywhere/async_compat
+
 import isonim/core/owner
 import isonim_tui
+
 import isonim_gpui/renderer as gpui_renderer
 import isonim_gpui/bindings as gpui_bindings
 import isonim_freya/renderer as freya_renderer
@@ -30,6 +34,23 @@ import settings_app/core/vm as settings_vm
 import settings_app/core/demo_catalog
 import settings_app/main_tui as settings_tui
 import settings_app/main_freya as settings_freya
+
+# EX-M17: install a thread-local FakeAsyncContext so VM async writes
+# resolve on the next drain. `flushAll()` is called after every
+# `vm.addTask` / setting write to advance the fake clock.
+
+var fakeCtx {.threadvar.}: FakeAsyncContext
+proc ensureFakeCtx() =
+  if fakeCtx == nil:
+    fakeCtx = newFakeAsyncContext()
+    fakeCtx.install()
+
+proc flushAll() =
+  ensureFakeCtx()
+  for _ in 0 ..< 2:
+    fakeCtx.advance(100)
+    fakeCtx.runPending()
+    drainPlatformCallbacks()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,10 +93,12 @@ suite "EX-M14 Gap 1 — TUI adapter streams real demo content":
   test "task_app: rasterized frame includes a sample task name from vm.tasks":
     createRoot do (dispose: proc()):
       let h = newTerminalTestHarness(80, 24)
+      ensureFakeCtx()
       let vm = newTaskAppVM()
-      vm.addTask("Buy groceries")
-      vm.addTask("Walk the dog")
-      vm.addTask("Ship EX-M14")
+      flushAll()
+      vm.addTask("Buy groceries"); flushAll()
+      vm.addTask("Walk the dog"); flushAll()
+      vm.addTask("Ship EX-M14"); flushAll()
       discard task_tui.runTaskApp(h, vm)
       h.flush()
 
@@ -104,7 +127,9 @@ suite "EX-M14 Gap 1 — TUI adapter streams real demo content":
     createRoot do (dispose: proc()):
       let h = newTerminalTestHarness(80, 24)
       let catalog = buildDemoSettingsCatalog()
+      ensureFakeCtx()
       let vm = newSettingsVM(catalog)
+      flushAll()
       discard settings_tui.runSettingsApp(h, vm)
       h.flush()
 
@@ -136,9 +161,11 @@ suite "EX-M14 Gap 1 — graphical adapters stream real demo trees":
       gpui_bindings.gpui_reset_tree()
       gpui_renderer.resetCallbacks()
       let r = GpuiRenderer()
+      ensureFakeCtx()
       let vm = newTaskAppVM()
-      vm.addTask("Buy groceries")
-      vm.addTask("Walk the dog")
+      flushAll()
+      vm.addTask("Buy groceries"); flushAll()
+      vm.addTask("Walk the dog"); flushAll()
       let root = task_gpui.buildTaskApp(r, vm)
       check root != nil
 
@@ -158,9 +185,11 @@ suite "EX-M14 Gap 1 — graphical adapters stream real demo trees":
       freya_bindings.freya_reset_tree()
       freya_renderer.resetCallbacks()
       let r = FreyaRenderer()
+      ensureFakeCtx()
       let vm = newTaskAppVM()
-      vm.addTask("Buy groceries")
-      vm.addTask("Walk the dog")
+      flushAll()
+      vm.addTask("Buy groceries"); flushAll()
+      vm.addTask("Walk the dog"); flushAll()
       let root = task_freya.buildTaskApp(r, vm)
       check root != nil
 
@@ -182,7 +211,9 @@ suite "EX-M14 Gap 1 — graphical adapters stream real demo trees":
       freya_renderer.resetCallbacks()
       let r = FreyaRenderer()
       let catalog = buildDemoSettingsCatalog()
+      ensureFakeCtx()
       let vm = newSettingsVM(catalog)
+      flushAll()
       let root = settings_freya.buildSettingsApp(r, vm)
       check root != nil
 
@@ -206,9 +237,11 @@ suite "EX-M14 Gap 1 — backends produce byte-distinct frames":
 
     createRoot do (dispose: proc()):
       let h = newTerminalTestHarness(80, 24)
+      ensureFakeCtx()
       let vm = newTaskAppVM()
-      vm.addTask("Buy groceries")
-      vm.addTask("Walk the dog")
+      flushAll()
+      vm.addTask("Buy groceries"); flushAll()
+      vm.addTask("Walk the dog"); flushAll()
       discard task_tui.runTaskApp(h, vm)
       h.flush()
       let capturedH = h
@@ -223,9 +256,11 @@ suite "EX-M14 Gap 1 — backends produce byte-distinct frames":
       gpui_bindings.gpui_reset_tree()
       gpui_renderer.resetCallbacks()
       let r = GpuiRenderer()
+      ensureFakeCtx()
       let vm = newTaskAppVM()
-      vm.addTask("Buy groceries")
-      vm.addTask("Walk the dog")
+      flushAll()
+      vm.addTask("Buy groceries"); flushAll()
+      vm.addTask("Walk the dog"); flushAll()
       let root = task_gpui.buildTaskApp(r, vm)
       let src = newGpuiFrameSource(r, root, tuiFrame.width, tuiFrame.height)
       gpuiFrame = src.renderFrame()
@@ -235,9 +270,11 @@ suite "EX-M14 Gap 1 — backends produce byte-distinct frames":
       freya_bindings.freya_reset_tree()
       freya_renderer.resetCallbacks()
       let r = FreyaRenderer()
+      ensureFakeCtx()
       let vm = newTaskAppVM()
-      vm.addTask("Buy groceries")
-      vm.addTask("Walk the dog")
+      flushAll()
+      vm.addTask("Buy groceries"); flushAll()
+      vm.addTask("Walk the dog"); flushAll()
       let root = task_freya.buildTaskApp(r, vm)
       let src = newFreyaFrameSource(r, root, tuiFrame.width, tuiFrame.height)
       freyaFrame = src.renderFrame()
@@ -261,9 +298,11 @@ suite "EX-M14 Gap 1 — backends produce byte-distinct frames":
       freya_bindings.freya_reset_tree()
       freya_renderer.resetCallbacks()
       let r = FreyaRenderer()
+      ensureFakeCtx()
       let vm = newTaskAppVM()
-      vm.addTask("Buy groceries")
-      vm.addTask("Walk the dog")
+      flushAll()
+      vm.addTask("Buy groceries"); flushAll()
+      vm.addTask("Walk the dog"); flushAll()
       let root = task_freya.buildTaskApp(r, vm)
       let src = newFreyaFrameSource(r, root, 320, 200)
       freyaTaskFrame = src.renderFrame()
@@ -274,7 +313,9 @@ suite "EX-M14 Gap 1 — backends produce byte-distinct frames":
       freya_renderer.resetCallbacks()
       let r = FreyaRenderer()
       let catalog = buildDemoSettingsCatalog()
+      ensureFakeCtx()
       let vm = newSettingsVM(catalog)
+      flushAll()
       let root = settings_freya.buildSettingsApp(r, vm)
       let src = newFreyaFrameSource(r, root, 320, 200)
       freyaSettingsFrame = src.renderFrame()

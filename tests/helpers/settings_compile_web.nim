@@ -1,20 +1,14 @@
 ## helpers/settings_compile_web.nim — minimal web leaf stubs that let
-## the EX-M9 shared components (`settings_app/components/*.nim`)
-## compile + run against `MockRenderer` (the canonical headless surface
-## for web tests; the browser `WebRenderer` exposes the same proc
-## shape).
+## the EX-M9 shared components compile + run against `MockRenderer`.
 ##
-## EX-M9 compile-check helper. The real production leaves land in
-## `isonim-examples/settings_app/web/leaves.nim` in EX-M11; until then
-## this stub set proves the include-pattern in each component file
-## resolves correctly against the web surface.
-##
-## The stubs are minimal but real: every leaf returns a real
-## `MockNode` produced via `renderer.createElement`, so the resulting
-## tree is a real tree the test can walk with the same attribute /
-## child machinery the production leaves emit.
+## EX-M17 update: the leaf surface now takes `vmRef, itemId` (no more
+## one-shot `value` + `onChange`). The stubs below record the (vmRef,
+## itemId) pair that each component template binds so the EX-M9
+## driver test can assert the wiring round-trip by inspecting the
+## post-construction state.
 
 import std/strutils
+import std/tables
 
 import isonim/testing/mock_dom
 
@@ -23,31 +17,26 @@ import settings_app/core/vm
 export types
 export vm
 
-# ----------------------------------------------------------------------------
-# Capture buffer for the wired-up onChange closures. The components
-# wire `vm.setToggle` / `vm.setNumber` / `vm.setChoice` through the
-# `onChange` parameter; the leaf stubs below stash the latest closure
-# of each kind so the EX-M9 driver test can fire it and prove the
-# wiring round-trips through the real `SettingsVM`. This is the
-# "exercise the wired closure" check that keeps the EX-M9 test from
-# being a fig-leaf: the components must really invoke `vm.set*` from
-# the closure (not just construct it), otherwise the captured-handler
-# round-trip would fail.
-# ----------------------------------------------------------------------------
+# Capture buffers for the wired-up (vmRef, itemId) pairs. Tests fire
+# `vm.setToggle(itemId, newValue)` directly to round-trip the wiring.
 
-var capturedToggleHandler*: proc(newValue: bool)
-var capturedNumberHandler*: proc(newValue: int)
-var capturedChoiceHandler*: proc(newValue: string)
+var capturedToggleItem*: string
+var capturedNumberItem*: string
+var capturedChoiceItem*: string
+var capturedToggleVm*: SettingsVM
+var capturedNumberVm*: SettingsVM
+var capturedChoiceVm*: SettingsVM
 
 proc clearCapturedHandlers*() =
-  ## Reset every captured closure. Tests call this between fixtures so
-  ## state from one builder does not leak into the next.
-  capturedToggleHandler = nil
-  capturedNumberHandler = nil
-  capturedChoiceHandler = nil
+  capturedToggleItem = ""
+  capturedNumberItem = ""
+  capturedChoiceItem = ""
+  capturedToggleVm = nil
+  capturedNumberVm = nil
+  capturedChoiceVm = nil
 
 # ----------------------------------------------------------------------------
-# Stub leaves — mirror the contract the EX-M11 web leaves must satisfy
+# Stub leaves — match the EX-M17 web leaf signatures.
 # ----------------------------------------------------------------------------
 
 proc itemContainerLeaf*(r: MockRenderer): MockNode =
@@ -67,26 +56,26 @@ proc descriptionLeaf*(r: MockRenderer; text: string): MockNode =
   r.setTextContent(node, text)
   node
 
-proc toggleLeaf*(r: MockRenderer; value: bool;
-                 onChange: proc(newValue: bool)): MockNode =
-  ## Captures the wired-up `onChange` closure into
-  ## `capturedToggleHandler` so the EX-M9 driver test can fire it and
-  ## assert the VM round-trip. EX-M11 binds the real DOM event.
-  capturedToggleHandler = onChange
+proc toggleLeaf*(r: MockRenderer; vmRef: SettingsVM;
+                 itemId: string): MockNode =
+  capturedToggleItem = itemId
+  capturedToggleVm = vmRef
   let node = r.createElement("input")
   r.setAttribute(node, "type", "checkbox")
-  if value:
+  r.setAttribute(node, "data-item-id", itemId)
+  if vmRef.toggleValue(itemId):
     r.setAttribute(node, "checked", "checked")
   node
 
-proc numberLeaf*(r: MockRenderer; value: int;
+proc numberLeaf*(r: MockRenderer; vmRef: SettingsVM; itemId: string;
                  minValue, maxValue, stepValue: int;
-                 suffix: string;
-                 onChange: proc(newValue: int)): MockNode =
-  capturedNumberHandler = onChange
+                 suffix: string): MockNode =
+  capturedNumberItem = itemId
+  capturedNumberVm = vmRef
   let node = r.createElement("input")
   r.setAttribute(node, "type", "number")
-  r.setAttribute(node, "value", $value)
+  r.setAttribute(node, "data-item-id", itemId)
+  r.setAttribute(node, "value", $vmRef.numberValue(itemId))
   r.setAttribute(node, "min", $minValue)
   r.setAttribute(node, "max", $maxValue)
   r.setAttribute(node, "step", $stepValue)
@@ -94,12 +83,13 @@ proc numberLeaf*(r: MockRenderer; value: int;
     r.setAttribute(node, "data-suffix", suffix)
   node
 
-proc choiceLeaf*(r: MockRenderer; value: string;
-                 options: seq[string];
-                 onChange: proc(newValue: string)): MockNode =
-  capturedChoiceHandler = onChange
+proc choiceLeaf*(r: MockRenderer; vmRef: SettingsVM; itemId: string;
+                 options: seq[string]): MockNode =
+  capturedChoiceItem = itemId
+  capturedChoiceVm = vmRef
   let node = r.createElement("select")
-  r.setAttribute(node, "value", value)
+  r.setAttribute(node, "data-item-id", itemId)
+  r.setAttribute(node, "value", vmRef.choiceValue(itemId))
   r.setAttribute(node, "data-options", options.join("|"))
   for opt in options:
     let optNode = r.createElement("option")
@@ -121,33 +111,23 @@ proc groupHeaderLeaf*(r: MockRenderer; label, description: string): MockNode =
     r.setAttribute(node, "data-description", description)
   node
 
-# ----------------------------------------------------------------------------
-# Include the EX-M9 shared components in this order: the per-kind item
-# components first so the dispatch in `group.nim` can resolve them, then
-# `group.nim` itself.
-# ----------------------------------------------------------------------------
-
 include settings_app/components/toggle_item
 include settings_app/components/number_item
 include settings_app/components/choice_item
 include settings_app/components/group
 
 proc buildToggleRow*(vm: SettingsVM; item: SettingsItem): MockNode =
-  ## Exercise `renderToggleItem` against `MockRenderer`.
   let r = MockRenderer()
   renderToggleItem(r, vm, item)
 
 proc buildNumberRow*(vm: SettingsVM; item: SettingsItem): MockNode =
-  ## Exercise `renderNumberItem` against `MockRenderer`.
   let r = MockRenderer()
   renderNumberItem(r, vm, item)
 
 proc buildChoiceRow*(vm: SettingsVM; item: SettingsItem): MockNode =
-  ## Exercise `renderChoiceItem` against `MockRenderer`.
   let r = MockRenderer()
   renderChoiceItem(r, vm, item)
 
 proc buildGroup*(vm: SettingsVM; group: SettingsGroup): MockNode =
-  ## Exercise `renderSettingsGroup` against `MockRenderer`.
   let r = MockRenderer()
   renderSettingsGroup(r, vm, group)

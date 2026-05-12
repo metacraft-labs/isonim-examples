@@ -1,108 +1,114 @@
 ## settings_app/core/vm.nim — Layer-3.5 ViewModel (pure logic).
 ##
-## Single source of truth for the settings demo. This module is the
-## byte-identical core of every renderer target — the platform shells
-## (Layer 3) read/write through this VM, the shared components (Layer
-## 2) wire reactive observers to its signals, and the Layer-1 leaves
-## drop into the wiring without any platform-specific business logic.
+## EX-M17: catalog values are sourced from a `FakeDb` and surfaced
+## through a `Resource[SettingsSnapshot]`. Mutation actions (`setToggle`,
+## `setNumber`, `setChoice`) are now async — they enqueue the write
+## through the db and refresh the resource on completion.
 ##
-## The VM is parameterised over a `SettingsCatalog` (see `types.nim`)
-## so the same VM can host arbitrary settings UIs; the demo catalog
-## that EX-M9+ renders ships in `demo_catalog.nim`.
+## Reactive surface (the components / leaves subscribe to):
 ##
-## Reactive surface:
-##   * `activeGroupId`  — id of the currently-focused group (drives
-##                        the right-hand pane / expanded section).
-##   * `toggleValues`   — itemId -> bool, for every `sikToggle` item.
-##   * `numberValues`   — itemId -> int, for every `sikNumber` item.
-##   * `choiceValues`   — itemId -> string, for every `sikChoice` item.
+##   * `vm.catalogResource: Resource[SettingsSnapshot]` — the loaded
+##     catalog + per-item values, async-fetched.
+##   * `vm.activeGroupId: Signal[string]` — local UI state.
+##   * `vm.pendingOps: Signal[int]` — in-flight writes.
+##   * `vm.lastError: Signal[Option[string]]` — UI-friendly error.
 ##
-## All four are real `Signal[T]` instances; observers `createRenderEffect`
-## against them exactly as task_app's components do against `vm.tasks`.
+## Per-item value accessors (`toggleValue`, `numberValue`,
+## `choiceValue`) remain — they now read from the loaded snapshot's
+## tables. The leaves subscribe to these accessors directly via
+## `createRenderEffect`, so a programmatic mutation (post-load by the
+## db) propagates to the rendered DOM without a re-mount.
 ##
-## Action surface (every mutation goes through one of these — never
-## poke the signals directly from outside the VM module):
-##   * `setActiveGroup(vm, groupId)`         — switch focused group.
-##   * `setToggle(vm, itemId, value)`        — write a toggle item.
-##   * `setNumber(vm, itemId, value)`        — clamps to [min, max].
-##   * `setChoice(vm, itemId, value)`        — rejects values not in
-##                                             `choiceOptions`.
-##
-## Validation policy:
-##   * Number writes are *clamped* (min/max). The VM commits a
-##     within-range value, never rejects.
-##   * Choice writes are *rejected* when the value is not in the
-##     declared options. The signal does not change; the action
-##     returns `false`. Toggle/number actions return `bool` too so
-##     consumers have a uniform success channel.
-##   * Unknown item ids and unknown group ids cause the action to
-##     return `false` with no signal mutation (defensive — a stale
-##     write from a removed row should not crash).
-##
-## EX-M8 milestone reference:
-## `codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org`.
+## Validation policy (unchanged):
+##   * Number writes are *clamped* before being sent to the db.
+##   * Choice writes are *rejected* when the value is not in
+##     `choiceOptions` — the action returns `false` and no db op is
+##     enqueued.
+##   * Unknown item ids return `false` with no signal mutation.
 
 import std/algorithm
 import std/json
+import std/options
 import std/tables
 
 import isonim/core/signals
+import isonim/core/resource
+import nim_everywhere/async_compat
+
 import ./types
-export types
+import services/fake_db
+
+export types, resource, options
+export fake_db.FakeDb, fake_db.newFakeDb, fake_db.scriptFailure, fake_db.seedSettings
 
 type
   SettingsVM* = ref object
     ## Reactive ViewModel for the settings demo. The `catalog`
     ## reference is shared across the lifetime of the VM and is
-    ## treated as immutable (the VM never mutates it; calling code
-    ## should treat it as read-only after construction). The four
-    ## signals carry the live state.
+    ## treated as immutable. Per-item values are fetched async from
+    ## `db` and surface through three derived signals so the leaves
+    ## can subscribe per-item rather than rebuilding the whole pane.
+    db*: FakeDb
     catalog*: SettingsCatalog
+    catalogResource*: Resource[SettingsSnapshot]
     activeGroupId*: Signal[string]
-    toggleValues*: Signal[Table[string, bool]]
-    numberValues*: Signal[Table[string, int]]
-    choiceValues*: Signal[Table[string, string]]
+    pendingOps*: Signal[int]
+    lastError*: Signal[Option[string]]
 
 # ----------------------------------------------------------------------------
 # Construction
 # ----------------------------------------------------------------------------
 
-proc seedDefaults(catalog: SettingsCatalog;
-                  toggles: var Table[string, bool];
-                  numbers: var Table[string, int];
-                  choices: var Table[string, string]) =
-  ## Populate the three value tables from the catalog's per-item
-  ## `*Default` fields. Pulled out so `resetDefaults` can reuse it.
-  for g in catalog.groups:
-    for it in g.items:
-      case it.kind
-      of sikToggle:
-        toggles[it.id] = it.toggleDefault
-      of sikNumber:
-        numbers[it.id] = it.numberDefault
-      of sikChoice:
-        choices[it.id] = it.choiceDefault
+proc newSettingsVM*(db: FakeDb): SettingsVM =
+  ## Construct a VM bound to `db`. The initial settings load fires
+  ## immediately; under `FakeAsyncContext` the VM sits in rsPending
+  ## until the test advances the clock.
+  if db.settings == nil:
+    raise newException(CatchableError,
+      "newSettingsVM: FakeDb has no settings catalog — call seedSettings(db, catalog) first")
+  result = SettingsVM(
+    db: db,
+    catalog: db.settings,
+    activeGroupId: createSignal[string](db.settings.firstGroupId),
+    pendingOps: createSignal[int](0),
+    lastError: createSignal[Option[string]](none(string)))
+  let dbRef = db
+  result.catalogResource = createResource[SettingsSnapshot](
+    proc(info: ResourceFetcherInfo[SettingsSnapshot]):
+        PlatformFuture[SettingsSnapshot] =
+      dbRef.loadSettings(),
+    initialValue = SettingsSnapshot(
+      catalog: db.settings,
+      toggles: db.settingsToggles,
+      numbers: db.settingsNumbers,
+      choices: db.settingsChoices))
 
 proc newSettingsVM*(catalog: SettingsCatalog): SettingsVM =
-  ## Construct a fresh VM bound to the given catalog. Every item's
-  ## value signal is seeded from its `*Default`. `activeGroupId` is
-  ## seeded to the first group's id (or empty string if the catalog
-  ## has no groups).
-  var toggles: Table[string, bool]
-  var numbers: Table[string, int]
-  var choices: Table[string, string]
-  seedDefaults(catalog, toggles, numbers, choices)
-  SettingsVM(
-    catalog: catalog,
-    activeGroupId: createSignal[string](catalog.firstGroupId),
-    toggleValues: createSignal[Table[string, bool]](toggles),
-    numberValues: createSignal[Table[string, int]](numbers),
-    choiceValues: createSignal[Table[string, string]](choices))
+  ## Convenience overload: build a zero-latency db, seed it with the
+  ## catalog defaults, and construct the VM. Mirrors the EX-M16-era
+  ## constructor for tests that don't care about the async surface.
+  let db = newFakeDb(seed = 1, latencyMin = 0, latencyMax = 0)
+  db.seedSettings(catalog)
+  newSettingsVM(db)
+
+# ----------------------------------------------------------------------------
+# Async write helpers
+# ----------------------------------------------------------------------------
+
+proc beginOp(vm: SettingsVM) =
+  vm.pendingOps.val = vm.pendingOps.val + 1
+
+proc endOpOk(vm: SettingsVM) =
+  vm.pendingOps.val = vm.pendingOps.val - 1
+  vm.lastError.val = none(string)
+
+proc endOpFail(vm: SettingsVM; msg: string) =
+  vm.pendingOps.val = vm.pendingOps.val - 1
+  vm.lastError.val = some(msg)
 
 # ----------------------------------------------------------------------------
 # Internal helpers — find the catalog item for a given id and confirm
-# it is of the expected kind. Returns a tuple instead of raising so
-# the action procs can return `false` cleanly.
+# it is of the expected kind.
 # ----------------------------------------------------------------------------
 
 proc lookupItem(vm: SettingsVM; itemId: string;
@@ -122,9 +128,7 @@ proc lookupItem(vm: SettingsVM; itemId: string;
 # ----------------------------------------------------------------------------
 
 proc setActiveGroup*(vm: SettingsVM; groupId: string): bool {.discardable.} =
-  ## Switch the focused group. Returns `false` (and leaves the signal
-  ## unchanged) if `groupId` is not in the catalog. Returns `true`
-  ## otherwise — even if the new value equals the old one.
+  ## Switch the focused group. Local-only state — no db involvement.
   if not vm.catalog.hasGroup(groupId):
     return false
   vm.activeGroupId.val = groupId
@@ -132,38 +136,47 @@ proc setActiveGroup*(vm: SettingsVM; groupId: string): bool {.discardable.} =
 
 proc setToggle*(vm: SettingsVM; itemId: string; value: bool): bool
               {.discardable.} =
-  ## Write a toggle item. Returns `false` if the id is unknown or
-  ## refers to a non-toggle item; `true` on success. The full table
-  ## is reassigned so the signal fires (Nim `Table` is a value type).
+  ## Write a toggle item asynchronously. Returns `false` (and does not
+  ## enqueue) if the id is unknown or refers to a non-toggle item.
+  ## Otherwise enqueues a `saveSetting` op, refreshes the snapshot on
+  ## success, and updates `lastError` on failure.
   var item: SettingsItem
   if not vm.lookupItem(itemId, sikToggle, item):
     return false
-  var t = vm.toggleValues.val
-  t[itemId] = value
-  vm.toggleValues.val = t
+  vm.beginOp()
+  let vmRef = vm
+  vm.db.saveSetting(itemId, %value).onCompleteVoid(
+    onSuccess = proc() =
+      vmRef.catalogResource.refresh()
+      vmRef.endOpOk(),
+    onError = proc(msg: string) =
+      vmRef.endOpFail(msg))
   true
 
 proc setNumber*(vm: SettingsVM; itemId: string; value: int): bool
               {.discardable.} =
   ## Write a number item. The value is clamped to the item's
-  ## `[numberMin, numberMax]` range before being stored. Returns
-  ## `false` if the id is unknown or refers to a non-number item.
+  ## `[numberMin, numberMax]` range before being sent to the db.
   var item: SettingsItem
   if not vm.lookupItem(itemId, sikNumber, item):
     return false
   var clamped = value
   if clamped < item.numberMin: clamped = item.numberMin
   if clamped > item.numberMax: clamped = item.numberMax
-  var t = vm.numberValues.val
-  t[itemId] = clamped
-  vm.numberValues.val = t
+  vm.beginOp()
+  let vmRef = vm
+  vm.db.saveSetting(itemId, %clamped).onCompleteVoid(
+    onSuccess = proc() =
+      vmRef.catalogResource.refresh()
+      vmRef.endOpOk(),
+    onError = proc(msg: string) =
+      vmRef.endOpFail(msg))
   true
 
 proc setChoice*(vm: SettingsVM; itemId: string; value: string): bool
               {.discardable.} =
-  ## Write a choice item. Returns `false` if the id is unknown,
-  ## refers to a non-choice item, or `value` is not in the item's
-  ## `choiceOptions`. The signal is left unchanged on rejection.
+  ## Write a choice item. Rejects values outside `choiceOptions` with
+  ## `false` (no db op enqueued).
   var item: SettingsItem
   if not vm.lookupItem(itemId, sikChoice, item):
     return false
@@ -174,73 +187,89 @@ proc setChoice*(vm: SettingsVM; itemId: string; value: string): bool
       break
   if not ok:
     return false
-  var t = vm.choiceValues.val
-  t[itemId] = value
-  vm.choiceValues.val = t
+  vm.beginOp()
+  let vmRef = vm
+  vm.db.saveSetting(itemId, %value).onCompleteVoid(
+    onSuccess = proc() =
+      vmRef.catalogResource.refresh()
+      vmRef.endOpOk(),
+    onError = proc(msg: string) =
+      vmRef.endOpFail(msg))
   true
 
 proc resetDefaults*(vm: SettingsVM) =
-  ## Restore every item's value to the catalog default. Used by the
-  ## "Reset" leaf in higher-level shells (and by tests that want to
-  ## start from a clean state without rebuilding the VM).
-  var toggles: Table[string, bool]
-  var numbers: Table[string, int]
-  var choices: Table[string, string]
-  seedDefaults(vm.catalog, toggles, numbers, choices)
-  vm.toggleValues.val = toggles
-  vm.numberValues.val = numbers
-  vm.choiceValues.val = choices
+  ## Restore every item's value to the catalog default. Implemented as
+  ## a sequence of `setToggle` / `setNumber` / `setChoice` calls so the
+  ## standard async path drives every write. Tests advancing the fake
+  ## clock should advance enough simulated time to flush every op.
+  for g in vm.catalog.groups:
+    for it in g.items:
+      case it.kind
+      of sikToggle:
+        discard vm.setToggle(it.id, it.toggleDefault)
+      of sikNumber:
+        discard vm.setNumber(it.id, it.numberDefault)
+      of sikChoice:
+        discard vm.setChoice(it.id, it.choiceDefault)
+
+proc refreshSnapshot*(vm: SettingsVM) =
+  ## Manually trigger a re-fetch of the settings snapshot.
+  vm.catalogResource.refresh()
 
 # ----------------------------------------------------------------------------
-# Derived state (read-only views over signals).
+# Derived state (read-only views over the resource + activeGroup signal).
 # ----------------------------------------------------------------------------
 
 proc currentGroup*(vm: SettingsVM): SettingsGroup =
-  ## The group currently focused by the shell. Reads `activeGroupId`
-  ## so callers inside a `createRenderEffect` re-run when the focused
-  ## group changes. Raises `KeyError` if the active id is unknown
-  ## (which can only happen if the catalog was mutated behind the
-  ## VM's back — the VM itself never lets `activeGroupId` drift).
   let id = vm.activeGroupId.val
   vm.catalog.findGroup(id)
 
 proc toggleValue*(vm: SettingsVM; itemId: string): bool =
-  ## Read a toggle item's current value. Reads `toggleValues` so
-  ## callers re-run when the item changes. Raises `KeyError` if the
-  ## id is unknown.
-  vm.toggleValues.val[itemId]
+  ## Read a toggle item's current value. Reads `vm.catalogResource.data` so
+  ## callers inside a `createRenderEffect` re-run when the snapshot
+  ## refreshes after a programmatic mutation.
+  let snap = vm.catalogResource.data.val
+  snap.toggles.getOrDefault(itemId)
 
 proc numberValue*(vm: SettingsVM; itemId: string): int =
-  ## Read a number item's current value.
-  vm.numberValues.val[itemId]
+  let snap = vm.catalogResource.data.val
+  snap.numbers.getOrDefault(itemId)
 
 proc choiceValue*(vm: SettingsVM; itemId: string): string =
-  ## Read a choice item's current value.
-  vm.choiceValues.val[itemId]
+  let snap = vm.catalogResource.data.val
+  snap.choices.getOrDefault(itemId)
 
 proc itemValue*(vm: SettingsVM; itemId: string): JsonNode =
-  ## Kind-erased accessor returning a JSON node. Useful for tests and
-  ## the `vmSnapshot` parity helper that needs to compare values
-  ## without static knowledge of the item kind. Raises `KeyError` if
-  ## the id is unknown.
+  ## Kind-erased accessor — useful for tests / snapshot helpers.
   let item = vm.catalog.findItem(itemId)
   case item.kind
-  of sikToggle: newJBool(vm.toggleValues.val[itemId])
-  of sikNumber: newJInt(vm.numberValues.val[itemId])
-  of sikChoice: newJString(vm.choiceValues.val[itemId])
+  of sikToggle: newJBool(vm.toggleValue(itemId))
+  of sikNumber: newJInt(vm.numberValue(itemId))
+  of sikChoice: newJString(vm.choiceValue(itemId))
+
+proc loading*(vm: SettingsVM): bool =
+  vm.catalogResource.loading
+
+# Legacy compatibility shims: a few tests still expect the old
+# `vm.toggleValues.val[itemId]` shape. Provide read-only accessors
+# that return whole tables, keyed off the loaded snapshot.
+
+proc toggleValues*(vm: SettingsVM): Table[string, bool] =
+  vm.catalogResource.data.val.toggles
+
+proc numberValues*(vm: SettingsVM): Table[string, int] =
+  vm.catalogResource.data.val.numbers
+
+proc choiceValues*(vm: SettingsVM): Table[string, string] =
+  vm.catalogResource.data.val.choices
 
 # ----------------------------------------------------------------------------
 # Snapshot — used by tests to assert the VM reached an expected
-# state without depending on the rendered tree, and by the parity
-# snapshot helper to feed the cross-renderer parity test.
+# state without depending on the rendered tree.
 # ----------------------------------------------------------------------------
 
 type
   SettingsVMSnapshot* = object
-    ## Plain-value snapshot of the VM for golden comparisons.
-    ## `tables` is omitted in favour of three sorted seqs so the
-    ## structural `==` is deterministic across Nim's hash-table
-    ## insertion orders.
     activeGroupId*: string
     toggles*: seq[(string, bool)]
     numbers*: seq[(string, int)]
@@ -265,8 +294,9 @@ proc sortedChoiceEntries(t: Table[string, string]): seq[(string, string)] =
   for k in keys: result.add (k, t[k])
 
 proc snapshot*(vm: SettingsVM): SettingsVMSnapshot =
+  let snap = vm.catalogResource.data.val
   SettingsVMSnapshot(
     activeGroupId: vm.activeGroupId.val,
-    toggles: sortedToggleEntries(vm.toggleValues.val),
-    numbers: sortedNumberEntries(vm.numberValues.val),
-    choices: sortedChoiceEntries(vm.choiceValues.val))
+    toggles: sortedToggleEntries(snap.toggles),
+    numbers: sortedNumberEntries(snap.numbers),
+    choices: sortedChoiceEntries(snap.choices))

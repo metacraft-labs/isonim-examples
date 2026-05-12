@@ -328,70 +328,46 @@ suite "EX-M9: settings components compile-cross — Freya (real Rust shim)":
 # silently dropping the parameter on the floor).
 # ---------------------------------------------------------------------------
 
-suite "EX-M9: components wire onChange through to the real SettingsVM":
-  test "toggle row's onChange flips the VM signal":
+suite "EX-M17: components thread vmRef + itemId through to the real SettingsVM":
+  test "toggle row binds vmRef + itemId to the leaf":
     webCompile.clearCapturedHandlers()
     let vm = newSettingsVM(buildDemoSettingsCatalog())
     let item = vm.demoToggleItem
     discard webCompile.buildToggleRow(vm, item)
-    check webCompile.capturedToggleHandler != nil
-    check vm.toggleValue(item.id) == false
-    webCompile.capturedToggleHandler(true)
-    check vm.toggleValue(item.id) == true
-    webCompile.capturedToggleHandler(false)
-    check vm.toggleValue(item.id) == false
+    check webCompile.capturedToggleVm == vm
+    check webCompile.capturedToggleItem == item.id
 
-  test "number row's onChange writes through the VM (clamped)":
+  test "number row binds vmRef + itemId to the leaf":
     webCompile.clearCapturedHandlers()
     let vm = newSettingsVM(buildDemoSettingsCatalog())
-    let item = vm.demoNumberItem  # editor.tab_width, min=1 max=8
+    let item = vm.demoNumberItem
     discard webCompile.buildNumberRow(vm, item)
-    check webCompile.capturedNumberHandler != nil
-    check vm.numberValue(item.id) == item.numberDefault
-    # In-range write commits.
-    webCompile.capturedNumberHandler(6)
-    check vm.numberValue(item.id) == 6
-    # Above-max write clamps to max — the VM's clamping is the real
-    # validation surface; the component just forwards.
-    webCompile.capturedNumberHandler(item.numberMax + 100)
-    check vm.numberValue(item.id) == item.numberMax
-    # Below-min write clamps to min.
-    webCompile.capturedNumberHandler(item.numberMin - 100)
-    check vm.numberValue(item.id) == item.numberMin
+    check webCompile.capturedNumberVm == vm
+    check webCompile.capturedNumberItem == item.id
 
-  test "choice row's onChange writes a valid option, rejects an invalid one":
+  test "choice row binds vmRef + itemId to the leaf":
     webCompile.clearCapturedHandlers()
     let vm = newSettingsVM(buildDemoSettingsCatalog())
-    let item = vm.demoChoiceItem  # appearance.theme
+    let item = vm.demoChoiceItem
     discard webCompile.buildChoiceRow(vm, item)
-    check webCompile.capturedChoiceHandler != nil
-    check vm.choiceValue(item.id) == item.choiceDefault
-    webCompile.capturedChoiceHandler("Solarized")
-    check vm.choiceValue(item.id) == "Solarized"
-    # Invalid value — VM rejects, signal stays put.
-    webCompile.capturedChoiceHandler("NotAnOption")
-    check vm.choiceValue(item.id) == "Solarized"
+    check webCompile.capturedChoiceVm == vm
+    check webCompile.capturedChoiceItem == item.id
 
-  test "group dispatch wires onChange for every item kind":
+  test "group dispatch binds vmRef + itemId for every item kind":
     webCompile.clearCapturedHandlers()
     let vm = newSettingsVM(buildDemoSettingsCatalog())
     let g = vm.catalog.findGroup("appearance")
     discard webCompile.buildGroup(vm, g)
     # The Appearance group has one toggle, one choice, one number (in
-    # that catalog order). After the group renders, the last captured
-    # handler of each kind is the one the *most recently dispatched*
-    # item bound — proving the group component called the right item
-    # template for each kind.
-    check webCompile.capturedToggleHandler != nil
-    check webCompile.capturedChoiceHandler != nil
-    check webCompile.capturedNumberHandler != nil
-    # Drive each captured handler and assert the VM moved.
-    webCompile.capturedToggleHandler(true)
-    check vm.toggleValue("appearance.dark_mode") == true
-    webCompile.capturedChoiceHandler("Dracula")
-    check vm.choiceValue("appearance.theme") == "Dracula"
-    webCompile.capturedNumberHandler(20)
-    check vm.numberValue("appearance.font_size") == 20
+    # that catalog order). After the group renders, every kind has
+    # been bound with the matching itemId — proving the group component
+    # called the right item template for each kind.
+    check webCompile.capturedToggleVm == vm
+    check webCompile.capturedChoiceVm == vm
+    check webCompile.capturedNumberVm == vm
+    check webCompile.capturedToggleItem == "appearance.dark_mode"
+    check webCompile.capturedChoiceItem == "appearance.theme"
+    check webCompile.capturedNumberItem == "appearance.font_size"
 
 # ---------------------------------------------------------------------------
 # Cross-renderer topology fingerprint: the *number of children per

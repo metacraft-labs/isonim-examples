@@ -64,10 +64,14 @@ import std/[json, strutils, tables, unittest]
 when defined(macosx) or defined(android):
   import std/sequtils  # `mapIt` for the platform-gated check below
 
+import nim_everywhere
+
 # Settings-app VM types + snapshot helper (shared across drivers).
 import settings_app/core/vm
 import settings_app/core/demo_catalog
+import services/fake_db
 import ./helpers/settings_parity_snapshot
+import ./helpers/async_drive
 
 # TUI: full import — `TerminalNode` / `TerminalRenderer` / `TerminalEvent` /
 # `KeyEvent` are concrete and don't clash with anything else we pull in.
@@ -201,7 +205,8 @@ let allScenarios* = @[
 type
   RendererDriver = object
     name: string
-    mountAndDrive: proc(vm: SettingsVM; s: Scenario) {.closure.}
+    mountAndDrive: proc(vm: SettingsVM; s: Scenario;
+                        drv: AsyncDriver) {.closure.}
 
 # ---------------------------------------------------------------------------
 # TUI driver. Drives Switch / Input / OptionList through the real
@@ -306,31 +311,30 @@ proc tuiSelectOption(optList: TerminalNode; target: string;
     key: KeyEvent(key: "enter", kind: kkNamed, rune: 0))
   fireEventWith(optList, "keydown", enter)
 
-proc tuiApply(vm: SettingsVM; s: Scenario) =
+proc tuiApply(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
   if tuiHarness == nil:
     tuiHarness = newTerminalTestHarness(80, 24)
-  # EX-M16: a single mount call. The reactive shell propagates VM
-  # mutations through the rendered tree in-place — no follow-up
-  # rebuild calls needed.
   let root = runSettingsApp(tuiHarness, vm)
+  drv.flush()  # initial load
   case s.kind
   of skBasic:
     discard vm.setActiveGroup("appearance")
     var section = tuiFindGroupSection(root, "appearance")
     var row = tuiFindItemRowByLabel(section, "Dark mode")
     let sw = tuiFindSwitch(row)
-    tuiToggleSwitch(sw)
+    tuiToggleSwitch(sw); drv.flush()
 
     section = tuiFindGroupSection(root, "appearance")
     row = tuiFindItemRowByLabel(section, "Font size")
     let inp = tuiFindInput(row)
-    tuiTypeNumber(inp, 18)
+    tuiTypeNumber(inp, 18); drv.flush()
 
     section = tuiFindGroupSection(root, "appearance")
     row = tuiFindItemRowByLabel(section, "Theme")
     let optList = tuiFindOptionList(row)
     tuiSelectOption(optList, "Solarized",
                     @["Default", "Solarized", "Dracula"])
+    drv.flush()
   of skEmpty:
     discard
   of skAllGroups:
@@ -340,16 +344,17 @@ proc tuiApply(vm: SettingsVM; s: Scenario) =
       for row in tuiItemRowsOf(section):
         let sw = tuiFindSwitch(row)
         if sw != nil:
-          tuiToggleSwitch(sw)
+          tuiToggleSwitch(sw); drv.flush()
           break
   of skClamp:
     discard vm.setActiveGroup("appearance")
     let section = tuiFindGroupSection(root, "appearance")
     let row = tuiFindItemRowByLabel(section, "Font size")
     let inp = tuiFindInput(row)
-    tuiTypeNumber(inp, 5)  # below min=10; VM clamps to 10.
+    tuiTypeNumber(inp, 5); drv.flush()  # below min=10; VM clamps to 10.
   of skChoiceReject:
     discard vm.setChoice("appearance.theme", "InvalidName")
+    drv.flush()
 
 # ---------------------------------------------------------------------------
 # Web driver. Drives raw DOM `click` / `change` events through
@@ -439,23 +444,21 @@ proc webSelectOf(row: MockNode): MockNode =
       return c
   nil
 
-proc webApply(vm: SettingsVM; s: Scenario) =
+proc webApply(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
   let r = MockRenderer()
-  # EX-M16: a single mount call. The reactive shell propagates VM
-  # mutations through the rendered tree in-place — no follow-up
-  # rebuild calls needed.
   let root = buildSettingsApp(r, vm)
+  drv.flush()
   case s.kind
   of skBasic:
     fireEvent(webSidebarButton(webSidebarEntry(root, "appearance")), "click")
     let darkCb = webCheckboxOf(webItemRowByLabel(root, "Dark mode"))
-    fireEvent(darkCb, "click")
+    fireEvent(darkCb, "click"); drv.flush()
     let fontInp = webNumberInputOf(webItemRowByLabel(root, "Font size"))
     r.setAttribute(fontInp, "value", "18")
-    fireEvent(fontInp, "change")
+    fireEvent(fontInp, "change"); drv.flush()
     let themeSel = webSelectOf(webItemRowByLabel(root, "Theme"))
     r.setAttribute(themeSel, "value", "Solarized")
-    fireEvent(themeSel, "change")
+    fireEvent(themeSel, "change"); drv.flush()
   of skEmpty:
     discard
   of skAllGroups:
@@ -464,15 +467,15 @@ proc webApply(vm: SettingsVM; s: Scenario) =
       for row in webPaneItemRows(root):
         let cb = webCheckboxOf(row)
         if cb != nil:
-          fireEvent(cb, "click")
+          fireEvent(cb, "click"); drv.flush()
           break
   of skClamp:
     fireEvent(webSidebarButton(webSidebarEntry(root, "appearance")), "click")
     let fontInp = webNumberInputOf(webItemRowByLabel(root, "Font size"))
     r.setAttribute(fontInp, "value", "5")
-    fireEvent(fontInp, "change")
+    fireEvent(fontInp, "change"); drv.flush()
   of skChoiceReject:
-    discard vm.setChoice("appearance.theme", "InvalidName")
+    discard vm.setChoice("appearance.theme", "InvalidName"); drv.flush()
 
 # ---------------------------------------------------------------------------
 # GPUI driver. Drives `click` for everything; for number/choice the
@@ -572,25 +575,23 @@ proc gpuiChoiceSelectOf(row: gpuiR.GpuiElement): gpuiR.GpuiElement =
       return c
   nil
 
-proc gpuiApply(vm: SettingsVM; s: Scenario) =
+proc gpuiApply(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
   gpuiB.gpui_reset_tree()
   gpuiR.resetCallbacks()
   let r = gpuiR.GpuiRenderer()
-  # EX-M16: a single mount call. The reactive shell propagates VM
-  # mutations through the rendered tree in-place — no follow-up
-  # rebuild calls needed.
   let root = buildSettingsApp(r, vm)
+  drv.flush()
   case s.kind
   of skBasic:
     gpuiR.fireEvent(gpuiGroupsRow(root, "appearance"), "click")
     let darkCb = gpuiToggleOf(gpuiItemRowByLabel(root, "Dark mode"))
-    gpuiR.fireEvent(darkCb, "click")
+    gpuiR.fireEvent(darkCb, "click"); drv.flush()
     let fontInp = gpuiNumberInputOf(gpuiItemRowByLabel(root, "Font size"))
     gpuiR.setAttribute(r, fontInp, "data-value", "18")
-    gpuiR.fireEvent(fontInp, "click")
+    gpuiR.fireEvent(fontInp, "click"); drv.flush()
     let themeSel = gpuiChoiceSelectOf(gpuiItemRowByLabel(root, "Theme"))
     gpuiR.setAttribute(r, themeSel, "data-value", "Solarized")
-    gpuiR.fireEvent(themeSel, "click")
+    gpuiR.fireEvent(themeSel, "click"); drv.flush()
   of skEmpty:
     discard
   of skAllGroups:
@@ -599,15 +600,15 @@ proc gpuiApply(vm: SettingsVM; s: Scenario) =
       for row in gpuiItemRows(root):
         let cb = gpuiToggleOf(row)
         if cb != nil:
-          gpuiR.fireEvent(cb, "click")
+          gpuiR.fireEvent(cb, "click"); drv.flush()
           break
   of skClamp:
     gpuiR.fireEvent(gpuiGroupsRow(root, "appearance"), "click")
     let fontInp = gpuiNumberInputOf(gpuiItemRowByLabel(root, "Font size"))
     gpuiR.setAttribute(r, fontInp, "data-value", "5")
-    gpuiR.fireEvent(fontInp, "click")
+    gpuiR.fireEvent(fontInp, "click"); drv.flush()
   of skChoiceReject:
-    discard vm.setChoice("appearance.theme", "InvalidName")
+    discard vm.setChoice("appearance.theme", "InvalidName"); drv.flush()
 
 # ---------------------------------------------------------------------------
 # Freya driver. Drives `click` for everything; for number/choice the
@@ -700,29 +701,27 @@ proc freyaChoiceSelectOf(row: freyaR.FreyaElement): freyaR.FreyaElement =
       return c
   nil
 
-proc freyaApply(vm: SettingsVM; s: Scenario) =
+proc freyaApply(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
   freyaB.freya_reset_tree()
   freyaR.resetCallbacks()
   let r = freyaR.FreyaRenderer()
-  # EX-M16: a single mount call. The reactive shell propagates VM
-  # mutations through the rendered tree in-place — no follow-up
-  # rebuild calls needed.
   let root = buildSettingsApp(r, vm)
+  drv.flush()
   case s.kind
   of skBasic:
     let appearanceCard = freyaCard(root, "appearance")
     freyaR.fireEvent(freyaCardHeader(appearanceCard), "click")
     let darkCb = freyaToggleOf(freyaItemRowByLabel(
       freyaCard(root, "appearance"), "Dark mode"))
-    freyaR.fireEvent(darkCb, "click")
+    freyaR.fireEvent(darkCb, "click"); drv.flush()
     let fontInp = freyaNumberInputOf(freyaItemRowByLabel(
       freyaCard(root, "appearance"), "Font size"))
     freyaR.setAttribute(r, fontInp, "data-value", "18")
-    freyaR.fireEvent(fontInp, "click")
+    freyaR.fireEvent(fontInp, "click"); drv.flush()
     let themeSel = freyaChoiceSelectOf(freyaItemRowByLabel(
       freyaCard(root, "appearance"), "Theme"))
     freyaR.setAttribute(r, themeSel, "data-value", "Solarized")
-    freyaR.fireEvent(themeSel, "click")
+    freyaR.fireEvent(themeSel, "click"); drv.flush()
   of skEmpty:
     discard
   of skAllGroups:
@@ -733,7 +732,7 @@ proc freyaApply(vm: SettingsVM; s: Scenario) =
       for row in freyaItemRows(card):
         let cb = freyaToggleOf(row)
         if cb != nil:
-          freyaR.fireEvent(cb, "click")
+          freyaR.fireEvent(cb, "click"); drv.flush()
           break
   of skClamp:
     let appearanceHeader = freyaCardHeader(freyaCard(root, "appearance"))
@@ -741,9 +740,9 @@ proc freyaApply(vm: SettingsVM; s: Scenario) =
     let fontInp = freyaNumberInputOf(freyaItemRowByLabel(
       freyaCard(root, "appearance"), "Font size"))
     freyaR.setAttribute(r, fontInp, "data-value", "5")
-    freyaR.fireEvent(fontInp, "click")
+    freyaR.fireEvent(fontInp, "click"); drv.flush()
   of skChoiceReject:
-    discard vm.setChoice("appearance.theme", "InvalidName")
+    discard vm.setChoice("appearance.theme", "InvalidName"); drv.flush()
 
 # ---------------------------------------------------------------------------
 # Driver registration.
@@ -752,26 +751,26 @@ proc freyaApply(vm: SettingsVM; s: Scenario) =
 proc tuiDriver(): RendererDriver =
   RendererDriver(
     name: "tui",
-    mountAndDrive: proc(vm: SettingsVM; s: Scenario) =
-      tuiApply(vm, s))
+    mountAndDrive: proc(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
+      tuiApply(vm, s, drv))
 
 proc webDriver(): RendererDriver =
   RendererDriver(
     name: "web",
-    mountAndDrive: proc(vm: SettingsVM; s: Scenario) =
-      webApply(vm, s))
+    mountAndDrive: proc(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
+      webApply(vm, s, drv))
 
 proc gpuiDriver(): RendererDriver =
   RendererDriver(
     name: "gpui",
-    mountAndDrive: proc(vm: SettingsVM; s: Scenario) =
-      gpuiApply(vm, s))
+    mountAndDrive: proc(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
+      gpuiApply(vm, s, drv))
 
 proc freyaDriver(): RendererDriver =
   RendererDriver(
     name: "freya",
-    mountAndDrive: proc(vm: SettingsVM; s: Scenario) =
-      freyaApply(vm, s))
+    mountAndDrive: proc(vm: SettingsVM; s: Scenario; drv: AsyncDriver) =
+      freyaApply(vm, s, drv))
 
 var drivers = @[tuiDriver(), webDriver(), gpuiDriver(), freyaDriver()]
 
@@ -791,23 +790,28 @@ when defined(android):
 proc runScenarioAcrossDrivers(s: Scenario): seq[SettingsVMSnapshot] =
   result = @[]
   for d in drivers:
-    let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
-    d.mountAndDrive(vm, s)
+    let drv = newAsyncDriver(seed = 42)
+    drv.db.seedSettings(buildDemoSettingsCatalog())
+    let vm = newSettingsVM(drv.db)
+    d.mountAndDrive(vm, s, drv)
     result.add settingsVmSnapshot(vm)
+    drv.shutdown()
 
 proc assertParity(s: Scenario; snaps: seq[SettingsVMSnapshot]) =
   doAssert snaps.len == drivers.len
   for i in 1 ..< snaps.len:
     if snaps[i] != snaps[0]:
-      let catalogA = buildDemoSettingsCatalog()
-      let vmA = newSettingsVM(catalogA)
-      drivers[0].mountAndDrive(vmA, s)
-      let catalogB = buildDemoSettingsCatalog()
-      let vmB = newSettingsVM(catalogB)
-      drivers[i].mountAndDrive(vmB, s)
+      let drvA = newAsyncDriver(seed = 42)
+      drvA.db.seedSettings(buildDemoSettingsCatalog())
+      let vmA = newSettingsVM(drvA.db)
+      drivers[0].mountAndDrive(vmA, s, drvA)
+      let drvB = newAsyncDriver(seed = 42)
+      drvB.db.seedSettings(buildDemoSettingsCatalog())
+      let vmB = newSettingsVM(drvB.db)
+      drivers[i].mountAndDrive(vmB, s, drvB)
       let jsonA = settingsVmSnapshotJson(vmA)
       let jsonB = settingsVmSnapshotJson(vmB)
+      drvA.shutdown(); drvB.shutdown()
       checkpoint(
         "scenario " & s.name & " — " & drivers[0].name &
         " vs " & drivers[i].name & " diverged.\n" &
@@ -908,10 +912,12 @@ suite "EX-M13: cross-renderer SettingsVM-parity across all available renderers":
     let s = scenarioBasic()
     var jsons: seq[string] = @[]
     for d in drivers:
-      let catalog = buildDemoSettingsCatalog()
-      let vm = newSettingsVM(catalog)
-      d.mountAndDrive(vm, s)
+      let drv = newAsyncDriver(seed = 42)
+      drv.db.seedSettings(buildDemoSettingsCatalog())
+      let vm = newSettingsVM(drv.db)
+      d.mountAndDrive(vm, s, drv)
       jsons.add settingsVmSnapshotJson(vm).pretty
+      drv.shutdown()
     for i in 1 ..< jsons.len:
       check jsons[i] == jsons[0]
 

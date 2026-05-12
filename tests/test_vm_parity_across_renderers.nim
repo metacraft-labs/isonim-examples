@@ -35,7 +35,10 @@ import std/[json, strutils, unittest]
 when defined(macosx) or defined(android):
   import std/sequtils  # `mapIt` for the platform-gated check below
 
+import nim_everywhere
+
 import isonim/core/signals
+import ./helpers/async_drive
 
 # Composition roots for every Linux-buildable renderer.
 #
@@ -80,74 +83,62 @@ import ./helpers/parity_snapshot
 
 type
   Scenario = object
+    ## EX-M17: scripts now take a `drv` so they can flush the fake
+    ## clock between actions. Every action is async, so we drain
+    ## after every state-mutating call to keep the test pattern
+    ## explicit.
     name: string
-    script: proc(vm: TaskAppVM) {.closure.}
+    script: proc(vm: TaskAppVM; drv: AsyncDriver) {.closure.}
 
 proc scenarioBasicLifecycle(): Scenario =
-  ## Scenario A — the EX-M4 baseline: add 3 tasks, toggle 1, switch
-  ## filter All -> Active.
   Scenario(
     name: "A: basic life-cycle (add 3, toggle 1, filter Active)",
-    script: proc(vm: TaskAppVM) =
-      vm.addTask("alpha")
-      vm.addTask("beta")
-      vm.addTask("gamma")
-      vm.toggleTask(vm.tasks.val[0].id)
+    script: proc(vm: TaskAppVM; drv: AsyncDriver) =
+      vm.addTask("alpha"); drv.flush()
+      vm.addTask("beta"); drv.flush()
+      vm.addTask("gamma"); drv.flush()
+      vm.toggleTask(vm.tasks.data.val[0].id); drv.flush()
       vm.setFilter(fmActive))
 
 proc scenarioEmpty(): Scenario =
-  ## Scenario B — fresh VM, no actions. Confirms the initial state is
-  ## identical across renderers (no setup leaks state through the
-  ## leaves' first render pass).
   Scenario(
     name: "B: empty / re-init (no actions)",
-    script: proc(vm: TaskAppVM) =
+    script: proc(vm: TaskAppVM; drv: AsyncDriver) =
       discard vm)
 
 proc scenarioAllCompleted(): Scenario =
-  ## Scenario C — add 3 tasks, toggle all 3, filter Completed. Tests
-  ## that the renderers route a *sequence* of toggles consistently
-  ## (no dropped events, no reorder).
   Scenario(
     name: "C: all-completed (3 tasks, all toggled, filter Completed)",
-    script: proc(vm: TaskAppVM) =
-      vm.addTask("one")
-      vm.addTask("two")
-      vm.addTask("three")
-      vm.toggleTask(vm.tasks.val[0].id)
-      vm.toggleTask(vm.tasks.val[1].id)
-      vm.toggleTask(vm.tasks.val[2].id)
+    script: proc(vm: TaskAppVM; drv: AsyncDriver) =
+      vm.addTask("one"); drv.flush()
+      vm.addTask("two"); drv.flush()
+      vm.addTask("three"); drv.flush()
+      vm.toggleTask(vm.tasks.data.val[0].id); drv.flush()
+      vm.toggleTask(vm.tasks.data.val[1].id); drv.flush()
+      vm.toggleTask(vm.tasks.data.val[2].id); drv.flush()
       vm.setFilter(fmCompleted))
 
 proc scenarioToggleThrash(): Scenario =
-  ## Scenario D — add 1 task, toggle 5 times. The terminal state
-  ## must be `completed=true` (odd toggle count) regardless of
-  ## renderer. Confirms toggle is idempotent / the per-row click
-  ## handlers don't accidentally collapse repeated events.
   Scenario(
     name: "D: toggle thrash (1 task, 5 toggles -> completed=true)",
-    script: proc(vm: TaskAppVM) =
-      vm.addTask("flippy")
-      let id = vm.tasks.val[0].id
+    script: proc(vm: TaskAppVM; drv: AsyncDriver) =
+      vm.addTask("flippy"); drv.flush()
+      let id = vm.tasks.data.val[0].id
       for _ in 0 ..< 5:
-        vm.toggleTask(id))
+        vm.toggleTask(id); drv.flush())
 
 proc scenarioFilterPersistence(): Scenario =
-  ## Scenario E — add 5 tasks with alternating completion, switch to
-  ## Active. Tests that the visibleTasks projection is consistent
-  ## across renderers when the filter excludes a non-trivial subset.
   Scenario(
     name: "E: filter persistence (5 tasks, alternating completion, filter Active)",
-    script: proc(vm: TaskAppVM) =
-      vm.addTask("t1")
-      vm.addTask("t2")
-      vm.addTask("t3")
-      vm.addTask("t4")
-      vm.addTask("t5")
-      # Toggle the 1st, 3rd, 5th tasks -> completed=true.
-      vm.toggleTask(vm.tasks.val[0].id)
-      vm.toggleTask(vm.tasks.val[2].id)
-      vm.toggleTask(vm.tasks.val[4].id)
+    script: proc(vm: TaskAppVM; drv: AsyncDriver) =
+      vm.addTask("t1"); drv.flush()
+      vm.addTask("t2"); drv.flush()
+      vm.addTask("t3"); drv.flush()
+      vm.addTask("t4"); drv.flush()
+      vm.addTask("t5"); drv.flush()
+      vm.toggleTask(vm.tasks.data.val[0].id); drv.flush()
+      vm.toggleTask(vm.tasks.data.val[2].id); drv.flush()
+      vm.toggleTask(vm.tasks.data.val[4].id); drv.flush()
       vm.setFilter(fmActive))
 
 # The five scenarios are also collected into a sequence so future
@@ -175,7 +166,8 @@ let allScenarios* = @[
 type
   RendererDriver = object
     name: string
-    mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM))
+    mountAndDrive: proc(vm: TaskAppVM; drv: AsyncDriver;
+                        script: proc(vm: TaskAppVM; drv: AsyncDriver))
 
 # Per-thread harness for the TUI driver. The `TerminalTestHarness`
 # owns terminal allocations; we reuse a single instance across
@@ -185,36 +177,44 @@ var tuiHarness: TerminalTestHarness = nil
 proc tuiDriver(): RendererDriver =
   RendererDriver(
     name: "tui",
-    mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
+    mountAndDrive: proc(vm: TaskAppVM; drv: AsyncDriver;
+                        script: proc(vm: TaskAppVM; drv: AsyncDriver)) =
       if tuiHarness == nil:
         tuiHarness = newTerminalTestHarness(60, 14)
       discard tui_app.runTaskApp(tuiHarness, vm)
-      script(vm)
+      drv.flush()  # initial load
+      script(vm, drv)
       tui_app.resetTuiLeaves())
 
 proc webDriver(): RendererDriver =
   RendererDriver(
     name: "web",
-    mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
+    mountAndDrive: proc(vm: TaskAppVM; drv: AsyncDriver;
+                        script: proc(vm: TaskAppVM; drv: AsyncDriver)) =
       let r = MockRenderer()
       discard web_app.buildTaskApp(r, vm)
-      script(vm)
+      drv.flush()
+      script(vm, drv)
       web_app.resetWebLeaves())
 
 proc gpuiDriver(): RendererDriver =
   RendererDriver(
     name: "gpui",
-    mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
+    mountAndDrive: proc(vm: TaskAppVM; drv: AsyncDriver;
+                        script: proc(vm: TaskAppVM; drv: AsyncDriver)) =
       discard gpui_app.runTaskApp(vm)
-      script(vm)
+      drv.flush()
+      script(vm, drv)
       gpui_app.resetGpuiLeaves())
 
 proc freyaDriver(): RendererDriver =
   RendererDriver(
     name: "freya",
-    mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
+    mountAndDrive: proc(vm: TaskAppVM; drv: AsyncDriver;
+                        script: proc(vm: TaskAppVM; drv: AsyncDriver)) =
       discard freya_app.runTaskApp(vm)
-      script(vm)
+      drv.flush()
+      script(vm, drv)
       freya_app.resetFreyaLeaves())
 
 # Build the driver table. Cocoa / Android entries are appended only
@@ -226,9 +226,11 @@ when defined(macosx):
   proc cocoaDriver(): RendererDriver =
     RendererDriver(
       name: "cocoa",
-      mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
+      mountAndDrive: proc(vm: TaskAppVM; drv: AsyncDriver;
+                          script: proc(vm: TaskAppVM; drv: AsyncDriver)) =
         discard cocoa_app.runTaskApp(vm)
-        script(vm)
+        drv.flush()
+        script(vm, drv)
         cocoa_app.rerender(vm)
         cocoa_app.resetCocoaLeaves())
   drivers.add cocoaDriver()
@@ -237,9 +239,11 @@ when defined(android):
   proc androidDriver(): RendererDriver =
     RendererDriver(
       name: "android",
-      mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
+      mountAndDrive: proc(vm: TaskAppVM; drv: AsyncDriver;
+                          script: proc(vm: TaskAppVM; drv: AsyncDriver)) =
         discard android_app.runTaskApp(vm)
-        script(vm)
+        drv.flush()
+        script(vm, drv)
         android_app.rerender(vm)
         android_app.resetAndroidLeaves())
   drivers.add androidDriver()
@@ -251,28 +255,32 @@ when defined(android):
 
 proc runScenarioAcrossDrivers(s: Scenario): seq[VMSnapshot] =
   ## Run a scenario through every registered renderer driver and
-  ## collect the per-renderer terminal VM snapshot. The caller asserts
-  ## byte-identical equality across the returned sequence.
+  ## collect the per-renderer terminal VM snapshot. Each driver gets
+  ## its own `AsyncDriver` (fresh fake-time context + fresh fake_db
+  ## with a fixed seed), so the per-renderer latency sequence is
+  ## byte-identical across renderers — the parity assertion holds
+  ## regardless of which renderer drove the same scripted operations.
   result = @[]
   for d in drivers:
-    let vm = newTaskAppVM()
-    d.mountAndDrive(vm, s.script)
+    let drv = newAsyncDriver(seed = 42)
+    let vm = newTaskAppVM(drv.db)
+    d.mountAndDrive(vm, drv, s.script)
     result.add vmSnapshot(vm)
+    drv.shutdown()
 
 proc assertParity(s: Scenario; snaps: seq[VMSnapshot]) =
-  ## Pairwise equality check; on first divergence, dump both sides as
-  ## JSON for a readable diff (the JSON projection is stable across
-  ## runs so the failure is reproducible).
   doAssert snaps.len == drivers.len
   for i in 1 ..< snaps.len:
     if snaps[i] != snaps[0]:
-      let vmA = newTaskAppVM(); let vmB = newTaskAppVM()
-      # Reconstruct a JSON view from each snapshot for the failure
-      # message. We replay the script onto fresh VMs so the JSON
-      # helper has something to introspect.
-      s.script(vmA); s.script(vmB)
+      let drvA = newAsyncDriver(seed = 42)
+      let vmA = newTaskAppVM(drvA.db)
+      let drvB = newAsyncDriver(seed = 42)
+      let vmB = newTaskAppVM(drvB.db)
+      drvA.flush(); drvB.flush()
+      s.script(vmA, drvA); s.script(vmB, drvB)
       let jsonA = vmSnapshotJson(vmA)
       let jsonB = vmSnapshotJson(vmB)
+      drvA.shutdown(); drvB.shutdown()
       checkpoint(
         "scenario " & s.name & " — " & drivers[0].name &
         " vs " & drivers[i].name & " diverged.\n" &
@@ -365,9 +373,11 @@ suite "EX-M7: cross-renderer VM-parity across all available renderers":
     let s = scenarioBasicLifecycle()
     var jsons: seq[string] = @[]
     for d in drivers:
-      let vm = newTaskAppVM()
-      d.mountAndDrive(vm, s.script)
+      let drv = newAsyncDriver(seed = 42)
+      let vm = newTaskAppVM(drv.db)
+      d.mountAndDrive(vm, drv, s.script)
       jsons.add vmSnapshotJson(vm).pretty
+      drv.shutdown()
     for i in 1 ..< jsons.len:
       check jsons[i] == jsons[0]
 

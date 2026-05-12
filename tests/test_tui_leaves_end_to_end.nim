@@ -25,12 +25,16 @@ import std/[unittest, strutils, tables]
 import isonim/core/signals
 import isonim_tui  # `newTerminalTestHarness`, `TerminalTestHarness`
 import task_app/main_tui
+import ./helpers/async_drive
 
 suite "EX-M2: migrated TUI leaves drive the real-stack pipeline":
   test "scripted scenario: add, toggle, filter — VM and tree stay in sync":
-    let vm = newTaskAppVM()
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
     let h = newTerminalTestHarness(60, 14)
     let root = runTaskApp(h, vm)
+    drv.flush()
 
     # Topology mirrors the architecture spec's worked example.
     check root != nil
@@ -49,9 +53,9 @@ suite "EX-M2: migrated TUI leaves drive the real-stack pipeline":
     check s.summaryNode != nil
 
     # ── 1. Drive the VM through addTask; the list grows reactively.
-    vm.addTask("buy milk")
-    vm.addTask("write specs")
-    vm.addTask("review pr")
+    vm.addTask("buy milk"); drv.flush()
+    vm.addTask("write specs"); drv.flush()
+    vm.addTask("review pr"); drv.flush()
 
     check vm.totalCount == 3
     check vm.activeCount == 3
@@ -69,8 +73,8 @@ suite "EX-M2: migrated TUI leaves drive the real-stack pipeline":
     check summaryText == "3 of 3 remaining"
 
     # ── 2. Toggle the first task → it becomes [x] and active drops by 1.
-    let firstId = vm.tasks.val[0].id
-    vm.toggleTask(firstId)
+    let firstId = vm.tasks.data.val[0].id
+    vm.toggleTask(firstId); drv.flush()
 
     check vm.activeCount == 2
     check vm.completedCount == 1
@@ -112,9 +116,10 @@ suite "EX-M2: migrated TUI leaves drive the real-stack pipeline":
     check s.filterButtons[2].selected == true
 
     # ── 5. Empty-state placeholder for an unused filter.
-    let vm2 = newTaskAppVM()
+    let vm2 = newTaskAppVM(newFakeDb(seed = 99))
     let h2 = newTerminalTestHarness(60, 14)
     discard runTaskApp(h2, vm2)
+    drv.flush()
     let s2 = leavesFor(vm2)
     check s2.listNode.children.len == 1  # placeholder row
     check "(no tasks yet)" in s2.listNode.children[0].children[0].text

@@ -48,10 +48,39 @@
 
 import std/[tables, unittest]
 
+import nim_everywhere
+import nim_everywhere/async_compat
+
 import isonim/core/signals
 import isonim/testing/mock_dom
 
 import settings_app/main_web
+
+# EX-M17: install a global FakeAsyncContext for this suite and a
+# helper `flushAll` so we drain after every event-firing scripted
+# action. We don't restructure the test bodies; the helper is just
+# inserted at the action sites.
+
+var fakeCtx {.threadvar.}: FakeAsyncContext
+
+template installFakeCtx() =
+  if fakeCtx == nil:
+    fakeCtx = newFakeAsyncContext()
+    fakeCtx.install()
+
+proc flushAll() =
+  if fakeCtx != nil:
+    for _ in 0 ..< 2:
+      fakeCtx.advance(100)
+      fakeCtx.runPending()
+      drainPlatformCallbacks()
+
+# Helper: build the VM through the legacy newSettingsVM(catalog)
+# convenience overload, then drain so the initial load resolves.
+proc mountSettingsVM(catalog: SettingsCatalog): SettingsVM =
+  installFakeCtx()
+  result = newSettingsVM(catalog)
+  flushAll()
 
 # ---------------------------------------------------------------------------
 # Tree-walking helpers. Each helper locates a sub-tree by attribute so
@@ -158,7 +187,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "mount: sidebar lists every group; pane shows the active one":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
@@ -192,7 +221,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "sidebar entries label each group with its display label":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
@@ -206,7 +235,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "pane header carries the active group's label and description":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
@@ -222,7 +251,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "click sidebar 'Editor' entry → setActiveGroup + pane swaps":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
@@ -230,7 +259,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     check editorEntry != nil
     let editorBtn = sidebarButton(editorEntry)
     check editorBtn != nil
-    fireEvent(editorBtn, "click")
+    fireEvent(editorBtn, "click"); flushAll()
 
     check vm.activeGroupId.val == "editor"
 
@@ -248,7 +277,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "toggle checkbox click flips VM + checked attribute":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
     let root = buildSettingsApp(r, vm)
@@ -262,7 +291,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     check cb.attributes.getOrDefault("data-value") == "true"
     check vm.toggleValue("editor.tabs_to_spaces") == true
 
-    fireEvent(cb, "click")
+    fireEvent(cb, "click"); flushAll()
     check vm.toggleValue("editor.tabs_to_spaces") == false
 
     # The checkbox's click listener flipped `checked` + `data-value`
@@ -271,12 +300,12 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     check cb.attributes.getOrDefault("data-value") == "false"
 
     # Fire again — the second click flips back to true.
-    fireEvent(cb, "click")
+    fireEvent(cb, "click"); flushAll()
     check vm.toggleValue("editor.tabs_to_spaces") == true
 
   test "number input change writes through VM (in-range)":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
     let root = buildSettingsApp(r, vm)
@@ -292,7 +321,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
     # Simulate the user editing the input value and committing it.
     r.setAttribute(inp, "value", "6")
-    fireEvent(inp, "change")
+    fireEvent(inp, "change"); flushAll()
     check vm.numberValue("editor.tab_width") == 6
 
     # The number leaf's change listener wrote `value` on the input and
@@ -303,7 +332,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "number clamping: above-max input commits clamped to numberMax":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
     let root = buildSettingsApp(r, vm)
@@ -313,7 +342,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     check inp != nil
     # editor.tab_width range is [1, 8] — typing 99 must clamp to 8.
     r.setAttribute(inp, "value", "99")
-    fireEvent(inp, "change")
+    fireEvent(inp, "change"); flushAll()
     check vm.numberValue("editor.tab_width") == 8
 
     # The number leaf's change listener clamped `value` + mirrored
@@ -324,7 +353,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "number clamping: below-min input commits clamped to numberMin":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
     let root = buildSettingsApp(r, vm)
@@ -332,7 +361,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let tabWidthRow = paneItemRowByLabel(root, "Tab width")
     let inp = numberInputOf(tabWidthRow)
     r.setAttribute(inp, "value", "-3")
-    fireEvent(inp, "change")
+    fireEvent(inp, "change"); flushAll()
     check vm.numberValue("editor.tab_width") == 1
 
     # Listener clamped `value` to "1" in place.
@@ -340,7 +369,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "select change writes through VM (editor.line_endings → CRLF)":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
     let root = buildSettingsApp(r, vm)
@@ -361,7 +390,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     check sel.children[2].attributes.getOrDefault("value") == "CR"
 
     r.setAttribute(sel, "value", "CRLF")
-    fireEvent(sel, "change")
+    fireEvent(sel, "change"); flushAll()
     check vm.choiceValue("editor.line_endings") == "CRLF"
 
     # Listener mirrored `data-value` onto the host wrapper in place.
@@ -370,7 +399,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "choice rejection: invalid programmatic write leaves VM unchanged":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     discard buildSettingsApp(r, vm)
 
@@ -383,17 +412,17 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "switching back to appearance restores pane":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
-    fireEvent(sidebarButton(sidebarEntry(root, "editor")), "click")
+    fireEvent(sidebarButton(sidebarEntry(root, "editor")), "click"); flushAll()
     # The shell's `createRenderEffect` rebuilds the pane section on
     # every active-group change in place.
     check paneGroupSection(root).attributes.getOrDefault("data-group-id") ==
       "editor"
 
-    fireEvent(sidebarButton(sidebarEntry(root, "appearance")), "click")
+    fireEvent(sidebarButton(sidebarEntry(root, "appearance")), "click"); flushAll()
     check paneGroupSection(root).attributes.getOrDefault("data-group-id") ==
       "appearance"
     check vm.activeGroupId.val == "appearance"
@@ -404,7 +433,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "appearance pane: dark_mode toggle starts off + flips to on":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
@@ -418,7 +447,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     check not cb.attributes.hasKey("checked")
     check vm.toggleValue("appearance.dark_mode") == false
 
-    fireEvent(cb, "click")
+    fireEvent(cb, "click"); flushAll()
     check vm.toggleValue("appearance.dark_mode") == true
 
     # Click listener wrote `checked` + `data-value` on the same node.
@@ -427,7 +456,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "appearance.theme select drives choice through VM":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
@@ -439,7 +468,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     check vm.choiceValue("appearance.theme") == "Default"
 
     r.setAttribute(sel, "value", "Solarized")
-    fireEvent(sel, "change")
+    fireEvent(sel, "change"); flushAll()
     check vm.choiceValue("appearance.theme") == "Solarized"
 
     # The select's change listener mirrors the new value onto the
@@ -461,7 +490,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "appearance.font_size number suffix and clamping cooperate":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
@@ -479,12 +508,12 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
     # Within-range: 18 commits as-is.
     r.setAttribute(inp, "value", "18")
-    fireEvent(inp, "change")
+    fireEvent(inp, "change"); flushAll()
     check vm.numberValue("appearance.font_size") == 18
 
     # Above-max: 999 clamps to 32.
     r.setAttribute(inp, "value", "999")
-    fireEvent(inp, "change")
+    fireEvent(inp, "change"); flushAll()
     check vm.numberValue("appearance.font_size") == 32
 
     # The leaf's change listener clamped the input `value` in place.
@@ -492,19 +521,19 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "reset to defaults: every value snaps back to the catalog default":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
     # Mutate three different items.
     let darkCb = checkboxOf(paneItemRowByLabel(root, "Dark mode"))
-    fireEvent(darkCb, "click")
+    fireEvent(darkCb, "click"); flushAll()
     let themeSel = selectOf(paneItemRowByLabel(root, "Theme"))
     r.setAttribute(themeSel, "value", "Dracula")
-    fireEvent(themeSel, "change")
+    fireEvent(themeSel, "change"); flushAll()
     let fontInp = numberInputOf(paneItemRowByLabel(root, "Font size"))
     r.setAttribute(fontInp, "value", "20")
-    fireEvent(fontInp, "change")
+    fireEvent(fontInp, "change"); flushAll()
 
     check vm.toggleValue("appearance.dark_mode") == true
     check vm.choiceValue("appearance.theme") == "Dracula"
@@ -515,14 +544,14 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     # § D in the umbrella spec), so the DOM `data-value` mirrors stay
     # at the user-driven values until the user interacts again. The
     # VM itself is the source of truth and reflects the reset.
-    vm.resetDefaults()
+    vm.resetDefaults(); for _ in 0 ..< 12: flushAll()
     check vm.toggleValue("appearance.dark_mode") == false
     check vm.choiceValue("appearance.theme") == "Default"
     check vm.numberValue("appearance.font_size") == 14
 
   test "every group's items render with the catalog's labels and order":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
     for g in catalog.groups:
@@ -541,7 +570,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "non-active groups have empty class; click shifts active":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 
@@ -556,7 +585,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
     # Click notifications — the per-entry reactive effect flips the
     # `active` class on every sidebar entry in place.
-    fireEvent(sidebarButton(sidebarEntry(root, "notifications")), "click")
+    fireEvent(sidebarButton(sidebarEntry(root, "notifications")), "click"); flushAll()
     for g in catalog.groups:
       let li = sidebarEntry(root, g.id)
       let cls = li.attributes.getOrDefault("class")
@@ -567,7 +596,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
   test "sidebar contains a 'Settings' title above the group list":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = MockRenderer()
     let root = buildSettingsApp(r, vm)
 

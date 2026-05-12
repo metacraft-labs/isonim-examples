@@ -384,6 +384,28 @@ test.describe("EX-M14: per-backend bridge visual proof", () => {
 });
 
 // --------------------------------------------------------------------------
+// 4a. EX-M17: bridge launchers experience the 30-50 ms fake_db latency
+//             on their initial load before painting steady-state content.
+// --------------------------------------------------------------------------
+
+test.describe("EX-M17: bridge launchers exercise the fake_db async path", () => {
+  test("TUI bridge eventually paints real demo content (latency < 5s)", async ({
+    page,
+  }) => {
+    // The bridge launcher constructs a TaskAppVM wired to a real
+    // FakeDb (30-50 ms latency per op). The initial loadTasks fires
+    // immediately; the rasterizer paints the cell grid once the
+    // resource transitions to rsReady. The 5s window leaves ample
+    // headroom for the 50 ms latency + render-loop scheduling.
+    const tui = await probeBridge(page, bridgePorts.tui);
+    expect(
+      tui.nonBgPixels,
+      "TUI bridge must paint real demo content after fake_db load resolves",
+    ).toBeGreaterThan(0);
+  });
+});
+
+// --------------------------------------------------------------------------
 // 4b. EX-M15: Freya --demo=settings dispatches to the settings composition
 // --------------------------------------------------------------------------
 

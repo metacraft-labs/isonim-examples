@@ -44,12 +44,16 @@ import isonim_freya/renderer
 # Composition root — drags in the leaves + the Layer-2 view template
 # (including `bindings.fireEvent`, `bindings.freya_reset_tree`, ...).
 import task_app/main_freya as freya_app
+import ./helpers/async_drive
 
 suite "EX-M4: Freya leaves drive the canonical core through the real shim":
 
   test "scripted scenario: add 3, toggle 1, filter switches stay consistent":
-    let vm = newTaskAppVM()
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
     let root = freya_app.runTaskApp(vm)
+    drv.flush()
 
     # ── Topology: appShell wrapper + 4 leaves (input / filter / list /
     #    summary). Mirrors the TUI/web/GPUI checks so the cross-renderer
@@ -73,13 +77,13 @@ suite "EX-M4: Freya leaves drive the canonical core through the real shim":
     #    seeds it through `setInputText` (the equivalent of a user
     #    typing into the input field).
     vm.setInputText("buy milk")
-    fireEvent(s.addBtn, "click")
+    fireEvent(s.addBtn, "click"); drv.flush()
     vm.setInputText("write specs")
-    fireEvent(s.addBtn, "click")
+    fireEvent(s.addBtn, "click"); drv.flush()
     vm.setInputText("review pr")
-    fireEvent(s.addBtn, "click")
+    fireEvent(s.addBtn, "click"); drv.flush()
 
-    check vm.tasks.val.len == 3
+    check vm.tasks.data.val.len == 3
     check vm.activeCount == 3
     check vm.completedCount == 0
     check childCount(s.listNode) == 3
@@ -99,9 +103,9 @@ suite "EX-M4: Freya leaves drive the canonical core through the real shim":
     #    and re-renders.
     let toggleBtn0 = nthChild(row0, 0)
     check toggleBtn0 != nil
-    fireEvent(toggleBtn0, "click")
+    fireEvent(toggleBtn0, "click"); drv.flush()
 
-    check vm.tasks.val[0].completed == true
+    check vm.tasks.data.val[0].completed == true
     check vm.activeCount == 2
     check vm.completedCount == 1
     # After re-render, the matching row carries the [x] marker and the
@@ -139,8 +143,9 @@ suite "EX-M4: Freya leaves drive the canonical core through the real shim":
     check getAttribute(s.filterButtons[2], "class") == "selected"
 
     # ── 5. Empty-state placeholder for a fresh VM.
-    let vm2 = newTaskAppVM()
+    let vm2 = newTaskAppVM(newFakeDb(seed = 99))
     let root2 = freya_app.runTaskApp(vm2)
+    drv.flush()
     check root2 != nil
     let s2 = freya_app.leavesFor(vm2)
     # The list has exactly one child — the placeholder paragraph.
@@ -151,11 +156,14 @@ suite "EX-M4: Freya leaves drive the canonical core through the real shim":
   test "render plan: Freya shim builds a valid plan over the leaf tree":
     ## Sanity check: the shim's render-plan inspection (used by the
     ## RS-M4 streaming bridge later) treats the leaf tree as valid.
-    let vm = newTaskAppVM()
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
     let root = freya_app.runTaskApp(vm)
+    drv.flush()
     vm.setInputText("first")
     let s = freya_app.leavesFor(vm)
-    fireEvent(s.addBtn, "click")
+    fireEvent(s.addBtn, "click"); drv.flush()
     check verifyRenderPlan(root)
     check renderPlanElementCount(root) > 0
 

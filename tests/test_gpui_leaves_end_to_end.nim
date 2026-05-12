@@ -47,12 +47,16 @@ import task_app/main_gpui as gpui_app
 import task_app/main_tui as tui_app
 import task_app/main_web as web_app
 import isonim_tui  # newTerminalTestHarness
+import ./helpers/async_drive
 
 suite "EX-M3: GPUI leaves drive the canonical core through the real shim":
 
   test "scripted scenario: add 3, toggle 1, filter switches stay consistent":
-    let vm = newTaskAppVM()
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
     let root = gpui_app.runTaskApp(vm)
+    drv.flush()
 
     # ── Topology: appShell wrapper + 4 leaves (input / filter / list /
     #    summary). Mirrors the TUI/web checks so the cross-renderer
@@ -76,13 +80,13 @@ suite "EX-M3: GPUI leaves drive the canonical core through the real shim":
     #    seeds it through `setInputText` (the equivalent of a user
     #    typing into the input field).
     vm.setInputText("buy milk")
-    fireEvent(s.addBtn, "click")
+    fireEvent(s.addBtn, "click"); drv.flush()
     vm.setInputText("write specs")
-    fireEvent(s.addBtn, "click")
+    fireEvent(s.addBtn, "click"); drv.flush()
     vm.setInputText("review pr")
-    fireEvent(s.addBtn, "click")
+    fireEvent(s.addBtn, "click"); drv.flush()
 
-    check vm.tasks.val.len == 3
+    check vm.tasks.data.val.len == 3
     check vm.activeCount == 3
     check vm.completedCount == 0
     check childCount(s.listNode) == 3
@@ -102,9 +106,9 @@ suite "EX-M3: GPUI leaves drive the canonical core through the real shim":
     #    and re-renders.
     let toggleBtn0 = nthChild(row0, 0)
     check toggleBtn0 != nil
-    fireEvent(toggleBtn0, "click")
+    fireEvent(toggleBtn0, "click"); drv.flush()
 
-    check vm.tasks.val[0].completed == true
+    check vm.tasks.data.val[0].completed == true
     check vm.activeCount == 2
     check vm.completedCount == 1
     # After re-render, the matching row carries the [x] marker and the
@@ -142,8 +146,9 @@ suite "EX-M3: GPUI leaves drive the canonical core through the real shim":
     check getAttribute(s.filterButtons[2], "class") == "selected"
 
     # ── 5. Empty-state placeholder for a fresh VM.
-    let vm2 = newTaskAppVM()
+    let vm2 = newTaskAppVM(newFakeDb(seed = 99))
     let root2 = gpui_app.runTaskApp(vm2)
+    drv.flush()
     check root2 != nil
     let s2 = gpui_app.leavesFor(vm2)
     # The list has exactly one child — the placeholder paragraph.
@@ -154,12 +159,15 @@ suite "EX-M3: GPUI leaves drive the canonical core through the real shim":
   test "render plan: GPUI shim builds a valid plan over the leaf tree":
     ## Sanity check: the shim's render-plan inspection (used by the
     ## RS-M2 streaming bridge later) treats the leaf tree as valid.
-    let vm = newTaskAppVM()
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
     let root = gpui_app.runTaskApp(vm)
+    drv.flush()
     let r = GpuiRenderer()
     vm.setInputText("first")
     let s = gpui_app.leavesFor(vm)
-    fireEvent(s.addBtn, "click")
+    fireEvent(s.addBtn, "click"); drv.flush()
     check r.verifyRenderPlan(root)
     check r.renderPlanElementCount(root) > 0
 
@@ -172,33 +180,42 @@ suite "EX-M3: cross-renderer VM-state parity (TUI, web, GPUI)":
     ## EX-M3 since we now have three working renderers in the canonical
     ## examples repo.
 
-    proc script(vm: TaskAppVM) =
-      vm.addTask("alpha")
-      vm.addTask("beta")
-      vm.addTask("gamma")
-      let id1 = vm.tasks.val[0].id
-      vm.toggleTask(id1)
+    proc script(vm: TaskAppVM; drv: AsyncDriver) =
+      vm.addTask("alpha"); drv.flush()
+      vm.addTask("beta"); drv.flush()
+      vm.addTask("gamma"); drv.flush()
+      let id1 = vm.tasks.data.val[0].id
+      vm.toggleTask(id1); drv.flush()
       vm.setFilter(fmActive)
 
-    # ── TUI flavour (EX-M16: reactive — no manual rerender)
-    let vmTui = newTaskAppVM()
+    # ── TUI flavour
+    let drvTui = newAsyncDriver(seed = 42)
+    let vmTui = newTaskAppVM(drvTui.db)
     let h = newTerminalTestHarness(60, 14)
     discard tui_app.runTaskApp(h, vmTui)
-    script(vmTui)
+    drvTui.flush()
+    script(vmTui, drvTui)
     let snapTui = vmTui.snapshot
+    drvTui.shutdown()
 
     # ── Web flavour (MockRenderer)
-    let vmWeb = newTaskAppVM()
+    let drvWeb = newAsyncDriver(seed = 42)
+    let vmWeb = newTaskAppVM(drvWeb.db)
     let rWeb = MockRenderer()
     discard web_app.buildTaskApp(rWeb, vmWeb)
-    script(vmWeb)
+    drvWeb.flush()
+    script(vmWeb, drvWeb)
     let snapWeb = vmWeb.snapshot
+    drvWeb.shutdown()
 
     # ── GPUI flavour
-    let vmGpui = newTaskAppVM()
+    let drvGpui = newAsyncDriver(seed = 42)
+    let vmGpui = newTaskAppVM(drvGpui.db)
     discard gpui_app.runTaskApp(vmGpui)
-    script(vmGpui)
+    drvGpui.flush()
+    script(vmGpui, drvGpui)
     let snapGpui = vmGpui.snapshot
+    drvGpui.shutdown()
 
     # All three snapshots are byte-identical (same field values, same
     # task ids — `nextId` is deterministic per fresh VM).

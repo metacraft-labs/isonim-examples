@@ -28,11 +28,33 @@
 
 import std/[strutils, unittest]
 
+import nim_everywhere
+import nim_everywhere/async_compat
+
 import isonim/core/signals
 import isonim_gpui/renderer
 import isonim_gpui/bindings
 
 import settings_app/main_gpui
+
+var fakeCtx {.threadvar.}: FakeAsyncContext
+
+template installFakeCtx() =
+  if fakeCtx == nil:
+    fakeCtx = newFakeAsyncContext()
+    fakeCtx.install()
+
+proc flushAll() =
+  if fakeCtx != nil:
+    for _ in 0 ..< 2:
+      fakeCtx.advance(100)
+      fakeCtx.runPending()
+      drainPlatformCallbacks()
+
+proc mountSettingsVM(catalog: SettingsCatalog): SettingsVM =
+  installFakeCtx()
+  result = newSettingsVM(catalog)
+  flushAll()
 
 # ---------------------------------------------------------------------------
 # Tree-walking helpers. Each helper locates a sub-tree by attribute so
@@ -150,7 +172,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "mount: grid root has two columns; layout=grid":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let root = runSettingsApp(vm)
 
     check root != nil
@@ -174,7 +196,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "groups column row order matches catalog order":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let root = runSettingsApp(vm)
 
     let rows = groupsColumnRows(root)
@@ -188,7 +210,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "active row class on appearance; non-active rows have no `active`":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let root = runSettingsApp(vm)
     check vm.activeGroupId.val == "appearance"
 
@@ -205,7 +227,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "items column header carries active group's label":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let root = runSettingsApp(vm)
 
     let section = itemsGroupSection(root)
@@ -221,7 +243,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "click group row 'editor' → setActiveGroup + items swap":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -229,7 +251,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
     let editorRow = groupsColumnRow(root, "editor")
     check editorRow != nil
-    fireEvent(editorRow, "click")
+    fireEvent(editorRow, "click"); flushAll()
     check vm.activeGroupId.val == "editor"
 
     # The shell's per-row + items-column `createRenderEffect`s flip
@@ -243,7 +265,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "toggle checkbox click flips VM + data-value attribute":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -259,7 +281,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     check getAttribute(cb, "checked") == "checked"
     check vm.toggleValue("editor.tabs_to_spaces") == true
 
-    fireEvent(cb, "click")
+    fireEvent(cb, "click"); flushAll()
     check vm.toggleValue("editor.tabs_to_spaces") == false
     # The leaf's own click handler flipped `data-value` + cleared
     # `checked` on the same node in place.
@@ -267,13 +289,13 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     check getAttribute(cb, "checked") == ""
 
     # Fire again — the second click flips back to true.
-    fireEvent(cb, "click")
+    fireEvent(cb, "click"); flushAll()
     check vm.toggleValue("editor.tabs_to_spaces") == true
     check getAttribute(cb, "data-value") == "true"
 
   test "number leaf click commits in-range data-value":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -291,7 +313,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
     # User edits the data-value attribute and dispatches click.
     r.setAttribute(inp, "data-value", "6")
-    fireEvent(inp, "click")
+    fireEvent(inp, "click"); flushAll()
     check vm.numberValue("editor.tab_width") == 6
 
     # The leaf's click listener wrote `data-value` on the input and
@@ -302,7 +324,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "number clamping: above-max commits clamped to numberMax":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -313,7 +335,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     let inp = numberInputOf(tabWidthRow)
     check inp != nil
     r.setAttribute(inp, "data-value", "99")
-    fireEvent(inp, "click")
+    fireEvent(inp, "click"); flushAll()
     check vm.numberValue("editor.tab_width") == 8
 
     # Listener clamped `data-value` in place.
@@ -321,7 +343,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "number clamping: below-min commits clamped to numberMin":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -331,7 +353,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     let tabWidthRow = itemRowByLabel(root, "Tab width")
     let inp = numberInputOf(tabWidthRow)
     r.setAttribute(inp, "data-value", "-3")
-    fireEvent(inp, "click")
+    fireEvent(inp, "click"); flushAll()
     check vm.numberValue("editor.tab_width") == 1
 
     # Listener clamped `data-value` to "1" in place.
@@ -339,7 +361,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "choice select click writes through VM (editor.line_endings → CRLF)":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -366,7 +388,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     # (the "production" path here is whatever drives the GPUI shim's
     # picker UX) then fire the leaf's click listener.
     r.setAttribute(sel, "data-value", "CRLF")
-    fireEvent(sel, "click")
+    fireEvent(sel, "click"); flushAll()
     check vm.choiceValue("editor.line_endings") == "CRLF"
 
     # Listener mirrored `data-value` onto the host in place.
@@ -374,7 +396,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "choice rejection: invalid programmatic write leaves VM unchanged":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -389,7 +411,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "switching active group flips `active` class across the column":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -417,7 +439,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "appearance.theme select drives choice through VM":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -433,7 +455,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     let sel = choiceSelectOf(themeRow)
     check sel != nil
     r.setAttribute(sel, "data-value", "Solarized")
-    fireEvent(sel, "click")
+    fireEvent(sel, "click"); flushAll()
     check vm.choiceValue("appearance.theme") == "Solarized"
 
     # Listener mirrored `data-value` onto the host in place.
@@ -441,7 +463,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "appearance.dark_mode toggle starts off + flips to on":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -455,7 +477,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     check getAttribute(cb, "checked") == ""
     check vm.toggleValue("appearance.dark_mode") == false
 
-    fireEvent(cb, "click")
+    fireEvent(cb, "click"); flushAll()
     check vm.toggleValue("appearance.dark_mode") == true
 
     # Click listener wrote `data-value` + `checked` on the same node.
@@ -464,7 +486,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "every group's items render with the catalog's labels and order":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -485,7 +507,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
   test "reset to defaults: every value snaps back to the catalog default":
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
@@ -493,13 +515,13 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
     # Mutate three different items.
     let darkCb = toggleNodeOf(itemRowByLabel(root, "Dark mode"))
-    fireEvent(darkCb, "click")
+    fireEvent(darkCb, "click"); flushAll()
     let themeSel = choiceSelectOf(itemRowByLabel(root, "Theme"))
     r.setAttribute(themeSel, "data-value", "Dracula")
-    fireEvent(themeSel, "click")
+    fireEvent(themeSel, "click"); flushAll()
     let fontInp = numberInputOf(itemRowByLabel(root, "Font size"))
     r.setAttribute(fontInp, "data-value", "20")
-    fireEvent(fontInp, "click")
+    fireEvent(fontInp, "click"); flushAll()
 
     check vm.toggleValue("appearance.dark_mode") == true
     check vm.choiceValue("appearance.theme") == "Dracula"
@@ -509,7 +531,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     # subscribe to per-item value signals (EX-M16 § D), so the DOM
     # `data-value` mirrors stay at the user-driven values. The VM
     # itself is the source of truth and reflects the reset.
-    vm.resetDefaults()
+    vm.resetDefaults(); for _ in 0 ..< 12: flushAll()
     check vm.toggleValue("appearance.dark_mode") == false
     check vm.choiceValue("appearance.theme") == "Default"
     check vm.numberValue("appearance.font_size") == 14
@@ -518,7 +540,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     ## Sanity check: the shim's render-plan inspection treats the grid
     ## tree as valid (mirrors the EX-M3 task_app check).
     let catalog = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(catalog)
+    let vm = mountSettingsVM(catalog)
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()

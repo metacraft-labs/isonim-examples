@@ -1,31 +1,31 @@
-## test_vm_round_trip — EX-M1 mandatory integration test.
+## test_vm_round_trip — EX-M1 mandatory integration test (EX-M17 update).
 ##
-## Real-stack exercise of the canonical task-app ViewModel that now
-## lives in this repo (`task_app/core/vm.nim`). The test instantiates
-## a real `TaskAppVM`, drives it through the full action surface
-## (`addTask`, `toggleTask`, `setFilter`), and asserts both the
-## live signal values and the `visibleTasks` derived projection
-## reflect every operation byte-for-byte.
+## EX-M17: every mutation action is now async (it enqueues a `saveTask`
+## / `deleteTask` / `clearCompletedTasks` through a `FakeDb` and
+## refreshes the `Resource[seq[Task]]` on completion). This test
+## installs a `FakeAsyncContext`, drives the VM through the same
+## scripted scenarios, and advances the simulated clock after each
+## action so the assertions see the post-resolution state.
 ##
 ## This is the same VM behaviour the existing M22 test suite in
 ## `isonim-tui` exercises against the renderer-side stack — but here
 ## it runs against the canonical `isonim-examples` location, proving
-## the EX-M1 move did not perturb any semantics.
-##
-## No mocks: the `TaskAppVM` is the real type from
-## `task_app/core/vm.nim`, the signals are the real `Signal[T]`
-## primitives from `isonim/core/signals`, and every assertion reads
-## the live signal `.val` (no recorded snapshot indirection).
+## the EX-M1 move did not perturb any semantics and EX-M17 preserved
+## the action surface.
 
 import std/unittest
 
 import isonim/core/signals
 import task_app/core/vm
+import ./helpers/async_drive
 
-suite "EX-M1: canonical TaskAppVM round-trip":
-  test "fresh VM starts empty with All filter":
-    let vm = newTaskAppVM()
-    check vm.tasks.val.len == 0
+suite "EX-M17: TaskAppVM async round-trip via fake_db":
+  test "fresh VM starts empty with All filter (post-initial-load)":
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()  # resolve the initial loadTasks
+    check vm.tasks.data.val.len == 0
     check vm.filter.val == fmAll
     check vm.inputText.val == ""
     check vm.totalCount == 0
@@ -34,68 +34,77 @@ suite "EX-M1: canonical TaskAppVM round-trip":
     check vm.visibleTasks.len == 0
 
   test "addTask appends in insertion order with monotonic ids":
-    let vm = newTaskAppVM()
-    vm.addTask("foo")
-    vm.addTask("bar")
-    vm.addTask("baz")
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
+    vm.addTask("foo"); drv.flush()
+    vm.addTask("bar"); drv.flush()
+    vm.addTask("baz"); drv.flush()
     check vm.totalCount == 3
-    check vm.tasks.val[0].name == "foo"
-    check vm.tasks.val[1].name == "bar"
-    check vm.tasks.val[2].name == "baz"
-    # Ids are monotonic and unique.
-    check vm.tasks.val[0].id == 1
-    check vm.tasks.val[1].id == 2
-    check vm.tasks.val[2].id == 3
-    # New tasks are not completed.
-    for t in vm.tasks.val:
+    check vm.tasks.data.val[0].name == "foo"
+    check vm.tasks.data.val[1].name == "bar"
+    check vm.tasks.data.val[2].name == "baz"
+    check vm.tasks.data.val[0].id == 1
+    check vm.tasks.data.val[1].id == 2
+    check vm.tasks.data.val[2].id == 3
+    for t in vm.tasks.data.val:
       check not t.completed
-    # addTask clears the input text after submission.
     check vm.inputText.val == ""
 
   test "addTask trims whitespace and ignores empty names":
-    let vm = newTaskAppVM()
-    vm.addTask("   ")
-    vm.addTask("\t\t")
-    vm.addTask("")
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
+    vm.addTask("   "); drv.flush()
+    vm.addTask("\t\t"); drv.flush()
+    vm.addTask(""); drv.flush()
     check vm.totalCount == 0
-    vm.addTask("   trimmed   ")
+    vm.addTask("   trimmed   "); drv.flush()
     check vm.totalCount == 1
-    check vm.tasks.val[0].name == "trimmed"
+    check vm.tasks.data.val[0].name == "trimmed"
 
   test "toggleTask flips completed flag for the matching id":
-    let vm = newTaskAppVM()
-    vm.addTask("foo")
-    vm.addTask("bar")
-    let fooId = vm.tasks.val[0].id
-    vm.toggleTask(fooId)
-    check vm.tasks.val[0].completed
-    check not vm.tasks.val[1].completed
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
+    vm.addTask("foo"); drv.flush()
+    vm.addTask("bar"); drv.flush()
+    let fooId = vm.tasks.data.val[0].id
+    vm.toggleTask(fooId); drv.flush()
+    check vm.tasks.data.val[0].completed
+    check not vm.tasks.data.val[1].completed
     check vm.activeCount == 1
     check vm.completedCount == 1
-    # Toggle back.
-    vm.toggleTask(fooId)
-    check not vm.tasks.val[0].completed
+    vm.toggleTask(fooId); drv.flush()
+    check not vm.tasks.data.val[0].completed
     check vm.activeCount == 2
     check vm.completedCount == 0
 
   test "toggleTask is a no-op for unknown ids":
-    let vm = newTaskAppVM()
-    vm.addTask("foo")
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
+    vm.addTask("foo"); drv.flush()
     let snap = vm.snapshot
-    vm.toggleTask(99999)
+    vm.toggleTask(99999); drv.flush()
     check vm.snapshot == snap
 
   test "setFilter mutates the filter signal and visibleTasks reflects it":
-    let vm = newTaskAppVM()
-    vm.addTask("foo")
-    vm.addTask("bar")
-    vm.toggleTask(vm.tasks.val[0].id)  # foo done, bar active
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
+    vm.addTask("foo"); drv.flush()
+    vm.addTask("bar"); drv.flush()
+    vm.toggleTask(vm.tasks.data.val[0].id); drv.flush()
 
-    # Default: All.
     check vm.filter.val == fmAll
     check vm.visibleTasks.len == 2
 
-    # Active filter.
     vm.setFilter(fmActive)
     check vm.filter.val == fmActive
     let active = vm.visibleTasks
@@ -103,7 +112,6 @@ suite "EX-M1: canonical TaskAppVM round-trip":
     check active[0].name == "bar"
     check not active[0].completed
 
-    # Completed filter.
     vm.setFilter(fmCompleted)
     check vm.filter.val == fmCompleted
     let completed = vm.visibleTasks
@@ -111,75 +119,90 @@ suite "EX-M1: canonical TaskAppVM round-trip":
     check completed[0].name == "foo"
     check completed[0].completed
 
-    # Back to All.
     vm.setFilter(fmAll)
     check vm.filter.val == fmAll
     check vm.visibleTasks.len == 2
 
   test "removeTask drops the matching row, preserves order, no-op on miss":
-    let vm = newTaskAppVM()
-    vm.addTask("a"); vm.addTask("b"); vm.addTask("c")
-    let bId = vm.tasks.val[1].id
-    vm.removeTask(bId)
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
+    vm.addTask("a"); drv.flush()
+    vm.addTask("b"); drv.flush()
+    vm.addTask("c"); drv.flush()
+    let bId = vm.tasks.data.val[1].id
+    vm.removeTask(bId); drv.flush()
     check vm.totalCount == 2
-    check vm.tasks.val[0].name == "a"
-    check vm.tasks.val[1].name == "c"
+    check vm.tasks.data.val[0].name == "a"
+    check vm.tasks.data.val[1].name == "c"
     let before = vm.snapshot
-    vm.removeTask(99999)
+    vm.removeTask(99999); drv.flush()
     check vm.snapshot == before
 
   test "clearCompleted removes only completed tasks in one batch":
-    let vm = newTaskAppVM()
-    vm.addTask("a"); vm.addTask("b"); vm.addTask("c"); vm.addTask("d")
-    vm.toggleTask(vm.tasks.val[0].id)
-    vm.toggleTask(vm.tasks.val[2].id)
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
+    vm.addTask("a"); drv.flush()
+    vm.addTask("b"); drv.flush()
+    vm.addTask("c"); drv.flush()
+    vm.addTask("d"); drv.flush()
+    vm.toggleTask(vm.tasks.data.val[0].id); drv.flush()
+    vm.toggleTask(vm.tasks.data.val[2].id); drv.flush()
     check vm.completedCount == 2
-    vm.clearCompleted()
+    vm.clearCompleted(); drv.flush()
     check vm.totalCount == 2
-    check vm.tasks.val[0].name == "b"
-    check vm.tasks.val[1].name == "d"
+    check vm.tasks.data.val[0].name == "b"
+    check vm.tasks.data.val[1].name == "d"
     check vm.completedCount == 0
 
   test "setInputText writes through to the inputText signal":
-    let vm = newTaskAppVM()
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
     vm.setInputText("draft")
     check vm.inputText.val == "draft"
-    # addTask still trims & clears.
-    vm.addTask("draft")
+    vm.addTask("draft"); drv.flush()
     check vm.inputText.val == ""
     check vm.totalCount == 1
 
   test "snapshot captures a value-copy of all live signals":
-    let vm = newTaskAppVM()
-    vm.addTask("foo"); vm.addTask("bar")
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
+    vm.addTask("foo"); drv.flush()
+    vm.addTask("bar"); drv.flush()
     vm.setFilter(fmActive)
     vm.setInputText("draft")
     let snap = vm.snapshot
     check snap.tasks.len == 2
     check snap.filter == fmActive
     check snap.inputText == "draft"
-    # Mutating the VM after snapshot doesn't change the snapshot.
-    vm.addTask("baz")
+    vm.addTask("baz"); drv.flush()
     check snap.tasks.len == 2
     check vm.totalCount == 3
 
   test "full M22 scenario — the same script the pilot test runs":
-    ## Same exact action sequence the `isonim-tui`
-    ## `test_task_app_pilot_drive_real_stack` test plays back through
-    ## the renderer; here we drive the VM directly so we can prove the
-    ## terminal state matches without any renderer involvement.
-    let vm = newTaskAppVM()
-    vm.addTask("Buy milk")
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    let vm = newTaskAppVM(drv.db)
+    drv.flush()
+
+    vm.addTask("Buy milk"); drv.flush()
     check vm.totalCount == 1
-    check vm.tasks.val[0].name == "Buy milk"
-    check not vm.tasks.val[0].completed
+    check vm.tasks.data.val[0].name == "Buy milk"
+    check not vm.tasks.data.val[0].completed
     check vm.inputText.val == ""
 
-    vm.addTask("Write specs")
+    vm.addTask("Write specs"); drv.flush()
     check vm.totalCount == 2
-    check vm.tasks.val[1].name == "Write specs"
+    check vm.tasks.data.val[1].name == "Write specs"
 
-    vm.toggleTask(vm.tasks.val[1].id)
+    vm.toggleTask(vm.tasks.data.val[1].id); drv.flush()
     check vm.activeCount == 1
     check vm.completedCount == 1
 

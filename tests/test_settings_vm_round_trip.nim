@@ -1,30 +1,11 @@
-## test_settings_vm_round_trip — EX-M8 mandatory integration test.
+## test_settings_vm_round_trip — EX-M8 / EX-M17 mandatory integration test.
 ##
-## Real-stack exercise of the canonical `SettingsVM` (Layer-3.5
-## ViewModel for the settings demo). The test instantiates a real
-## `SettingsVM` bound to the real `buildDemoSettingsCatalog()` and
-## drives it through the full action surface (`setActiveGroup`,
-## `setToggle`, `setNumber`, `setChoice`, `resetDefaults`), asserting
-## both the live signal values and the derived projections reflect
-## every operation byte-for-byte.
-##
-## Validation invariants explicitly covered:
-##   * number writes clamp to [min, max] (in-range, above max, below
-##     min, exactly at boundaries).
-##   * choice writes reject values outside the declared options
-##     (signal stays put, action returns false).
-##   * unknown ids on every action return false with no mutation.
-##   * the kind-erased `itemValue` accessor returns the right JSON
-##     payload for each kind.
-##   * snapshots are deep-equal across two VMs driven by the same
-##     scripted action sequence (the parity invariant EX-M9+ shells
-##     will rely on for cross-renderer parity).
-##
-## No mocks: the `SettingsVM` is the real type from
-## `settings_app/core/vm.nim`, the signals are the real `Signal[T]`
-## primitives from `isonim/core/signals`, and every assertion reads
-## the live signal `.val` (no recorded snapshot indirection except
-## for the parity check at the end which compares two real VMs).
+## Real-stack exercise of the canonical `SettingsVM` after the EX-M17
+## restructure: every action is async (it enqueues a `saveSetting`
+## through a `FakeDb` and refreshes the resource on completion). The
+## test installs a `FakeAsyncContext`, drives the VM through the same
+## scripted scenarios, and advances the simulated clock after each
+## action so the assertions see the post-resolution state.
 
 import std/json
 import std/tables
@@ -35,220 +16,243 @@ import isonim/core/signals
 import settings_app/core/types
 import settings_app/core/vm
 import settings_app/core/demo_catalog
+import ./helpers/async_drive
 
-suite "EX-M8: SettingsVM round-trip":
+# Helper: build a fresh VM + driver with the demo catalog already
+# seeded into the db. The defer-pattern keeps thread-local fake-context
+# state clean across tests.
+template withSettings(body: untyped) =
+  let drv {.inject.} = newAsyncDriver()
+  defer: drv.shutdown()
+  drv.db.seedSettings(buildDemoSettingsCatalog())
+  let vm {.inject.} = newSettingsVM(drv.db)
+  drv.flush()  # initial load
+  body
+
+suite "EX-M17: SettingsVM async round-trip via fake_db":
   test "fresh VM seeds activeGroupId from first catalog group":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.activeGroupId.val == "appearance"
+    withSettings:
+      check vm.activeGroupId.val == "appearance"
 
   test "fresh VM seeds every item value from its catalog default":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    # Toggles
-    check vm.toggleValue("appearance.dark_mode") == false
-    check vm.toggleValue("editor.tabs_to_spaces") == true
-    check vm.toggleValue("notifications.enable_sounds") == true
-    check vm.toggleValue("notifications.show_badges") == false
-    # Numbers
-    check vm.numberValue("appearance.font_size") == 14
-    check vm.numberValue("editor.tab_width") == 4
-    check vm.numberValue("notifications.poll_interval_ms") == 5000
-    # Choices
-    check vm.choiceValue("appearance.theme") == "Default"
-    check vm.choiceValue("editor.line_endings") == "LF"
+    withSettings:
+      check vm.toggleValue("appearance.dark_mode") == false
+      check vm.toggleValue("editor.tabs_to_spaces") == true
+      check vm.toggleValue("notifications.enable_sounds") == true
+      check vm.toggleValue("notifications.show_badges") == false
+      check vm.numberValue("appearance.font_size") == 14
+      check vm.numberValue("editor.tab_width") == 4
+      check vm.numberValue("notifications.poll_interval_ms") == 5000
+      check vm.choiceValue("appearance.theme") == "Default"
+      check vm.choiceValue("editor.line_endings") == "LF"
 
-  test "setToggle writes through and the signal table updates":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.setToggle("appearance.dark_mode", true) == true
-    check vm.toggleValue("appearance.dark_mode") == true
-    check vm.toggleValues.val["appearance.dark_mode"] == true
-    # Other toggles untouched.
-    check vm.toggleValue("editor.tabs_to_spaces") == true
-    check vm.toggleValue("notifications.show_badges") == false
-    # Toggle back.
-    check vm.setToggle("appearance.dark_mode", false) == true
-    check vm.toggleValue("appearance.dark_mode") == false
+  test "setToggle writes through and the snapshot table updates":
+    withSettings:
+      check vm.setToggle("appearance.dark_mode", true) == true
+      drv.flush()
+      check vm.toggleValue("appearance.dark_mode") == true
+      check vm.toggleValues["appearance.dark_mode"] == true
+      check vm.toggleValue("editor.tabs_to_spaces") == true
+      check vm.toggleValue("notifications.show_badges") == false
+      check vm.setToggle("appearance.dark_mode", false) == true
+      drv.flush()
+      check vm.toggleValue("appearance.dark_mode") == false
 
   test "setNumber writes through inside the [min, max] range":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.setNumber("appearance.font_size", 18) == true
-    check vm.numberValue("appearance.font_size") == 18
-    check vm.numberValues.val["appearance.font_size"] == 18
+    withSettings:
+      check vm.setNumber("appearance.font_size", 18) == true
+      drv.flush()
+      check vm.numberValue("appearance.font_size") == 18
+      check vm.numberValues["appearance.font_size"] == 18
 
   test "setNumber clamps above-max writes to max":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.setNumber("appearance.font_size", 999) == true
-    check vm.numberValue("appearance.font_size") == 32  # max
-    check vm.setNumber("notifications.poll_interval_ms", 10_000_000) == true
-    check vm.numberValue("notifications.poll_interval_ms") == 60_000
+    withSettings:
+      check vm.setNumber("appearance.font_size", 999) == true
+      drv.flush()
+      check vm.numberValue("appearance.font_size") == 32
+      check vm.setNumber("notifications.poll_interval_ms", 10_000_000) == true
+      drv.flush()
+      check vm.numberValue("notifications.poll_interval_ms") == 60_000
 
   test "setNumber clamps below-min writes to min":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.setNumber("appearance.font_size", 0) == true
-    check vm.numberValue("appearance.font_size") == 10  # min
-    check vm.setNumber("appearance.font_size", -50) == true
-    check vm.numberValue("appearance.font_size") == 10
-    check vm.setNumber("notifications.poll_interval_ms", 0) == true
-    check vm.numberValue("notifications.poll_interval_ms") == 500
+    withSettings:
+      check vm.setNumber("appearance.font_size", 0) == true
+      drv.flush()
+      check vm.numberValue("appearance.font_size") == 10
+      check vm.setNumber("appearance.font_size", -50) == true
+      drv.flush()
+      check vm.numberValue("appearance.font_size") == 10
+      check vm.setNumber("notifications.poll_interval_ms", 0) == true
+      drv.flush()
+      check vm.numberValue("notifications.poll_interval_ms") == 500
 
   test "setNumber accepts boundary values exactly":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.setNumber("appearance.font_size", 10) == true
-    check vm.numberValue("appearance.font_size") == 10
-    check vm.setNumber("appearance.font_size", 32) == true
-    check vm.numberValue("appearance.font_size") == 32
+    withSettings:
+      check vm.setNumber("appearance.font_size", 10) == true
+      drv.flush()
+      check vm.numberValue("appearance.font_size") == 10
+      check vm.setNumber("appearance.font_size", 32) == true
+      drv.flush()
+      check vm.numberValue("appearance.font_size") == 32
 
   test "setChoice writes through when value is in the options list":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.setChoice("appearance.theme", "Solarized") == true
-    check vm.choiceValue("appearance.theme") == "Solarized"
-    check vm.setChoice("appearance.theme", "Dracula") == true
-    check vm.choiceValue("appearance.theme") == "Dracula"
-    check vm.setChoice("editor.line_endings", "CRLF") == true
-    check vm.choiceValue("editor.line_endings") == "CRLF"
+    withSettings:
+      check vm.setChoice("appearance.theme", "Solarized") == true
+      drv.flush()
+      check vm.choiceValue("appearance.theme") == "Solarized"
+      check vm.setChoice("appearance.theme", "Dracula") == true
+      drv.flush()
+      check vm.choiceValue("appearance.theme") == "Dracula"
+      check vm.setChoice("editor.line_endings", "CRLF") == true
+      drv.flush()
+      check vm.choiceValue("editor.line_endings") == "CRLF"
 
   test "setChoice rejects values outside the options list":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    let snap = vm.snapshot
-    check vm.setChoice("appearance.theme", "InvalidName") == false
-    check vm.choiceValue("appearance.theme") == "Default"  # unchanged
-    check vm.snapshot == snap
-    # Case-sensitive: lowercase doesn't match.
-    check vm.setChoice("appearance.theme", "solarized") == false
-    check vm.choiceValue("appearance.theme") == "Default"
-    # Empty string rejected.
-    check vm.setChoice("appearance.theme", "") == false
-    check vm.choiceValue("appearance.theme") == "Default"
+    withSettings:
+      let snap = vm.snapshot
+      check vm.setChoice("appearance.theme", "InvalidName") == false
+      check vm.choiceValue("appearance.theme") == "Default"
+      check vm.snapshot == snap
+      check vm.setChoice("appearance.theme", "solarized") == false
+      check vm.choiceValue("appearance.theme") == "Default"
+      check vm.setChoice("appearance.theme", "") == false
+      check vm.choiceValue("appearance.theme") == "Default"
 
   test "setActiveGroup updates the signal for known group ids":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.activeGroupId.val == "appearance"
-    check vm.setActiveGroup("editor") == true
-    check vm.activeGroupId.val == "editor"
-    check vm.setActiveGroup("notifications") == true
-    check vm.activeGroupId.val == "notifications"
-    check vm.setActiveGroup("appearance") == true
-    check vm.activeGroupId.val == "appearance"
+    withSettings:
+      check vm.activeGroupId.val == "appearance"
+      check vm.setActiveGroup("editor") == true
+      check vm.activeGroupId.val == "editor"
+      check vm.setActiveGroup("notifications") == true
+      check vm.activeGroupId.val == "notifications"
+      check vm.setActiveGroup("appearance") == true
+      check vm.activeGroupId.val == "appearance"
 
   test "setActiveGroup rejects unknown group ids without mutation":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.setActiveGroup("does_not_exist") == false
-    check vm.activeGroupId.val == "appearance"
+    withSettings:
+      check vm.setActiveGroup("does_not_exist") == false
+      check vm.activeGroupId.val == "appearance"
 
   test "actions reject unknown item ids without mutation":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    let snap = vm.snapshot
-    check vm.setToggle("missing.id", true) == false
-    check vm.setNumber("missing.id", 5) == false
-    check vm.setChoice("missing.id", "x") == false
-    check vm.snapshot == snap
+    withSettings:
+      let snap = vm.snapshot
+      check vm.setToggle("missing.id", true) == false
+      check vm.setNumber("missing.id", 5) == false
+      check vm.setChoice("missing.id", "x") == false
+      check vm.snapshot == snap
 
   test "actions reject mismatched-kind writes without mutation":
-    ## Writing a toggle to a number id, etc., is a category error.
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    let snap = vm.snapshot
-    check vm.setToggle("appearance.font_size", true) == false  # number
-    check vm.setNumber("appearance.dark_mode", 1) == false      # toggle
-    check vm.setChoice("appearance.font_size", "x") == false    # number
-    check vm.setToggle("appearance.theme", true) == false       # choice
-    check vm.snapshot == snap
+    withSettings:
+      let snap = vm.snapshot
+      check vm.setToggle("appearance.font_size", true) == false
+      check vm.setNumber("appearance.dark_mode", 1) == false
+      check vm.setChoice("appearance.font_size", "x") == false
+      check vm.setToggle("appearance.theme", true) == false
+      check vm.snapshot == snap
 
   test "currentGroup tracks activeGroupId":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    check vm.currentGroup.id == "appearance"
-    check vm.currentGroup.label == "Appearance"
-    check vm.currentGroup.items.len == 3
-    discard vm.setActiveGroup("editor")
-    check vm.currentGroup.id == "editor"
-    check vm.currentGroup.items.len == 3
-    discard vm.setActiveGroup("notifications")
-    check vm.currentGroup.id == "notifications"
+    withSettings:
+      check vm.currentGroup.id == "appearance"
+      check vm.currentGroup.label == "Appearance"
+      check vm.currentGroup.items.len == 3
+      discard vm.setActiveGroup("editor")
+      check vm.currentGroup.id == "editor"
+      check vm.currentGroup.items.len == 3
+      discard vm.setActiveGroup("notifications")
+      check vm.currentGroup.id == "notifications"
 
   test "itemValue returns kind-correct JSON for each item kind":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    discard vm.setToggle("appearance.dark_mode", true)
-    discard vm.setNumber("appearance.font_size", 22)
-    discard vm.setChoice("appearance.theme", "Solarized")
-    let toggleNode = vm.itemValue("appearance.dark_mode")
-    check toggleNode.kind == JBool
-    check toggleNode.getBool == true
-    let numberNode = vm.itemValue("appearance.font_size")
-    check numberNode.kind == JInt
-    check numberNode.getInt == 22
-    let choiceNode = vm.itemValue("appearance.theme")
-    check choiceNode.kind == JString
-    check choiceNode.getStr == "Solarized"
+    withSettings:
+      discard vm.setToggle("appearance.dark_mode", true); drv.flush()
+      discard vm.setNumber("appearance.font_size", 22); drv.flush()
+      discard vm.setChoice("appearance.theme", "Solarized"); drv.flush()
+      let toggleNode = vm.itemValue("appearance.dark_mode")
+      check toggleNode.kind == JBool
+      check toggleNode.getBool == true
+      let numberNode = vm.itemValue("appearance.font_size")
+      check numberNode.kind == JInt
+      check numberNode.getInt == 22
+      let choiceNode = vm.itemValue("appearance.theme")
+      check choiceNode.kind == JString
+      check choiceNode.getStr == "Solarized"
 
   test "resetDefaults restores every item to its catalog default":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    discard vm.setToggle("appearance.dark_mode", true)
-    discard vm.setNumber("appearance.font_size", 22)
-    discard vm.setChoice("appearance.theme", "Solarized")
-    discard vm.setToggle("editor.tabs_to_spaces", false)
+    # Build the pristine snapshot first, on a separate driver that we
+    # tear down before installing the main driver. The fake context
+    # is per-thread, so nesting contexts is fine but ops dispatch
+    # against whichever is *currently* installed — we keep the test
+    # simple by not nesting.
+    let drvP = newAsyncDriver()
+    drvP.db.seedSettings(buildDemoSettingsCatalog())
+    let vmPristine = newSettingsVM(drvP.db)
+    drvP.flush()
+    let pristine = vmPristine.snapshot
+    drvP.shutdown()
+
+    let drv = newAsyncDriver()
+    defer: drv.shutdown()
+    drv.db.seedSettings(buildDemoSettingsCatalog())
+    let vm = newSettingsVM(drv.db)
+    drv.flush()
+    discard vm.setToggle("appearance.dark_mode", true); drv.flush()
+    discard vm.setNumber("appearance.font_size", 22); drv.flush()
+    discard vm.setChoice("appearance.theme", "Solarized"); drv.flush()
+    discard vm.setToggle("editor.tabs_to_spaces", false); drv.flush()
     let dirty = vm.snapshot
-    let pristine = newSettingsVM(buildDemoSettingsCatalog()).snapshot
-    check dirty != pristine  # sanity: we changed something
+    check dirty != pristine
     vm.resetDefaults()
+    # resetDefaults fires 9 saveSetting ops + cascaded refreshes.
+    for _ in 0 ..< 12: drv.flush()
     check vm.snapshot == pristine
 
   test "snapshot captures a value-copy independent of the live VM":
-    let cat = buildDemoSettingsCatalog()
-    let vm = newSettingsVM(cat)
-    discard vm.setToggle("appearance.dark_mode", true)
-    let snap = vm.snapshot
-    # Mutating the VM after snapshot doesn't change the snapshot.
-    discard vm.setToggle("appearance.dark_mode", false)
-    check vm.toggleValue("appearance.dark_mode") == false
-    # The snapshot still records the post-true state.
-    var found = false
-    for (k, v) in snap.toggles:
-      if k == "appearance.dark_mode":
-        check v == true
-        found = true
-    check found
+    withSettings:
+      discard vm.setToggle("appearance.dark_mode", true); drv.flush()
+      let snap = vm.snapshot
+      discard vm.setToggle("appearance.dark_mode", false); drv.flush()
+      check vm.toggleValue("appearance.dark_mode") == false
+      var found = false
+      for (k, v) in snap.toggles:
+        if k == "appearance.dark_mode":
+          check v == true
+          found = true
+      check found
 
   test "two VMs driven by the same script produce equal snapshots":
-    ## Parity invariant — the same scripted scenario must yield a
-    ## byte-identical snapshot regardless of which catalog instance
-    ## (or which platform shell, in EX-M9+) drove it. EX-M9's cross-
-    ## renderer parity test will reuse this invariant.
-    proc drive(vm: SettingsVM) =
-      discard vm.setToggle("appearance.dark_mode", true)
-      discard vm.setChoice("appearance.theme", "Dracula")
-      discard vm.setNumber("appearance.font_size", 18)
-      discard vm.setToggle("editor.tabs_to_spaces", false)
-      discard vm.setNumber("editor.tab_width", 2)
-      discard vm.setChoice("editor.line_endings", "CRLF")
-      discard vm.setNumber("notifications.poll_interval_ms", 1500)
+    proc drive(vm: SettingsVM; drv: AsyncDriver) =
+      discard vm.setToggle("appearance.dark_mode", true); drv.flush()
+      discard vm.setChoice("appearance.theme", "Dracula"); drv.flush()
+      discard vm.setNumber("appearance.font_size", 18); drv.flush()
+      discard vm.setToggle("editor.tabs_to_spaces", false); drv.flush()
+      discard vm.setNumber("editor.tab_width", 2); drv.flush()
+      discard vm.setChoice("editor.line_endings", "CRLF"); drv.flush()
+      discard vm.setNumber("notifications.poll_interval_ms", 1500); drv.flush()
       discard vm.setActiveGroup("editor")
 
-    let vmA = newSettingsVM(buildDemoSettingsCatalog())
-    let vmB = newSettingsVM(buildDemoSettingsCatalog())
-    drive(vmA)
-    drive(vmB)
-    check vmA.snapshot == vmB.snapshot
+    let drvA = newAsyncDriver(seed = 42)
+    defer: drvA.shutdown()
+    drvA.db.seedSettings(buildDemoSettingsCatalog())
+    let vmA = newSettingsVM(drvA.db); drvA.flush()
+    drive(vmA, drvA)
+    let snapA = vmA.snapshot
+
+    let drvB = newAsyncDriver(seed = 42)
+    drvB.db.seedSettings(buildDemoSettingsCatalog())
+    let vmB = newSettingsVM(drvB.db); drvB.flush()
+    drive(vmB, drvB)
+    let snapB = vmB.snapshot
+    drvB.shutdown()
+
+    check snapA == snapB
+
     # And differs from the pristine snapshot.
-    check vmA.snapshot != newSettingsVM(buildDemoSettingsCatalog()).snapshot
+    let drvC = newAsyncDriver()
+    drvC.db.seedSettings(buildDemoSettingsCatalog())
+    let vmPristine = newSettingsVM(drvC.db); drvC.flush()
+    check snapA != vmPristine.snapshot
+    drvC.shutdown()
 
   test "demo catalog has the expected shape":
-    ## Spec-locking test for the catalog itself — anything that
-    ## changes the catalog structure here forces a deliberate update
-    ## of the cross-renderer parity tests in EX-M9+.
     let cat = buildDemoSettingsCatalog()
     check cat.groups.len == 3
     check cat.groups[0].id == "appearance"
@@ -256,7 +260,6 @@ suite "EX-M8: SettingsVM round-trip":
     check cat.groups[2].id == "notifications"
     for g in cat.groups:
       check g.items.len == 3
-    # One item of every kind in the appearance group.
     let kinds = block:
       var s: seq[SettingsItemKind] = @[]
       for it in cat.groups[0].items:
