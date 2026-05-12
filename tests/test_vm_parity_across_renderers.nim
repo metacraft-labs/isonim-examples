@@ -65,7 +65,7 @@ when defined(macosx):
     runTaskApp, rerender, resetCocoaLeaves
 when defined(android):
   from task_app/main_android as android_app import
-    runTaskApp, resetAndroidLeaves
+    runTaskApp, rerender, resetAndroidLeaves
 
 import ./helpers/parity_snapshot
 
@@ -244,9 +244,7 @@ when defined(android):
       mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
         discard android_app.runTaskApp(vm)
         script(vm)
-        # Android leaves don't yet expose a `rerender(vm)` proc; the
-        # macOS host completes EX-M6 the same way EX-M5 does (see
-        # status notes for the hand-off checklist).
+        android_app.rerender(vm)
         android_app.resetAndroidLeaves())
   drivers.add androidDriver()
 
