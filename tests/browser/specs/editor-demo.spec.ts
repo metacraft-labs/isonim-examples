@@ -275,6 +275,56 @@ test.describe("EX-M14: M57 edge-strip reactivity", () => {
       ).toBeVisible();
     }
   });
+
+  test("M58: viewport strip rebuilds chip set when backend changes", async ({
+    page,
+  }) => {
+    // M58 spec § Verification: clicking the TUI backend chip MUST
+    // rebuild the viewport strip's chip set in place — without
+    // re-rendering the page — so `tui-80x24` appears and `desktop`
+    // disappears. This validates the M58 thunk-driven
+    // `renderCompactChoiceColumn` overload end-to-end (vs. the
+    // headless variant in `tests/test_editor_chrome_layout.nim`
+    // § "M58 chip-set reactivity").
+    await gotoEditor(page, "view=page");
+    const viewportStrip = page
+      .locator('[data-preview-left-edge="true"] [data-edge-strip="viewport"]')
+      .first();
+    await expect(viewportStrip).toBeVisible();
+    // Initial state — Web is the default backend; the viewport
+    // strip's primary segments include `desktop`.
+    const desktopChipBefore = viewportStrip
+      .locator(
+        '[data-preview-viewport="desktop"]:not([data-compact-choice-overflow-option="true"])',
+      )
+      .first();
+    await expect(desktopChipBefore).toBeVisible();
+    // Click the TUI backend chip. The page is NOT reloaded; the
+    // viewport strip must diff/patch its chip set in place.
+    const tuiBtn = page
+      .locator(
+        '[data-preview-left-edge="true"] [data-edge-strip="backend"] [data-preview-backend="tui"]',
+      )
+      .first();
+    await tuiBtn.click();
+    // After the click the TUI-specific primary segments must appear
+    // and the pixel-based ones must vanish.
+    const tuiChipAfter = viewportStrip
+      .locator(
+        '[data-preview-viewport="tui-80x24"]:not([data-compact-choice-overflow-option="true"])',
+      )
+      .first();
+    await expect(tuiChipAfter).toBeVisible();
+    // `desktop` must no longer surface as a primary chip (it can
+    // still appear inside the long-tail popup; the strict assertion
+    // is on the primary-strip segments).
+    await expect(
+      viewportStrip
+        .locator(
+          '[data-preview-viewport="desktop"]:not([data-compact-choice-overflow-option="true"])',
+        ),
+    ).toHaveCount(0);
+  });
 });
 
 // --------------------------------------------------------------------------
