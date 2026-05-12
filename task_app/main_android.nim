@@ -97,10 +97,14 @@ when defined(android):
       # `NimBridge.kt` pattern with only the JNI-prefix swapped.
       import isonim_android/command_buffer as cmdbuf
       import isonim_android/callbacks
+      import isonim_android/capture as androidCapture
+      import isonim_render_serve/adapters/android_adapter
+      import isonim_render_serve/packet as renderPacket
       type
-        JNIEnvPtr = ptr ptr UncheckedArray[pointer]
+        JNIEnvPtr = androidCapture.JNIEnvPtr
         JClass = pointer
         JString = pointer
+        JByteArray = pointer
         JInt = cint
         JLong = clonglong
 
@@ -283,6 +287,72 @@ when defined(android):
         if chars != nil:
           appVm.setInputText($chars)
           releaseStringUTFChars(env, text, chars)
+
+      # ---------------- RS-M6 capture entry point ----------------
+      #
+      # JNI fn-table indices used by the capture entry below.
+      # `NewByteArray` allocates a fresh `byte[]` in the Java heap,
+      # `SetByteArrayRegion` copies the swizzled RGBA bytes into it.
+      const
+        idxNewByteArray = 176
+        idxSetByteArrayRegion = 208
+
+      proc newByteArray(env: JNIEnvPtr; size: JInt): JByteArray =
+        let fn = cast[proc(env: JNIEnvPtr; size: JInt): JByteArray
+            {.cdecl.}](env[][idxNewByteArray])
+        fn(env, size)
+
+      proc setByteArrayRegion(env: JNIEnvPtr; arr: JByteArray;
+                              start: JInt; len: JInt; buf: pointer) =
+        let fn = cast[proc(env: JNIEnvPtr; arr: JByteArray;
+                           start: JInt; len: JInt; buf: pointer)
+            {.cdecl.}](env[][idxSetByteArrayRegion])
+        fn(env, arr, start, len, buf)
+
+      proc captureRootViewToRgba(env: JNIEnvPtr; cls: JClass;
+                                 width: JInt; height: JInt): JByteArray
+          {.exportc: jniPrefix & "captureRootViewToRgba", cdecl, dynlib.} =
+        ## RS-M6 acceptance entry point. Drives the Nim adapter's
+        ## `renderFrame` against the currently displayed task_app
+        ## tree (published to Kotlin's
+        ## `CaptureHelper.activeRootView` by
+        ## `MainActivity.rebuildTree`) and returns canonical RGBA8888
+        ## row-major bytes of length `width * height * 4`.
+        ##
+        ## The Nim adapter's `renderFrame` body, under
+        ## `-d:android -d:commandBuffer`, calls back into Kotlin's
+        ## `CaptureHelper.captureActiveRootToRgba(width, height)` via
+        ## `isonim_android/capture.captureViewToRgba`, which reads
+        ## the JNI env back from a threadvar. We set that threadvar
+        ## here so the entire chain stays on a single thread.
+        ##
+        ## Cross-link: the binding RS-M6 acceptance gate is
+        ## `app/src/androidTest/kotlin/com/metacraft/isonim/examples/
+        ## AdapterCaptureTest.kt`.
+        androidCapture.currentJniEnv = env
+        let renderer = AndroidRenderer()
+        # `root` is informational: the actual root the helper
+        # captures is `CaptureHelper.activeRootView`, set by
+        # MainActivity. We pass the int64 1 (the first command-buffer
+        # handle is always 1 — see `command_buffer.nextHandle`) so
+        # the AndroidFrameSource has a well-formed but otherwise
+        # unused value.
+        let src = newAndroidFrameSource(renderer, AndroidElement(1),
+                                        width = int(width),
+                                        height = int(height))
+        var frame: Frame
+        try:
+          frame = src.renderFrame()
+        except CatchableError, Defect:
+          androidCapture.currentJniEnv = nil
+          return newByteArray(env, 0)
+        androidCapture.currentJniEnv = nil
+        let n = frame.pixels.len
+        let arr = newByteArray(env, JInt(n))
+        if n > 0 and arr != nil:
+          setByteArrayRegion(env, arr, JInt(0), JInt(n),
+                             cast[pointer](unsafeAddr frame.pixels[0]))
+        return arr
 
       # `isMainModule` block under `-d:androidGui --app:lib --noMain` is
       # a no-op; the JNI exports above are the real entry surface. Keep
