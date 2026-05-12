@@ -162,6 +162,25 @@ section), the web sidebar+pane (only the active group's items), and
 the GPUI two-column grid (only the active group's items in the right
 column). Cocoa / Android remain visibly disabled on Linux per spec.
 
+## Testing async ViewModels
+
+The canonical example is `tests/test_async_perf_demo.nim`. Read it to
+learn the pattern:
+
+1. Install a `FakeAsyncContext` from nim-everywhere.
+2. Construct an `AsyncDriver` bundling the fake clock + a seeded
+   `FakeDb` (helper at `tests/helpers/async_drive.nim`).
+3. Mount the VM with the driver's db.
+4. After each VM action, call `drv.flush()` to advance the clock and
+   drain pending callbacks.
+5. Assert against VM signals — they reflect the post-async state.
+
+The headline assertion: 100 mixed simulated ops complete in <100 ms
+wall-clock, even though each op nominally takes 30-50 ms. Fake time
+short-circuits the sleep, but every other path (signal propagation,
+generation-counter guard for out-of-order completions, error handling)
+runs through the real reactive graph.
+
 ## Specs
 
 - The architecture is governed by

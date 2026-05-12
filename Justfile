@@ -24,7 +24,7 @@ build:
           -o:test-logs/$(basename $t .nim) $t 2>&1 | tee -a test-logs/build.log; \
     done
 
-test: test-orc
+test: test-orc test-async-perf-matrix
 
 test-unit:
     @mkdir -p test-logs
@@ -56,6 +56,41 @@ test-threads-off:
     just _matrix orc release off
 
 test-all: test-orc test-arc test-refc test-threads-off
+
+# --- EX-M18: fake-time async perf demo, across the native async backends ---
+#
+# The canonical fake-time test (tests/test_async_perf_demo.nim) is the
+# teaching artifact for testing async ViewModels. It exercises 100
+# mixed simulated DB ops and asserts the suite completes in well under
+# 100 ms wall-clock — orders of magnitude faster than the 3-5 seconds
+# those ops would burn against a real event loop.
+#
+# The fake-time invariant must hold across every async backend
+# nim-everywhere supports. The matrix below mirrors the structure of
+# nim-everywhere's own `test-async-*` recipes.
+
+test-async-perf:
+    nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
+        -r tests/test_async_perf_demo.nim
+
+test-async-perf-asyncdispatch:
+    nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
+        -d:asyncBackend=asyncdispatch \
+        -r tests/test_async_perf_demo.nim
+
+# chronos is an optional dep — gate behind a `nim check` probe so the
+# matrix degrades gracefully when chronos isn't on the nimble path.
+test-async-perf-chronos:
+    @if nim check --hints:off {{src-paths}} -d:asyncBackend=chronos \
+        tests/test_async_perf_demo.nim >/dev/null 2>&1; then \
+      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
+          -d:asyncBackend=chronos \
+          -r tests/test_async_perf_demo.nim; \
+    else \
+      echo "[test-async-perf-chronos] chronos not on nimble path; skipping"; \
+    fi
+
+test-async-perf-matrix: test-async-perf test-async-perf-asyncdispatch test-async-perf-chronos
 
 _matrix mm mode threads:
     @mkdir -p test-logs
