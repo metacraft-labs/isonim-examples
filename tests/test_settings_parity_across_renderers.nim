@@ -78,18 +78,24 @@ import isonim_tui/events
 import isonim/testing/mock_dom
 
 # Composition roots for each renderer. We use `from ... import` so the
-# `buildSettingsApp` / `rebuildSettingsApp` / `runSettingsApp` overloads
-# (one per renderer, distinguished by their renderer argument type) live
-# in the same lexical scope but don't pull in renderer-internal pointer
-# aliases that could collide.
+# `buildSettingsApp` / `runSettingsApp` overloads (one per renderer,
+# distinguished by their renderer argument type) live in the same
+# lexical scope but don't pull in renderer-internal pointer aliases that
+# could collide.
+#
+# EX-M16: the explicit `rebuildSettingsApp` re-mount path is gone. The
+# reactive shells observe `vm.activeGroupId.val` via
+# `createRenderEffect`, so a scripted `vm.setActiveGroup(...)` call
+# updates the rendered tree through the reactive graph without any
+# rebuild follow-up.
 from settings_app/main_tui as tui_app import
-  buildSettingsApp, rebuildSettingsApp, runSettingsApp
+  buildSettingsApp, runSettingsApp
 from settings_app/main_web as web_app import
-  buildSettingsApp, rebuildSettingsApp
+  buildSettingsApp
 from settings_app/main_gpui as gpui_app import
-  buildSettingsApp, rebuildSettingsApp, runSettingsApp
+  buildSettingsApp, runSettingsApp
 from settings_app/main_freya as freya_app import
-  buildSettingsApp, rebuildSettingsApp, runSettingsApp
+  buildSettingsApp, runSettingsApp
 
 # GPUI: keep the renderer / bindings under a qualified name to avoid
 # overload clashes with the TUI / web `textContent`, `setAttribute`,
@@ -119,8 +125,11 @@ when defined(android):
 # Scenarios — every entry mutates the VM through the renderer's native
 # event surface (Space on a Switch for TUI; click on a checkbox for web;
 # click for everything on GPUI). The shell observers paint the new state
-# via `rebuildSettingsApp`; the parity invariant is that the VM's
-# terminal snapshot is identical regardless of which renderer drove it.
+# through the reactive graph (EX-M16: `createRenderEffect` over
+# `vm.activeGroupId.val` swaps the active group's items / highlights
+# the active sidebar entry in place); the parity invariant is that the
+# VM's terminal snapshot is identical regardless of which renderer
+# drove it.
 # ---------------------------------------------------------------------------
 
 type
@@ -300,22 +309,22 @@ proc tuiSelectOption(optList: TerminalNode; target: string;
 proc tuiApply(vm: SettingsVM; s: Scenario) =
   if tuiHarness == nil:
     tuiHarness = newTerminalTestHarness(80, 24)
-  var root = runSettingsApp(tuiHarness, vm)
+  # EX-M16: a single mount call. The reactive shell propagates VM
+  # mutations through the rendered tree in-place — no follow-up
+  # rebuild calls needed.
+  let root = runSettingsApp(tuiHarness, vm)
   case s.kind
   of skBasic:
     discard vm.setActiveGroup("appearance")
-    root = rebuildSettingsApp(tuiHarness, vm)
     var section = tuiFindGroupSection(root, "appearance")
     var row = tuiFindItemRowByLabel(section, "Dark mode")
     let sw = tuiFindSwitch(row)
     tuiToggleSwitch(sw)
-    root = rebuildSettingsApp(tuiHarness, vm)
 
     section = tuiFindGroupSection(root, "appearance")
     row = tuiFindItemRowByLabel(section, "Font size")
     let inp = tuiFindInput(row)
     tuiTypeNumber(inp, 18)
-    root = rebuildSettingsApp(tuiHarness, vm)
 
     section = tuiFindGroupSection(root, "appearance")
     row = tuiFindItemRowByLabel(section, "Theme")
@@ -327,17 +336,14 @@ proc tuiApply(vm: SettingsVM; s: Scenario) =
   of skAllGroups:
     for g in vm.catalog.groups:
       discard vm.setActiveGroup(g.id)
-      root = rebuildSettingsApp(tuiHarness, vm)
       let section = tuiFindGroupSection(root, g.id)
       for row in tuiItemRowsOf(section):
         let sw = tuiFindSwitch(row)
         if sw != nil:
           tuiToggleSwitch(sw)
           break
-      root = rebuildSettingsApp(tuiHarness, vm)
   of skClamp:
     discard vm.setActiveGroup("appearance")
-    root = rebuildSettingsApp(tuiHarness, vm)
     let section = tuiFindGroupSection(root, "appearance")
     let row = tuiFindItemRowByLabel(section, "Font size")
     let inp = tuiFindInput(row)
@@ -435,18 +441,18 @@ proc webSelectOf(row: MockNode): MockNode =
 
 proc webApply(vm: SettingsVM; s: Scenario) =
   let r = MockRenderer()
-  var root = buildSettingsApp(r, vm)
+  # EX-M16: a single mount call. The reactive shell propagates VM
+  # mutations through the rendered tree in-place — no follow-up
+  # rebuild calls needed.
+  let root = buildSettingsApp(r, vm)
   case s.kind
   of skBasic:
     fireEvent(webSidebarButton(webSidebarEntry(root, "appearance")), "click")
-    root = rebuildSettingsApp(r, vm)
     let darkCb = webCheckboxOf(webItemRowByLabel(root, "Dark mode"))
     fireEvent(darkCb, "click")
-    root = rebuildSettingsApp(r, vm)
     let fontInp = webNumberInputOf(webItemRowByLabel(root, "Font size"))
     r.setAttribute(fontInp, "value", "18")
     fireEvent(fontInp, "change")
-    root = rebuildSettingsApp(r, vm)
     let themeSel = webSelectOf(webItemRowByLabel(root, "Theme"))
     r.setAttribute(themeSel, "value", "Solarized")
     fireEvent(themeSel, "change")
@@ -455,16 +461,13 @@ proc webApply(vm: SettingsVM; s: Scenario) =
   of skAllGroups:
     for g in vm.catalog.groups:
       fireEvent(webSidebarButton(webSidebarEntry(root, g.id)), "click")
-      root = rebuildSettingsApp(r, vm)
       for row in webPaneItemRows(root):
         let cb = webCheckboxOf(row)
         if cb != nil:
           fireEvent(cb, "click")
           break
-      root = rebuildSettingsApp(r, vm)
   of skClamp:
     fireEvent(webSidebarButton(webSidebarEntry(root, "appearance")), "click")
-    root = rebuildSettingsApp(r, vm)
     let fontInp = webNumberInputOf(webItemRowByLabel(root, "Font size"))
     r.setAttribute(fontInp, "value", "5")
     fireEvent(fontInp, "change")
@@ -573,18 +576,18 @@ proc gpuiApply(vm: SettingsVM; s: Scenario) =
   gpuiB.gpui_reset_tree()
   gpuiR.resetCallbacks()
   let r = gpuiR.GpuiRenderer()
-  var root = buildSettingsApp(r, vm)
+  # EX-M16: a single mount call. The reactive shell propagates VM
+  # mutations through the rendered tree in-place — no follow-up
+  # rebuild calls needed.
+  let root = buildSettingsApp(r, vm)
   case s.kind
   of skBasic:
     gpuiR.fireEvent(gpuiGroupsRow(root, "appearance"), "click")
-    root = rebuildSettingsApp(r, vm)
     let darkCb = gpuiToggleOf(gpuiItemRowByLabel(root, "Dark mode"))
     gpuiR.fireEvent(darkCb, "click")
-    root = rebuildSettingsApp(r, vm)
     let fontInp = gpuiNumberInputOf(gpuiItemRowByLabel(root, "Font size"))
     gpuiR.setAttribute(r, fontInp, "data-value", "18")
     gpuiR.fireEvent(fontInp, "click")
-    root = rebuildSettingsApp(r, vm)
     let themeSel = gpuiChoiceSelectOf(gpuiItemRowByLabel(root, "Theme"))
     gpuiR.setAttribute(r, themeSel, "data-value", "Solarized")
     gpuiR.fireEvent(themeSel, "click")
@@ -593,16 +596,13 @@ proc gpuiApply(vm: SettingsVM; s: Scenario) =
   of skAllGroups:
     for g in vm.catalog.groups:
       gpuiR.fireEvent(gpuiGroupsRow(root, g.id), "click")
-      root = rebuildSettingsApp(r, vm)
       for row in gpuiItemRows(root):
         let cb = gpuiToggleOf(row)
         if cb != nil:
           gpuiR.fireEvent(cb, "click")
           break
-      root = rebuildSettingsApp(r, vm)
   of skClamp:
     gpuiR.fireEvent(gpuiGroupsRow(root, "appearance"), "click")
-    root = rebuildSettingsApp(r, vm)
     let fontInp = gpuiNumberInputOf(gpuiItemRowByLabel(root, "Font size"))
     gpuiR.setAttribute(r, fontInp, "data-value", "5")
     gpuiR.fireEvent(fontInp, "click")
@@ -704,21 +704,21 @@ proc freyaApply(vm: SettingsVM; s: Scenario) =
   freyaB.freya_reset_tree()
   freyaR.resetCallbacks()
   let r = freyaR.FreyaRenderer()
-  var root = buildSettingsApp(r, vm)
+  # EX-M16: a single mount call. The reactive shell propagates VM
+  # mutations through the rendered tree in-place — no follow-up
+  # rebuild calls needed.
+  let root = buildSettingsApp(r, vm)
   case s.kind
   of skBasic:
     let appearanceCard = freyaCard(root, "appearance")
     freyaR.fireEvent(freyaCardHeader(appearanceCard), "click")
-    root = rebuildSettingsApp(r, vm)
     let darkCb = freyaToggleOf(freyaItemRowByLabel(
       freyaCard(root, "appearance"), "Dark mode"))
     freyaR.fireEvent(darkCb, "click")
-    root = rebuildSettingsApp(r, vm)
     let fontInp = freyaNumberInputOf(freyaItemRowByLabel(
       freyaCard(root, "appearance"), "Font size"))
     freyaR.setAttribute(r, fontInp, "data-value", "18")
     freyaR.fireEvent(fontInp, "click")
-    root = rebuildSettingsApp(r, vm)
     let themeSel = freyaChoiceSelectOf(freyaItemRowByLabel(
       freyaCard(root, "appearance"), "Theme"))
     freyaR.setAttribute(r, themeSel, "data-value", "Solarized")
@@ -729,18 +729,15 @@ proc freyaApply(vm: SettingsVM; s: Scenario) =
     for g in vm.catalog.groups:
       let cardHeader = freyaCardHeader(freyaCard(root, g.id))
       freyaR.fireEvent(cardHeader, "click")
-      root = rebuildSettingsApp(r, vm)
       let card = freyaCard(root, g.id)
       for row in freyaItemRows(card):
         let cb = freyaToggleOf(row)
         if cb != nil:
           freyaR.fireEvent(cb, "click")
           break
-      root = rebuildSettingsApp(r, vm)
   of skClamp:
     let appearanceHeader = freyaCardHeader(freyaCard(root, "appearance"))
     freyaR.fireEvent(appearanceHeader, "click")
-    root = rebuildSettingsApp(r, vm)
     let fontInp = freyaNumberInputOf(freyaItemRowByLabel(
       freyaCard(root, "appearance"), "Font size"))
     freyaR.setAttribute(r, fontInp, "data-value", "5")

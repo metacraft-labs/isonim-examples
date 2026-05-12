@@ -7,7 +7,14 @@
 ## full pipeline:
 ##
 ##   * Layer 4 — `settings_app/main_gpui.nim` (`buildSettingsApp`,
-##     `rebuildSettingsApp`, `runSettingsApp`).
+##     `runSettingsApp`).
+##
+## EX-M16: the explicit `rebuildSettingsApp` re-paint is gone; the
+## reactive shell (`createRenderEffect` over `vm.activeGroupId.val`)
+## propagates active-group switches in place, and the leaves' own
+## click listeners mirror per-item attribute mutations onto the same
+## DOM nodes. Scenarios mount once and assert directly on the mutated
+## tree.
 ##   * Layer 3 — `settings_app/gpui/shell.nim`
 ##     (`renderSettingsShell` with its **grid** composition).
 ##   * Layer 2 — `settings_app/components/{toggle,number,choice,group}`
@@ -218,16 +225,16 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
     let editorRow = groupsColumnRow(root, "editor")
     check editorRow != nil
     fireEvent(editorRow, "click")
     check vm.activeGroupId.val == "editor"
 
-    root = rebuildSettingsApp(r, vm)
-    let editorRowAfter = groupsColumnRow(root, "editor")
-    check getAttribute(editorRowAfter, "class") == "settings-group-row active"
+    # The shell's per-row + items-column `createRenderEffect`s flip
+    # the `active` class and rebuild the items section in place.
+    check getAttribute(editorRow, "class") == "settings-group-row active"
     let appearanceRow = groupsColumnRow(root, "appearance")
     check getAttribute(appearanceRow, "class") == "settings-group-row"
     let section = itemsGroupSection(root)
@@ -241,11 +248,11 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     gpui_reset_tree()
     resetCallbacks()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var tabsRow = itemRowByLabel(root, "Insert spaces for tabs")
+    let tabsRow = itemRowByLabel(root, "Insert spaces for tabs")
     check tabsRow != nil
-    var cb = toggleNodeOf(tabsRow)
+    let cb = toggleNodeOf(tabsRow)
     check cb != nil
     # Catalog default for `editor.tabs_to_spaces` is true.
     check getAttribute(cb, "data-value") == "true"
@@ -254,19 +261,15 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
 
     fireEvent(cb, "click")
     check vm.toggleValue("editor.tabs_to_spaces") == false
-    # The leaf's own click handler mutated the attribute too.
+    # The leaf's own click handler flipped `data-value` + cleared
+    # `checked` on the same node in place.
     check getAttribute(cb, "data-value") == "false"
     check getAttribute(cb, "checked") == ""
-
-    # Re-render and confirm the new tree reflects the flipped value.
-    root = rebuildSettingsApp(r, vm)
-    tabsRow = itemRowByLabel(root, "Insert spaces for tabs")
-    cb = toggleNodeOf(tabsRow)
-    check getAttribute(cb, "data-value") == "false"
 
     # Fire again — the second click flips back to true.
     fireEvent(cb, "click")
     check vm.toggleValue("editor.tabs_to_spaces") == true
+    check getAttribute(cb, "data-value") == "true"
 
   test "number leaf click commits in-range data-value":
     let catalog = buildDemoSettingsCatalog()
@@ -275,11 +278,11 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     gpui_reset_tree()
     resetCallbacks()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var tabWidthRow = itemRowByLabel(root, "Tab width")
+    let tabWidthRow = itemRowByLabel(root, "Tab width")
     check tabWidthRow != nil
-    var inp = numberInputOf(tabWidthRow)
+    let inp = numberInputOf(tabWidthRow)
     check inp != nil
     check getAttribute(inp, "data-value") == "4"
     check getAttribute(inp, "data-min") == "1"
@@ -291,9 +294,8 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     fireEvent(inp, "click")
     check vm.numberValue("editor.tab_width") == 6
 
-    root = rebuildSettingsApp(r, vm)
-    tabWidthRow = itemRowByLabel(root, "Tab width")
-    inp = numberInputOf(tabWidthRow)
+    # The leaf's click listener wrote `data-value` on the input and
+    # mirrored it on the host wrapper in place.
     check getAttribute(inp, "data-value") == "6"
     let host = numberHostOf(tabWidthRow)
     check getAttribute(host, "data-value") == "6"
@@ -305,18 +307,16 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     gpui_reset_tree()
     resetCallbacks()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var tabWidthRow = itemRowByLabel(root, "Tab width")
-    var inp = numberInputOf(tabWidthRow)
+    let tabWidthRow = itemRowByLabel(root, "Tab width")
+    let inp = numberInputOf(tabWidthRow)
     check inp != nil
     r.setAttribute(inp, "data-value", "99")
     fireEvent(inp, "click")
     check vm.numberValue("editor.tab_width") == 8
 
-    root = rebuildSettingsApp(r, vm)
-    tabWidthRow = itemRowByLabel(root, "Tab width")
-    inp = numberInputOf(tabWidthRow)
+    # Listener clamped `data-value` in place.
     check getAttribute(inp, "data-value") == "8"
 
   test "number clamping: below-min commits clamped to numberMin":
@@ -326,17 +326,15 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     gpui_reset_tree()
     resetCallbacks()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var tabWidthRow = itemRowByLabel(root, "Tab width")
-    var inp = numberInputOf(tabWidthRow)
+    let tabWidthRow = itemRowByLabel(root, "Tab width")
+    let inp = numberInputOf(tabWidthRow)
     r.setAttribute(inp, "data-value", "-3")
     fireEvent(inp, "click")
     check vm.numberValue("editor.tab_width") == 1
 
-    root = rebuildSettingsApp(r, vm)
-    tabWidthRow = itemRowByLabel(root, "Tab width")
-    inp = numberInputOf(tabWidthRow)
+    # Listener clamped `data-value` to "1" in place.
     check getAttribute(inp, "data-value") == "1"
 
   test "choice select click writes through VM (editor.line_endings → CRLF)":
@@ -346,9 +344,9 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     gpui_reset_tree()
     resetCallbacks()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var lineRow = itemRowByLabel(root, "Line endings")
+    let lineRow = itemRowByLabel(root, "Line endings")
     check lineRow != nil
     let host = choiceHostOf(lineRow)
     check host != nil
@@ -371,10 +369,8 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     fireEvent(sel, "click")
     check vm.choiceValue("editor.line_endings") == "CRLF"
 
-    root = rebuildSettingsApp(r, vm)
-    lineRow = itemRowByLabel(root, "Line endings")
-    let host2 = choiceHostOf(lineRow)
-    check getAttribute(host2, "data-value") == "CRLF"
+    # Listener mirrored `data-value` onto the host in place.
+    check getAttribute(host, "data-value") == "CRLF"
 
   test "choice rejection: invalid programmatic write leaves VM unchanged":
     let catalog = buildDemoSettingsCatalog()
@@ -397,7 +393,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
     # Initially appearance is active.
     for g in catalog.groups:
@@ -408,9 +404,9 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
       else:
         check cls == "settings-group-row"
 
-    # Click notifications.
+    # Click notifications — per-row `createRenderEffect` flips the
+    # `active` class on every row in place.
     fireEvent(groupsColumnRow(root, "notifications"), "click")
-    root = rebuildSettingsApp(r, vm)
     for g in catalog.groups:
       let row = groupsColumnRow(root, g.id)
       let cls = getAttribute(row, "class")
@@ -425,9 +421,9 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var themeRow = itemRowByLabel(root, "Theme")
+    let themeRow = itemRowByLabel(root, "Theme")
     check themeRow != nil
     let host = choiceHostOf(themeRow)
     check host != nil
@@ -440,10 +436,8 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     fireEvent(sel, "click")
     check vm.choiceValue("appearance.theme") == "Solarized"
 
-    root = rebuildSettingsApp(r, vm)
-    themeRow = itemRowByLabel(root, "Theme")
-    let host2 = choiceHostOf(themeRow)
-    check getAttribute(host2, "data-value") == "Solarized"
+    # Listener mirrored `data-value` onto the host in place.
+    check getAttribute(host, "data-value") == "Solarized"
 
   test "appearance.dark_mode toggle starts off + flips to on":
     let catalog = buildDemoSettingsCatalog()
@@ -451,11 +445,11 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var darkRow = itemRowByLabel(root, "Dark mode")
+    let darkRow = itemRowByLabel(root, "Dark mode")
     check darkRow != nil
-    var cb = toggleNodeOf(darkRow)
+    let cb = toggleNodeOf(darkRow)
     check cb != nil
     check getAttribute(cb, "data-value") == "false"
     check getAttribute(cb, "checked") == ""
@@ -464,9 +458,7 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     fireEvent(cb, "click")
     check vm.toggleValue("appearance.dark_mode") == true
 
-    root = rebuildSettingsApp(r, vm)
-    darkRow = itemRowByLabel(root, "Dark mode")
-    cb = toggleNodeOf(darkRow)
+    # Click listener wrote `data-value` + `checked` on the same node.
     check getAttribute(cb, "data-value") == "true"
     check getAttribute(cb, "checked") == "checked"
 
@@ -476,9 +468,11 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
+    let root = buildSettingsApp(r, vm)
     for g in catalog.groups:
       discard vm.setActiveGroup(g.id)
-      let root = rebuildSettingsApp(r, vm)
+      # Shell's items-column `createRenderEffect` rebuilds the active
+      # group's section in place.
       let section = itemsGroupSection(root)
       check section != nil
       check getAttribute(section, "data-group-id") == g.id
@@ -495,10 +489,10 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     let r = GpuiRenderer()
     gpui_reset_tree()
     resetCallbacks()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
     # Mutate three different items.
-    var darkCb = toggleNodeOf(itemRowByLabel(root, "Dark mode"))
+    let darkCb = toggleNodeOf(itemRowByLabel(root, "Dark mode"))
     fireEvent(darkCb, "click")
     let themeSel = choiceSelectOf(itemRowByLabel(root, "Theme"))
     r.setAttribute(themeSel, "data-value", "Dracula")
@@ -511,14 +505,14 @@ suite "EX-M12: settings GPUI shell + leaves end-to-end":
     check vm.choiceValue("appearance.theme") == "Dracula"
     check vm.numberValue("appearance.font_size") == 20
 
+    # `resetDefaults` only mutates VM signals; the leaves don't
+    # subscribe to per-item value signals (EX-M16 § D), so the DOM
+    # `data-value` mirrors stay at the user-driven values. The VM
+    # itself is the source of truth and reflects the reset.
     vm.resetDefaults()
     check vm.toggleValue("appearance.dark_mode") == false
     check vm.choiceValue("appearance.theme") == "Default"
     check vm.numberValue("appearance.font_size") == 14
-
-    root = rebuildSettingsApp(r, vm)
-    darkCb = toggleNodeOf(itemRowByLabel(root, "Dark mode"))
-    check getAttribute(darkCb, "data-value") == "false"
 
   test "GPUI shim builds a valid render plan over the settings tree":
     ## Sanity check: the shim's render-plan inspection treats the grid

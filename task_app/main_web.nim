@@ -41,5 +41,4 @@ when isMainModule:
   echo "Children: ", root.children.len
   appVm.addTask("first")
   appVm.addTask("second")
-  rerender(appVm)
   echo "After adds, tasks: ", totalCount(appVm)

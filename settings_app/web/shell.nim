@@ -8,6 +8,15 @@
 ## items via the shared Layer-2 components. The non-active groups are
 ## *not* rendered into the pane — they show up only as nav entries.
 ##
+## EX-M16: the shell builds the chrome (app root + sidebar + pane
+## container) inside a `ui(renderer):` block, with sidebar entries
+## composed via plain proc calls + `appendChild`. The
+## ``active`` class on each sidebar entry and the active group's items
+## inside the pane are bound through `createRenderEffect` over
+## ``vm.activeGroupId.val`` — clicking a sidebar entry (or a direct
+## ``vm.setActiveGroup(id)`` call from a test) propagates through the
+## reactive graph without any explicit rebuild call.
+##
 ## This makes the 3-layer alternation visibly distinct across renderers:
 ## the same shared Layer-2 components drive an accordion on TUI, a
 ## sidebar+pane on web, and (in EX-M12) a grid on GPUI, by virtue of the
@@ -73,30 +82,34 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
     let groupList = renderer.createElement("ul")
     renderer.setAttribute(groupList, "class", "settings-group-list")
 
-    let activeId = vmRef.activeGroupId.val
     for groupIdx in 0 ..< vmRef.catalog.groups.len:
       closureScope:
         let g = vmRef.catalog.groups[groupIdx]
+        let gid = g.id
         let groupLi = renderer.createElement("li")
-        renderer.setAttribute(groupLi, "class",
-          (if activeId == g.id: "active" else: ""))
-        renderer.setAttribute(groupLi, "data-group-id", g.id)
+        renderer.setAttribute(groupLi, "data-group-id", gid)
 
         let groupBtn = renderer.createElement("button")
         renderer.setAttribute(groupBtn, "class", "settings-group-button")
-        renderer.setAttribute(groupBtn, "data-group-id", g.id)
+        renderer.setAttribute(groupBtn, "data-group-id", gid)
         renderer.setAttribute(groupBtn, "type", "button")
-        if activeId == g.id:
-          renderer.setAttribute(groupBtn, "aria-pressed", "true")
         renderer.appendChild(groupBtn,
                              renderer.createTextNode(g.label))
-        # Closure factories live inline; `closureScope` gives each
-        # iteration a fresh `g` so the captured group id is correct.
-        let gid = g.id
         renderer.addEventListener(groupBtn, "click", proc() =
           discard vmRef.setActiveGroup(gid))
         renderer.appendChild(groupLi, groupBtn)
         renderer.appendChild(groupList, groupLi)
+
+        # Reactive active-state binding for this sidebar entry. The
+        # captured `gid` is per-iteration thanks to `closureScope`.
+        createRenderEffect proc() =
+          let isActive = vmRef.activeGroupId.val == gid
+          renderer.setAttribute(groupLi, "class",
+                                (if isActive: "active" else: ""))
+          if isActive:
+            renderer.setAttribute(groupBtn, "aria-pressed", "true")
+          else:
+            renderer.removeAttribute(groupBtn, "aria-pressed")
 
     renderer.appendChild(sidebar, groupList)
     renderer.appendChild(appRoot, sidebar)
@@ -104,36 +117,52 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
     # ---- Content pane: only the active group's items ----------------
     let pane = renderer.createElement("section")
     renderer.setAttribute(pane, "class", "settings-pane")
-
-    if vmRef.catalog.hasGroup(activeId):
-      let activeGroup = vmRef.currentGroup
-      let paneGroupNode = groupContainerLeaf(renderer)
-      renderer.setAttribute(paneGroupNode, "data-group-id", activeGroup.id)
-      renderer.appendChild(paneGroupNode,
-        groupHeaderLeaf(renderer, activeGroup.label,
-                        activeGroup.description))
-      for itemIdx in 0 ..< activeGroup.items.len:
-        closureScope:
-          let it = activeGroup.items[itemIdx]
-          case it.kind
-          of sikToggle:
-            renderer.appendChild(paneGroupNode,
-              renderToggleItem(renderer, vmRef, it))
-          of sikNumber:
-            renderer.appendChild(paneGroupNode,
-              renderNumberItem(renderer, vmRef, it))
-          of sikChoice:
-            renderer.appendChild(paneGroupNode,
-              renderChoiceItem(renderer, vmRef, it))
-      renderer.appendChild(pane, paneGroupNode)
-
     renderer.appendChild(appRoot, pane)
+
+    # The pane's child group section is rebuilt whenever
+    # `vm.activeGroupId` changes — a `createRenderEffect` removes the
+    # previous section (if any) and builds a fresh one for the new
+    # active group. Old per-item event listeners are dropped along
+    # with the old DOM nodes.
+    var currentPaneSection = renderer.createElement("section")
+    var hasPaneSection = false
+
+    createRenderEffect proc() =
+      let activeId = vmRef.activeGroupId.val
+      if hasPaneSection:
+        renderer.removeChild(pane, currentPaneSection)
+        hasPaneSection = false
+      if vmRef.catalog.hasGroup(activeId):
+        let activeGroup = vmRef.currentGroup
+        let paneGroupNode = groupContainerLeaf(renderer)
+        renderer.setAttribute(paneGroupNode, "data-group-id",
+                              activeGroup.id)
+        renderer.appendChild(paneGroupNode,
+          groupHeaderLeaf(renderer, activeGroup.label,
+                          activeGroup.description))
+        for itemIdx in 0 ..< activeGroup.items.len:
+          closureScope:
+            let it = activeGroup.items[itemIdx]
+            case it.kind
+            of sikToggle:
+              renderer.appendChild(paneGroupNode,
+                renderToggleItem(renderer, vmRef, it))
+            of sikNumber:
+              renderer.appendChild(paneGroupNode,
+                renderNumberItem(renderer, vmRef, it))
+            of sikChoice:
+              renderer.appendChild(paneGroupNode,
+                renderChoiceItem(renderer, vmRef, it))
+        renderer.appendChild(pane, paneGroupNode)
+        currentPaneSection = paneGroupNode
+        hasPaneSection = true
 
     appRoot
 
 template selectGroup*(vmRef, groupId): untyped =
-  ## Activate the group with `groupId`. Re-renders are driven by the
-  ## composition root; tests call this through `vm.setActiveGroup`
+  ## Activate the group with `groupId`. Re-renders flow through the
+  ## reactive graph (the shell's `createRenderEffect` over
+  ## `activeGroupId`); tests call this through `vm.setActiveGroup`
   ## directly. The template exists so a sidebar pilot script reads
   ## naturally.
   discard vmRef.setActiveGroup(groupId)

@@ -6,6 +6,15 @@
 ## resolve against the platform-specific procs by lexical scope (the
 ## same include-pattern as `task_app/core/views.nim`).
 ##
+## EX-M16: each leaf is invoked as a plain Nim proc call; the row is
+## assembled with `renderer.appendChild`. This mirrors the idiom used
+## by the editor's reference views (see
+## `isonim/src/isonim/editor/views/component_detail.nim`). The choice
+## leaf owns its own selection event listener; the component wires
+## `onChange` to `vm.setChoice`. Per-row reactivity flows through that
+## event-driven path, and the shell-level `createRenderEffect` handles
+## the active-group swap on `vm.activeGroupId` changes.
+##
 ## Leaf surface required in scope at the include site (all per-
 ## platform; never imported here):
 ##
@@ -45,15 +54,15 @@ template renderChoiceItem*(renderer, vmRef, settingsItem): untyped {.dirty.} =
   ##     descriptionLeaf      (only when description is non-empty)
   ##     choiceLeaf
   block:
+    let choiceItemId = settingsItem.id
     let row = itemContainerLeaf(renderer)
     renderer.appendChild(row, labelLeaf(renderer, settingsItem.label))
     if settingsItem.description.len > 0:
       renderer.appendChild(row,
         descriptionLeaf(renderer, settingsItem.description))
-    let initialValue = vmRef.choiceValue(settingsItem.id)
-    let choiceNode = choiceLeaf(renderer, initialValue,
-      settingsItem.choiceOptions,
-      proc(newValue: string) =
-        discard vmRef.setChoice(settingsItem.id, newValue))
-    renderer.appendChild(row, choiceNode)
+    renderer.appendChild(row,
+      choiceLeaf(renderer, vmRef.choiceValue(choiceItemId),
+        settingsItem.choiceOptions,
+        proc(newValue: string) =
+          discard vmRef.setChoice(choiceItemId, newValue)))
     row

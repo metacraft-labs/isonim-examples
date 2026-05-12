@@ -180,12 +180,11 @@ suite "EX-M3: cross-renderer VM-state parity (TUI, web, GPUI)":
       vm.toggleTask(id1)
       vm.setFilter(fmActive)
 
-    # ── TUI flavour
+    # ── TUI flavour (EX-M16: reactive — no manual rerender)
     let vmTui = newTaskAppVM()
     let h = newTerminalTestHarness(60, 14)
     discard tui_app.runTaskApp(h, vmTui)
     script(vmTui)
-    tui_app.rerender(vmTui)
     let snapTui = vmTui.snapshot
 
     # ── Web flavour (MockRenderer)
@@ -193,14 +192,12 @@ suite "EX-M3: cross-renderer VM-state parity (TUI, web, GPUI)":
     let rWeb = MockRenderer()
     discard web_app.buildTaskApp(rWeb, vmWeb)
     script(vmWeb)
-    web_app.rerender(vmWeb)
     let snapWeb = vmWeb.snapshot
 
     # ── GPUI flavour
     let vmGpui = newTaskAppVM()
     discard gpui_app.runTaskApp(vmGpui)
     script(vmGpui)
-    gpui_app.rerender(vmGpui)
     let snapGpui = vmGpui.snapshot
 
     # All three snapshots are byte-identical (same field values, same

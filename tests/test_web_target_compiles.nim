@@ -6,6 +6,11 @@
 ## its `MockRenderer` leaves end-to-end. (A full Playwright run lives
 ## downstream once `isonim-website/` consumes the example.)
 ##
+## EX-M16: the leaves now bind reactively via `createRenderEffect` and
+## `forEachKeyed`; the test exercises the same scripted scenario but no
+## longer calls a per-mutation `rerender(vm)` — VM mutations propagate
+## to the rendered tree through the reactive graph automatically.
+##
 ## Mirrors `isonim-tui`'s `test_task_app_web_target_compiles` but
 ## pointing at the canonical post-EX-M2 location. The two together
 ## guard the same invariant from both sides:
@@ -35,40 +40,34 @@ suite "EX-M2: migrated web composition root drives the same VM":
     # appShell contains: input, filter bar, list, summary.
     check root.children.len == 4
 
-    # Drive via VM — the leaves rebuild on every rerender.
+    # Drive via VM — the reactive leaves update automatically.
     vm.addTask("First")
     vm.addTask("Second")
-    rerender(vm)
     check vm.totalCount == 2
 
     # Toggle the first task and check the visible list reflects it.
     let firstId = vm.tasks.val[0].id
     vm.toggleTask(firstId)
-    rerender(vm)
     check vm.completedCount == 1
 
     # Filter to active and verify the projection.
     vm.setFilter(fmActive)
-    rerender(vm)
     let visible = vm.visibleTasks
     check visible.len == 1
     check visible[0].name == "Second"
 
     # Filter to completed.
     vm.setFilter(fmCompleted)
-    rerender(vm)
     let comp = vm.visibleTasks
     check comp.len == 1
     check comp[0].name == "First"
 
     # Clearing completed empties the completed view.
     vm.clearCompleted()
-    rerender(vm)
     check vm.totalCount == 1
     check vm.visibleTasks.len == 0  # filter is still Completed
 
     vm.setFilter(fmAll)
-    rerender(vm)
     check vm.visibleTasks.len == 1
     check vm.visibleTasks[0].name == "Second"
 

@@ -32,24 +32,17 @@
 ##
 ##   * ``buildSettingsApp(r, vm)`` — returns the root node. Tests call
 ##     this directly when they already own a renderer.
-##   * ``rebuildSettingsApp(r, vm)`` — builds a fresh tree from the
-##     current VM state. The web target does not own a harness object
-##     (the production `WebRenderer` owns the document root); tests
-##     drive the manual rebuild path after every mutation to assert the
-##     new tree shape. Returns the new root.
 ##
-## A manual rebuild path is used here (rather than an in-place
-## `createRenderEffect`) for the same reasons documented in
-## `settings_app/main_tui.nim`: the cross-platform contract only
-## requires byte-identical Layer-3 / Layer-2 across platforms; the
-## leaves are explicitly per-platform and the settings-app's mutation
-## surface is small enough that an explicit rebuild path is simpler to
-## reason about than a fan-out of `Signal[T]` observers wired through
-## the renderer.
+## EX-M16: the explicit ``rebuildSettingsApp`` proc is gone. The shell
+## binds its dynamic state (active sidebar entry highlight, active
+## group's pane contents) via ``createRenderEffect`` over
+## ``vm.activeGroupId.val``, so VM mutations propagate to the rendered
+## tree through the reactive graph instead.
 
 import std/tables
 
 import isonim/core/signals
+import isonim/core/computation  # createRenderEffect
 import isonim/testing/mock_dom
 
 import settings_app/core/vm
@@ -69,12 +62,6 @@ proc buildSettingsApp*(r: MockRenderer; vm: SettingsVM): MockNode =
   ## settings-app web tree (Layer 3 → Layer 2 → Layer 1) and returns
   ## the root node.
   renderSettingsShell(r, vm)
-
-proc rebuildSettingsApp*(r: MockRenderer; vm: SettingsVM): MockNode =
-  ## Build a fresh tree from the current VM state. The shell reads
-  ## `vm.activeGroupId` + the per-item value tables on every build, so
-  ## calling this after a VM mutation paints the new state.
-  buildSettingsApp(r, vm)
 
 when isMainModule:
   let catalog = buildDemoSettingsCatalog()

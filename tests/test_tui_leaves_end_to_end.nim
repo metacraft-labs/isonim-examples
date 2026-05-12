@@ -1,9 +1,11 @@
 ## test_tui_leaves_end_to_end — EX-M2 mandatory integration test.
 ##
 ## Real-stack exercise of the migrated TUI leaves + composition root
-## (`task_app/main_tui.nim`, `task_app/tui/leaves.nim`). This test
-## proves the migrated leaves still drive the production renderer
-## correctly from their new canonical home in `isonim-examples`.
+## (`task_app/main_tui.nim`, `task_app/tui/leaves.nim`).
+##
+## EX-M16: the leaves bind reactively via `createRenderEffect` and
+## `forEachKeyed`; VM mutations propagate through the reactive graph
+## automatically — there is no per-action `rerender(vm)` call.
 ##
 ## What this exercises (no mocks):
 ##   * `newTaskAppVM`        — the canonical Layer-3 ViewModel.
@@ -17,16 +19,6 @@
 ##     `InputWidget`,
 ##     `RadioButtonWidget`   — the real isonim-tui widget runtime
 ##                              consumed via `--path:../isonim-tui/src`.
-##
-## A scripted scenario adds tasks, toggles one, and switches the filter
-## via the VM's action procs (the leaves rebuild on every `rerender`).
-## The test asserts the full pipeline stays consistent: VM state, tree
-## topology, list-row text, summary-row text, filter-button selection
-## state.
-##
-## EX-M3..M6 add GPUI/Freya/Cocoa/Android leaves; this test stays the
-## TUI-side regression check that the Option B migration did not perturb
-## the M22 surface.
 
 import std/[unittest, strutils, tables]
 
@@ -56,11 +48,10 @@ suite "EX-M2: migrated TUI leaves drive the real-stack pipeline":
     check s.listNode != nil
     check s.summaryNode != nil
 
-    # ── 1. Drive the VM through addTask → rerender; the list grows.
+    # ── 1. Drive the VM through addTask; the list grows reactively.
     vm.addTask("buy milk")
     vm.addTask("write specs")
     vm.addTask("review pr")
-    rerender(vm)
 
     check vm.totalCount == 3
     check vm.activeCount == 3
@@ -80,19 +71,23 @@ suite "EX-M2: migrated TUI leaves drive the real-stack pipeline":
     # ── 2. Toggle the first task → it becomes [x] and active drops by 1.
     let firstId = vm.tasks.val[0].id
     vm.toggleTask(firstId)
-    rerender(vm)
 
     check vm.activeCount == 2
     check vm.completedCount == 1
-    let row0After = s.listNode.children[0]
+    # Find the toggled row by id (forEachKeyed may reorder by identity).
+    var row0After: TerminalNode = nil
+    for child in s.listNode.children:
+      if child.attributes.getOrDefault("data-task-id") == $firstId:
+        row0After = child
+        break
+    check row0After != nil
     check "[x]" in row0After.children[0].text
     let summaryText2 = s.summaryNode.children[0].children[0].text
     check summaryText2 == "2 of 3 remaining"
 
-    # ── 3. Switch filter to Active via the VM (the leaves' rerender
+    # ── 3. Switch filter to Active via the VM (the reactive effect
     #       syncs the radio-button selection state).
     vm.setFilter(fmActive)
-    rerender(vm)
 
     check vm.filter.val == fmActive
     check vm.visibleTasks.len == 2
@@ -110,7 +105,6 @@ suite "EX-M2: migrated TUI leaves drive the real-stack pipeline":
 
     # ── 4. Filter Completed → only the [x] row.
     vm.setFilter(fmCompleted)
-    rerender(vm)
 
     check vm.filter.val == fmCompleted
     check s.listNode.children.len == 1

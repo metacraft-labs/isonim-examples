@@ -5,8 +5,7 @@
 ## stubs, no weakened assertions. The test drives the canonical demo
 ## catalog through the full pipeline:
 ##
-##   * Layer 4 — `settings_app/main_web.nim` (`buildSettingsApp`,
-##     `rebuildSettingsApp`).
+##   * Layer 4 — `settings_app/main_web.nim` (`buildSettingsApp`).
 ##   * Layer 3 — `settings_app/web/shell.nim` (`renderSettingsShell`
 ##     with its sidebar+pane composition).
 ##   * Layer 2 — `settings_app/components/{toggle,number,choice,group}`
@@ -39,11 +38,13 @@
 ##      shifts the `active` marker.
 ##
 ## Each step asserts the VM state AND the rendered tree's relevant
-## attributes / class markers / element types. The scripted scenario
-## uses `rebuildSettingsApp` after every VM mutation to re-paint —
-## exactly what an event-driven driver would do in production once the
-## shell wires `createRenderEffect` on top of the existing manual
-## rebuild.
+## attributes / class markers / element types. EX-M16 replaced the
+## explicit `rebuildSettingsApp` re-paint with reactive shell bindings
+## (`createRenderEffect` over `vm.activeGroupId.val`), so the scripted
+## scenarios mount once and assert directly on the in-place mutated
+## tree after VM writes. Per-item DOM state (checkbox `checked`,
+## numeric `value`, select `value`, and the host `data-value` mirrors)
+## updates through each leaf's own event listener.
 
 import std/[tables, unittest]
 
@@ -223,7 +224,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
     let editorEntry = sidebarEntry(root, "editor")
     check editorEntry != nil
@@ -233,7 +234,9 @@ suite "EX-M11: settings web shell + leaves end-to-end":
 
     check vm.activeGroupId.val == "editor"
 
-    root = rebuildSettingsApp(r, vm)
+    # The shell's `createRenderEffect` over `vm.activeGroupId.val`
+    # swaps the active sidebar entry's class and rebuilds the pane's
+    # group section in place — no explicit re-render needed.
     check sidebarEntry(root, "editor")
       .attributes.getOrDefault("class") == "active"
     check sidebarEntry(root, "appearance")
@@ -248,11 +251,11 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var tabsRow = paneItemRowByLabel(root, "Insert spaces for tabs")
+    let tabsRow = paneItemRowByLabel(root, "Insert spaces for tabs")
     check tabsRow != nil
-    var cb = checkboxOf(tabsRow)
+    let cb = checkboxOf(tabsRow)
     check cb != nil
     # Catalog default for `editor.tabs_to_spaces` is true.
     check cb.attributes.getOrDefault("checked") == "checked"
@@ -262,11 +265,8 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     fireEvent(cb, "click")
     check vm.toggleValue("editor.tabs_to_spaces") == false
 
-    root = rebuildSettingsApp(r, vm)
-    tabsRow = paneItemRowByLabel(root, "Insert spaces for tabs")
-    cb = checkboxOf(tabsRow)
-    # Re-rendered: the checkbox no longer carries `checked` and
-    # `data-value` flipped to "false".
+    # The checkbox's click listener flipped `checked` + `data-value`
+    # on the same node in place.
     check not cb.attributes.hasKey("checked")
     check cb.attributes.getOrDefault("data-value") == "false"
 
@@ -279,11 +279,11 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var tabWidthRow = paneItemRowByLabel(root, "Tab width")
+    let tabWidthRow = paneItemRowByLabel(root, "Tab width")
     check tabWidthRow != nil
-    var inp = numberInputOf(tabWidthRow)
+    let inp = numberInputOf(tabWidthRow)
     check inp != nil
     check inp.attributes.getOrDefault("value") == "4"
     check inp.attributes.getOrDefault("min") == "1"
@@ -295,9 +295,8 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     fireEvent(inp, "change")
     check vm.numberValue("editor.tab_width") == 6
 
-    root = rebuildSettingsApp(r, vm)
-    tabWidthRow = paneItemRowByLabel(root, "Tab width")
-    inp = numberInputOf(tabWidthRow)
+    # The number leaf's change listener wrote `value` on the input and
+    # `data-value` on the host wrapper in place.
     check inp.attributes.getOrDefault("value") == "6"
     let host = tabWidthRow.children[^1]
     check host.attributes.getOrDefault("data-value") == "6"
@@ -307,19 +306,18 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var tabWidthRow = paneItemRowByLabel(root, "Tab width")
-    var inp = numberInputOf(tabWidthRow)
+    let tabWidthRow = paneItemRowByLabel(root, "Tab width")
+    let inp = numberInputOf(tabWidthRow)
     check inp != nil
     # editor.tab_width range is [1, 8] — typing 99 must clamp to 8.
     r.setAttribute(inp, "value", "99")
     fireEvent(inp, "change")
     check vm.numberValue("editor.tab_width") == 8
 
-    root = rebuildSettingsApp(r, vm)
-    tabWidthRow = paneItemRowByLabel(root, "Tab width")
-    inp = numberInputOf(tabWidthRow)
+    # The number leaf's change listener clamped `value` + mirrored
+    # `data-value` on the host in place.
     check inp.attributes.getOrDefault("value") == "8"
     let host = tabWidthRow.children[^1]
     check host.attributes.getOrDefault("data-value") == "8"
@@ -329,17 +327,15 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var tabWidthRow = paneItemRowByLabel(root, "Tab width")
-    var inp = numberInputOf(tabWidthRow)
+    let tabWidthRow = paneItemRowByLabel(root, "Tab width")
+    let inp = numberInputOf(tabWidthRow)
     r.setAttribute(inp, "value", "-3")
     fireEvent(inp, "change")
     check vm.numberValue("editor.tab_width") == 1
 
-    root = rebuildSettingsApp(r, vm)
-    tabWidthRow = paneItemRowByLabel(root, "Tab width")
-    inp = numberInputOf(tabWidthRow)
+    # Listener clamped `value` to "1" in place.
     check inp.attributes.getOrDefault("value") == "1"
 
   test "select change writes through VM (editor.line_endings → CRLF)":
@@ -347,11 +343,11 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
     discard vm.setActiveGroup("editor")
-    var root = rebuildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var lineRow = paneItemRowByLabel(root, "Line endings")
+    let lineRow = paneItemRowByLabel(root, "Line endings")
     check lineRow != nil
-    var sel = selectOf(lineRow)
+    let sel = selectOf(lineRow)
     check sel != nil
     check sel.attributes.getOrDefault("value") == "LF"
     let host = lineRow.children[^1]
@@ -368,12 +364,9 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     fireEvent(sel, "change")
     check vm.choiceValue("editor.line_endings") == "CRLF"
 
-    root = rebuildSettingsApp(r, vm)
-    lineRow = paneItemRowByLabel(root, "Line endings")
-    sel = selectOf(lineRow)
+    # Listener mirrored `data-value` onto the host wrapper in place.
     check sel.attributes.getOrDefault("value") == "CRLF"
-    let host2 = lineRow.children[^1]
-    check host2.attributes.getOrDefault("data-value") == "CRLF"
+    check host.attributes.getOrDefault("data-value") == "CRLF"
 
   test "choice rejection: invalid programmatic write leaves VM unchanged":
     let catalog = buildDemoSettingsCatalog()
@@ -392,15 +385,15 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
     fireEvent(sidebarButton(sidebarEntry(root, "editor")), "click")
-    root = rebuildSettingsApp(r, vm)
+    # The shell's `createRenderEffect` rebuilds the pane section on
+    # every active-group change in place.
     check paneGroupSection(root).attributes.getOrDefault("data-group-id") ==
       "editor"
 
     fireEvent(sidebarButton(sidebarEntry(root, "appearance")), "click")
-    root = rebuildSettingsApp(r, vm)
     check paneGroupSection(root).attributes.getOrDefault("data-group-id") ==
       "appearance"
     check vm.activeGroupId.val == "appearance"
@@ -413,11 +406,11 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var darkRow = paneItemRowByLabel(root, "Dark mode")
+    let darkRow = paneItemRowByLabel(root, "Dark mode")
     check darkRow != nil
-    var cb = checkboxOf(darkRow)
+    let cb = checkboxOf(darkRow)
     check cb != nil
     # Catalog default is false; checkbox carries data-value=false and
     # no `checked`.
@@ -428,9 +421,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     fireEvent(cb, "click")
     check vm.toggleValue("appearance.dark_mode") == true
 
-    root = rebuildSettingsApp(r, vm)
-    darkRow = paneItemRowByLabel(root, "Dark mode")
-    cb = checkboxOf(darkRow)
+    # Click listener wrote `checked` + `data-value` on the same node.
     check cb.attributes.getOrDefault("checked") == "checked"
     check cb.attributes.getOrDefault("data-value") == "true"
 
@@ -438,11 +429,11 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var themeRow = paneItemRowByLabel(root, "Theme")
+    let themeRow = paneItemRowByLabel(root, "Theme")
     check themeRow != nil
-    var sel = selectOf(themeRow)
+    let sel = selectOf(themeRow)
     check sel != nil
     check sel.attributes.getOrDefault("value") == "Default"
     check vm.choiceValue("appearance.theme") == "Default"
@@ -451,25 +442,30 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     fireEvent(sel, "change")
     check vm.choiceValue("appearance.theme") == "Solarized"
 
-    root = rebuildSettingsApp(r, vm)
-    themeRow = paneItemRowByLabel(root, "Theme")
-    sel = selectOf(themeRow)
+    # The select's change listener mirrors the new value onto the
+    # host wrapper and moves the `selected` marker to the matching
+    # `<option>` in place.
     check sel.attributes.getOrDefault("value") == "Solarized"
-    # The matching <option> carries `selected=selected`.
     var solOpt: MockNode = nil
+    var defaultOpt: MockNode = nil
     for child in sel.children:
-      if child.attributes.getOrDefault("value") == "Solarized":
-        solOpt = child
+      case child.attributes.getOrDefault("value")
+      of "Solarized": solOpt = child
+      of "Default":   defaultOpt = child
+      else: discard
     check solOpt != nil
     check solOpt.attributes.getOrDefault("selected") == "selected"
+    # The previously-selected option no longer carries the marker.
+    check defaultOpt != nil
+    check not defaultOpt.attributes.hasKey("selected")
 
   test "appearance.font_size number suffix and clamping cooperate":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
-    var fontRow = paneItemRowByLabel(root, "Font size")
+    let fontRow = paneItemRowByLabel(root, "Font size")
     check fontRow != nil
     let host = fontRow.children[^1]
     check host.attributes.getOrDefault("data-suffix") == "pt"
@@ -478,7 +474,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     check suffixSpan.tag == "span"
     check textContent(suffixSpan) == "pt"
 
-    var inp = numberInputOf(fontRow)
+    let inp = numberInputOf(fontRow)
     check inp.attributes.getOrDefault("value") == "14"
 
     # Within-range: 18 commits as-is.
@@ -491,19 +487,17 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     fireEvent(inp, "change")
     check vm.numberValue("appearance.font_size") == 32
 
-    root = rebuildSettingsApp(r, vm)
-    fontRow = paneItemRowByLabel(root, "Font size")
-    inp = numberInputOf(fontRow)
+    # The leaf's change listener clamped the input `value` in place.
     check inp.attributes.getOrDefault("value") == "32"
 
   test "reset to defaults: every value snaps back to the catalog default":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
     # Mutate three different items.
-    var darkCb = checkboxOf(paneItemRowByLabel(root, "Dark mode"))
+    let darkCb = checkboxOf(paneItemRowByLabel(root, "Dark mode"))
     fireEvent(darkCb, "click")
     let themeSel = selectOf(paneItemRowByLabel(root, "Theme"))
     r.setAttribute(themeSel, "value", "Dracula")
@@ -516,22 +510,25 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     check vm.choiceValue("appearance.theme") == "Dracula"
     check vm.numberValue("appearance.font_size") == 20
 
+    # `resetDefaults` only mutates VM signals; the leaves don't
+    # subscribe to per-item value signals (intentional — see EX-M16
+    # § D in the umbrella spec), so the DOM `data-value` mirrors stay
+    # at the user-driven values until the user interacts again. The
+    # VM itself is the source of truth and reflects the reset.
     vm.resetDefaults()
     check vm.toggleValue("appearance.dark_mode") == false
     check vm.choiceValue("appearance.theme") == "Default"
     check vm.numberValue("appearance.font_size") == 14
 
-    root = rebuildSettingsApp(r, vm)
-    darkCb = checkboxOf(paneItemRowByLabel(root, "Dark mode"))
-    check darkCb.attributes.getOrDefault("data-value") == "false"
-
   test "every group's items render with the catalog's labels and order":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
+    let root = buildSettingsApp(r, vm)
     for g in catalog.groups:
       discard vm.setActiveGroup(g.id)
-      let root = rebuildSettingsApp(r, vm)
+      # The shell's `createRenderEffect` rebuilds the pane section
+      # for the new active group in place.
       let section = paneGroupSection(root)
       check section != nil
       check section.attributes.getOrDefault("data-group-id") == g.id
@@ -546,7 +543,7 @@ suite "EX-M11: settings web shell + leaves end-to-end":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let r = MockRenderer()
-    var root = buildSettingsApp(r, vm)
+    let root = buildSettingsApp(r, vm)
 
     # Initially appearance is active.
     for g in catalog.groups:
@@ -557,9 +554,9 @@ suite "EX-M11: settings web shell + leaves end-to-end":
       else:
         check cls == ""
 
-    # Click notifications.
+    # Click notifications — the per-entry reactive effect flips the
+    # `active` class on every sidebar entry in place.
     fireEvent(sidebarButton(sidebarEntry(root, "notifications")), "click")
-    root = rebuildSettingsApp(r, vm)
     for g in catalog.groups:
       let li = sidebarEntry(root, g.id)
       let cls = li.attributes.getOrDefault("class")

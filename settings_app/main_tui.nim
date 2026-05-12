@@ -37,22 +37,18 @@
 ##   * ``runSettingsApp(h, vm)`` — mounts the tree under a
 ##     `TerminalTestHarness` and returns the root. Mirrors
 ##     `runTaskApp` from the task-app composition root.
-##   * ``rebuildSettingsApp(h, vm)`` — wipes the harness's root and
-##     rebuilds the tree from the current VM state. Used by the
-##     integration test after every `vm.setActiveGroup` /
-##     `vm.setToggle` / etc. mutation to assert the new tree shape.
 ##
-## A manual rebuild path is used here (rather than an in-place
-## `createRenderEffect`) for the same reasons documented in
-## `task_app/tui/leaves.nim`: the cross-platform contract only requires
-## byte-identical Layer-3 / Layer-2 across platforms; the leaves are
-## explicitly per-platform and the settings-app's mutation surface is
-## small enough that an explicit rebuild path is simpler to reason
-## about than a fan-out of `Signal[T]` observers wired through the
-## widget runtime.
+## EX-M16: the explicit ``rebuildSettingsApp`` re-mount path is gone.
+## The shell binds its dynamic state (active-group expand/collapse,
+## per-row visibility) via ``createRenderEffect`` over
+## ``vm.activeGroupId.val``, so VM mutations propagate to the rendered
+## tree through the reactive graph instead.
 
 import isonim_tui
 import isonim_tui/events
+
+import isonim/core/signals
+import isonim/core/computation  # createRenderEffect
 
 import settings_app/core/vm
 import settings_app/core/demo_catalog
@@ -76,18 +72,14 @@ proc runSettingsApp*(h: TerminalTestHarness;
                      vm: SettingsVM): TerminalNode =
   ## Mount the settings app into a `TerminalTestHarness` and return
   ## the root node. Used by tests + by an interactive entry point.
+  ## With EX-M16's reactive shell, the mounted tree updates in place
+  ## when the VM mutates — there is no `rebuildSettingsApp` follow-up
+  ## call to make.
   var rootRef: TerminalNode
   h.mount(proc(r: TerminalRenderer): TerminalNode =
     rootRef = buildSettingsApp(r, vm)
     rootRef)
   rootRef
-
-proc rebuildSettingsApp*(h: TerminalTestHarness;
-                         vm: SettingsVM): TerminalNode =
-  ## Re-mount the settings app under the existing harness. The shell
-  ## reads `vm.activeGroupId` + the per-item value tables on every
-  ## build, so calling this after a VM mutation paints the new state.
-  runSettingsApp(h, vm)
 
 when isMainModule:
   let catalog = buildDemoSettingsCatalog()

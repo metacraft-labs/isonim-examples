@@ -24,20 +24,21 @@
 ##
 ##   * ``buildSettingsApp(r, vm)`` — returns the root node. Tests
 ##     call this directly when they already own a renderer.
-##   * ``rebuildSettingsApp(r, vm)`` — builds a fresh tree from the
-##     current VM state. Like EX-M3's GPUI task_app + EX-M11's web
-##     settings_app, the GPUI flavour uses a manual rebuild path after
-##     every mutation; this matches the imperative rerender pattern
-##     documented in `task_app/gpui/leaves.nim` (the shim's reactive
-##     memo observer notification is still limited).
 ##   * ``runSettingsApp(vm)`` — convenience wrapper that builds against
 ##     a fresh `GpuiRenderer` after resetting the shim's tree +
 ##     callback registry. Symmetric with `task_app/main_gpui.nim`'s
 ##     `runTaskApp`.
+##
+## EX-M16: the explicit ``rebuildSettingsApp`` proc is gone. The shell
+## binds its dynamic state (active group row highlight, active group's
+## items column contents) via ``createRenderEffect`` over
+## ``vm.activeGroupId.val``, so VM mutations propagate to the rendered
+## tree through the reactive graph instead.
 
 import std/tables
 
 import isonim/core/signals
+import isonim/core/computation  # createRenderEffect
 import isonim_gpui/renderer
 import isonim_gpui/bindings
 
@@ -58,15 +59,6 @@ proc buildSettingsApp*(r: GpuiRenderer; vm: SettingsVM): GpuiElement =
   ## settings-app GPUI tree (Layer 3 → Layer 2 → Layer 1) and returns
   ## the root node.
   renderSettingsShell(r, vm)
-
-proc rebuildSettingsApp*(r: GpuiRenderer; vm: SettingsVM): GpuiElement =
-  ## Build a fresh tree from the current VM state. The shell reads
-  ## `vm.activeGroupId` + the per-item value tables on every build, so
-  ## calling this after a VM mutation paints the new state. The GPUI
-  ## shim's tree + callback registry are *not* reset here — call
-  ## `runSettingsApp` for the full-reset path used between independent
-  ## scripted scenarios.
-  buildSettingsApp(r, vm)
 
 proc runSettingsApp*(vm: SettingsVM): GpuiElement =
   ## Build the settings app against a fresh `GpuiRenderer` and return

@@ -8,6 +8,14 @@
 ## calls `vm.setActiveGroup(group.id)`. The items column shows the
 ## active group's header + items via the shared Layer-2 components.
 ##
+## EX-M16: the shell builds the chrome once at mount time; the
+## ``active`` class + ``aria-pressed`` on each group row and the items
+## column's child group section flow through ``createRenderEffect``
+## over ``vm.activeGroupId.val``. A direct ``vm.setActiveGroup(id)``
+## call (whether driven by a click or by a test script) updates the
+## visible state without an explicit rebuild call from the composition
+## root.
+##
 ## Visible composition differences:
 ##   * TUI (EX-M10) — single vertical column; group headers always
 ##     visible; the active group expands inline below its header.
@@ -60,22 +68,17 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
     renderer.setAttribute(appRoot, "data-app", "settings-app")
     renderer.setAttribute(appRoot, "data-layout", "grid")
 
-    let activeId = vmRef.activeGroupId.val
-
     # ---- Groups column: a clickable row per group --------------------
     let groupsCol = renderer.createElement("div")
     renderer.setAttribute(groupsCol, "class", "settings-groups-column")
+    renderer.appendChild(appRoot, groupsCol)
 
     for groupIdx in 0 ..< vmRef.catalog.groups.len:
       closureScope:
         let g = vmRef.catalog.groups[groupIdx]
+        let gid = g.id
         let row = renderer.createElement("div")
-        renderer.setAttribute(row, "class",
-          (if activeId == g.id: "settings-group-row active"
-           else: "settings-group-row"))
-        renderer.setAttribute(row, "data-group-id", g.id)
-        if activeId == g.id:
-          renderer.setAttribute(row, "aria-pressed", "true")
+        renderer.setAttribute(row, "data-group-id", gid)
 
         # Inner label keeps the visible text reachable via textContent
         # without colliding with the click handler on the row itself.
@@ -84,46 +87,68 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
         renderer.setTextContent(rowLabel, g.label)
         renderer.appendChild(row, rowLabel)
 
-        let gid = g.id
         renderer.addEventListener(row, "click", proc() =
           discard vmRef.setActiveGroup(gid))
         renderer.appendChild(groupsCol, row)
 
-    renderer.appendChild(appRoot, groupsCol)
+        # Reactive active-state binding for this group row.
+        createRenderEffect proc() =
+          let isActive = vmRef.activeGroupId.val == gid
+          renderer.setAttribute(row, "class",
+            (if isActive: "settings-group-row active"
+             else: "settings-group-row"))
+          if isActive:
+            renderer.setAttribute(row, "aria-pressed", "true")
+          else:
+            renderer.removeAttribute(row, "aria-pressed")
 
     # ---- Items column: only the active group's header + items --------
     let itemsCol = renderer.createElement("div")
     renderer.setAttribute(itemsCol, "class", "settings-items-column")
-
-    if vmRef.catalog.hasGroup(activeId):
-      let activeGroup = vmRef.currentGroup
-      let paneGroupNode = groupContainerLeaf(renderer)
-      renderer.setAttribute(paneGroupNode, "data-group-id", activeGroup.id)
-      renderer.appendChild(paneGroupNode,
-        groupHeaderLeaf(renderer, activeGroup.label,
-                        activeGroup.description))
-      for itemIdx in 0 ..< activeGroup.items.len:
-        closureScope:
-          let it = activeGroup.items[itemIdx]
-          case it.kind
-          of sikToggle:
-            renderer.appendChild(paneGroupNode,
-              renderToggleItem(renderer, vmRef, it))
-          of sikNumber:
-            renderer.appendChild(paneGroupNode,
-              renderNumberItem(renderer, vmRef, it))
-          of sikChoice:
-            renderer.appendChild(paneGroupNode,
-              renderChoiceItem(renderer, vmRef, it))
-      renderer.appendChild(itemsCol, paneGroupNode)
-
     renderer.appendChild(appRoot, itemsCol)
+
+    # The items column's child group section is rebuilt whenever
+    # `vm.activeGroupId` changes. Old per-item event listeners are
+    # dropped along with the old DOM nodes.
+    var currentItemsSection = renderer.createElement("section")
+    var hasItemsSection = false
+
+    createRenderEffect proc() =
+      let activeId = vmRef.activeGroupId.val
+      if hasItemsSection:
+        renderer.removeChild(itemsCol, currentItemsSection)
+        hasItemsSection = false
+      if vmRef.catalog.hasGroup(activeId):
+        let activeGroup = vmRef.currentGroup
+        let paneGroupNode = groupContainerLeaf(renderer)
+        renderer.setAttribute(paneGroupNode, "data-group-id",
+                              activeGroup.id)
+        renderer.appendChild(paneGroupNode,
+          groupHeaderLeaf(renderer, activeGroup.label,
+                          activeGroup.description))
+        for itemIdx in 0 ..< activeGroup.items.len:
+          closureScope:
+            let it = activeGroup.items[itemIdx]
+            case it.kind
+            of sikToggle:
+              renderer.appendChild(paneGroupNode,
+                renderToggleItem(renderer, vmRef, it))
+            of sikNumber:
+              renderer.appendChild(paneGroupNode,
+                renderNumberItem(renderer, vmRef, it))
+            of sikChoice:
+              renderer.appendChild(paneGroupNode,
+                renderChoiceItem(renderer, vmRef, it))
+        renderer.appendChild(itemsCol, paneGroupNode)
+        currentItemsSection = paneGroupNode
+        hasItemsSection = true
 
     appRoot
 
 template selectGroup*(vmRef, groupId): untyped =
-  ## Activate the group with `groupId`. Re-renders are driven by the
-  ## composition root; tests call this through `vm.setActiveGroup`
+  ## Activate the group with `groupId`. Re-renders flow through the
+  ## reactive graph (the shell's `createRenderEffect` over
+  ## `activeGroupId`); tests call this through `vm.setActiveGroup`
   ## directly. The template exists so a click-driver pilot script
   ## reads naturally.
   discard vmRef.setActiveGroup(groupId)

@@ -9,6 +9,13 @@
 ## `SettingsItemKind` triggers a compile error here until the dispatch
 ## is updated.
 ##
+## EX-M16: the component composes its tree via plain Nim proc calls
+## against the per-platform leaves + per-kind item templates already in
+## scope at the include site. Each per-iteration body wraps in
+## `closureScope` so the `onChange` closures wired inside the item
+## templates capture the correct `it` per iteration (without
+## `closureScope`, all closures would alias the loop's final value).
+##
 ## Composition contract: the includer must already have the three
 ## per-kind item components in scope (the includer typically `include`s
 ## `toggle_item.nim`, `number_item.nim`, `choice_item.nim` before this

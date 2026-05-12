@@ -6,7 +6,7 @@
 ## canonical demo catalog through the full pipeline:
 ##
 ##   * Layer 4 — `settings_app/main_tui.nim` (`buildSettingsApp`,
-##     `runSettingsApp`, `rebuildSettingsApp`).
+##     `runSettingsApp`).
 ##   * Layer 3 — `settings_app/tui/shell.nim` (`renderSettingsShell`
 ##     with its expand-collapse list-of-groups composition).
 ##   * Layer 2 — `settings_app/components/{toggle,number,choice,group}`
@@ -39,11 +39,14 @@
 ##      group.
 ##
 ## Each step asserts the VM state AND the rendered tree's relevant
-## attributes / class markers / nested widget node states. The
-## scripted scenario uses `rebuildSettingsApp` after every VM
-## mutation to re-paint — exactly what an event-driven driver would
-## do in production once the shell wires `createRenderEffect` on
-## top of the existing manual rebuild.
+## attributes / class markers / nested widget node states. EX-M16
+## replaced the explicit `rebuildSettingsApp` re-paint with reactive
+## shell bindings (`createRenderEffect` over `vm.activeGroupId.val`),
+## so the scripted scenarios mount once and assert directly on the
+## in-place mutated tree after VM writes. Per-item widget state
+## (Switch glyphs, Input value, OptionList highlight) updates through
+## each widget's own keydown / click listener which writes the new
+## attribute on the same DOM/terminal node.
 
 import std/[strutils, tables, unittest]
 
@@ -204,11 +207,9 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
     check vm.toggleValue("appearance.dark_mode") == true
 
-    # Re-render to reflect the new VM state in a fresh tree.
-    root = rebuildSettingsApp(h, vm)
-    appearance = findGroupSection(root, "appearance")
-    darkRow = findItemRowByLabel(appearance, "Dark mode")
-    switchNode = findSwitchNode(darkRow)
+    # The Switch widget's own keydown handler flipped its `data-value`
+    # attribute and re-painted its glyph row in place — assert against
+    # the same node.
     check switchNode.attributes.getOrDefault("data-value") == "on"
     check textContent(switchNode).contains("[\xc2\xb7\xe2\x97\x8f]")
 
@@ -262,11 +263,8 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
     # to the VM via `setNumber`. 18 is within [10, 32] so it commits as-is.
     check vm.numberValue("appearance.font_size") == 18
 
-    # Re-render and assert the new value is reflected in the
-    # leaf's `data-value` attribute.
-    root = rebuildSettingsApp(h, vm)
-    appearance = findGroupSection(root, "appearance")
-    fontRow = findItemRowByLabel(appearance, "Font size")
+    # The number leaf's submit closure also writes `data-value` on the
+    # host wrapper in place — assert against the same node.
     check fontRow.children[^1].attributes.getOrDefault("data-value") == "18"
 
     h.dispose()
@@ -302,9 +300,8 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
     check vm.choiceValue("appearance.theme") == "Solarized"
 
-    root = rebuildSettingsApp(h, vm)
-    appearance = findGroupSection(root, "appearance")
-    themeRow = findItemRowByLabel(appearance, "Theme")
+    # The choice leaf's onSelect closure also writes `data-value` on
+    # the host wrapper in place.
     check themeRow.children[^1].attributes.getOrDefault("data-value") ==
       "Solarized"
 
@@ -314,10 +311,12 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
-    var root = runSettingsApp(h, vm)
+    let root = runSettingsApp(h, vm)
 
+    # The shell's `createRenderEffect` over `vm.activeGroupId.val`
+    # toggles each section's `data-expanded` and its item rows in place
+    # — no explicit re-render call needed.
     discard vm.setActiveGroup("editor")
-    root = rebuildSettingsApp(h, vm)
 
     let appearance = findGroupSection(root, "appearance")
     let editor = findGroupSection(root, "editor")
@@ -350,10 +349,7 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
     check vm.toggleValue("editor.tabs_to_spaces") == false
 
-    root = rebuildSettingsApp(h, vm)
-    editor = findGroupSection(root, "editor")
-    tabsRow = findItemRowByLabel(editor, "Insert spaces for tabs")
-    switchNode = findSwitchNode(tabsRow)
+    # The Switch widget flipped its own `data-value` in place.
     check switchNode.attributes.getOrDefault("data-value") == "off"
 
     h.dispose()
@@ -392,9 +388,8 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
     check vm.numberValue("editor.tab_width") == 8
 
-    root = rebuildSettingsApp(h, vm)
-    editor = findGroupSection(root, "editor")
-    tabWidthRow = findItemRowByLabel(editor, "Tab width")
+    # The number leaf's submit closure wrote `data-value` on the host
+    # wrapper in place.
     check tabWidthRow.children[^1].attributes.getOrDefault("data-value") == "8"
 
     h.dispose()
@@ -423,10 +418,9 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
 
     # `vm.setActiveGroup("")` is rejected by the VM (the empty id is
     # not a catalog group). Set the signal directly to bypass the
-    # validation — the shell only inspects the value, not the path
-    # that produced it.
+    # validation — the shell's `createRenderEffect` fires on signal
+    # write and mutates the tree in place.
     vm.activeGroupId.val = ""
-    root = rebuildSettingsApp(h, vm)
     for child in root.children:
       check isExpanded(child) == false
       check child.children.len == 1   # header only
@@ -448,7 +442,8 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
     fireEventWith(header, "click", click)
 
     check vm.activeGroupId.val == "notifications"
-    root = rebuildSettingsApp(h, vm)
+    # Header click → setActiveGroup → shell's `createRenderEffect`
+    # flips data-expanded on every section in place.
     check isExpanded(findGroupSection(root, "notifications")) == true
     check isExpanded(findGroupSection(root, "appearance")) == false
 
@@ -458,10 +453,10 @@ suite "EX-M10: settings TUI shell + leaves end-to-end":
     let catalog = buildDemoSettingsCatalog()
     let vm = newSettingsVM(catalog)
     let h = newTerminalTestHarness(80, 24)
+    let root = runSettingsApp(h, vm)
     for groupIdx in 0 ..< catalog.groups.len:
       let g = catalog.groups[groupIdx]
       discard vm.setActiveGroup(g.id)
-      let root = rebuildSettingsApp(h, vm)
       let section = findGroupSection(root, g.id)
       check section != nil
       check isExpanded(section) == true

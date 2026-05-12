@@ -50,9 +50,9 @@ import isonim/core/signals
 import task_app/main_tui as tui_app
 import task_app/main_web as web_app
 from task_app/main_gpui as gpui_app import
-  runTaskApp, rerender, resetGpuiLeaves
+  runTaskApp, resetGpuiLeaves
 from task_app/main_freya as freya_app import
-  runTaskApp, rerender, resetFreyaLeaves
+  runTaskApp, resetFreyaLeaves
 
 import isonim_tui  # newTerminalTestHarness
 
@@ -190,7 +190,6 @@ proc tuiDriver(): RendererDriver =
         tuiHarness = newTerminalTestHarness(60, 14)
       discard tui_app.runTaskApp(tuiHarness, vm)
       script(vm)
-      tui_app.rerender(vm)
       tui_app.resetTuiLeaves())
 
 proc webDriver(): RendererDriver =
@@ -200,7 +199,6 @@ proc webDriver(): RendererDriver =
       let r = MockRenderer()
       discard web_app.buildTaskApp(r, vm)
       script(vm)
-      web_app.rerender(vm)
       web_app.resetWebLeaves())
 
 proc gpuiDriver(): RendererDriver =
@@ -209,7 +207,6 @@ proc gpuiDriver(): RendererDriver =
     mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
       discard gpui_app.runTaskApp(vm)
       script(vm)
-      gpui_app.rerender(vm)
       gpui_app.resetGpuiLeaves())
 
 proc freyaDriver(): RendererDriver =
@@ -218,7 +215,6 @@ proc freyaDriver(): RendererDriver =
     mountAndDrive: proc(vm: TaskAppVM; script: proc(vm: TaskAppVM)) =
       discard freya_app.runTaskApp(vm)
       script(vm)
-      freya_app.rerender(vm)
       freya_app.resetFreyaLeaves())
 
 # Build the driver table. Cocoa / Android entries are appended only

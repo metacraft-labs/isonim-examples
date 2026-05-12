@@ -10,6 +10,13 @@
 ## gives the layout a distinctly "Material/Freya card stack" feel that
 ## the three other shells do not share.
 ##
+## EX-M16: each card is built once at mount time with all of its items
+## already rendered. The card's ``active`` class + ``aria-pressed``
+## flow through ``createRenderEffect`` over ``vm.activeGroupId.val``;
+## clicking the card's header (or calling ``vm.setActiveGroup`` directly
+## from a test) updates the visible state without an explicit rebuild
+## call from the composition root.
+##
 ## Visible composition differences:
 ##   * TUI (EX-M10) — single vertical column; group headers always
 ##     visible; only the active group's items render below its header
@@ -65,11 +72,10 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
     renderer.setAttribute(appRoot, "data-app", "settings-app")
     renderer.setAttribute(appRoot, "data-layout", "card-stack")
 
-    let activeId = vmRef.activeGroupId.val
-
     for groupIdx in 0 ..< vmRef.catalog.groups.len:
       closureScope:
         let g = vmRef.catalog.groups[groupIdx]
+        let gid = g.id
         # Outer card wrapper: a `<div class="settings-card">` with an
         # `active` modifier when this is the active group. The card is
         # the Freya-specific chrome layer; the inner `<section>` is the
@@ -77,20 +83,14 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
         # still see `class="settings-group"` + `data-group-id` at the
         # documented depth.
         let card = renderer.createElement("div")
-        renderer.setAttribute(card, "class",
-          (if activeId == g.id: "settings-card active"
-           else: "settings-card"))
-        renderer.setAttribute(card, "data-card-id", g.id)
-        if activeId == g.id:
-          renderer.setAttribute(card, "aria-pressed", "true")
+        renderer.setAttribute(card, "data-card-id", gid)
 
         let groupNode = groupContainerLeaf(renderer)
-        renderer.setAttribute(groupNode, "data-group-id", g.id)
+        renderer.setAttribute(groupNode, "data-group-id", gid)
 
         let header = groupHeaderLeaf(renderer, g.label, g.description)
         renderer.setAttribute(header, "data-focusable", "true")
-        renderer.setAttribute(header, "data-group-id", g.id)
-        let gid = g.id
+        renderer.setAttribute(header, "data-group-id", gid)
         renderer.addEventListener(header, "click", proc() =
           discard vmRef.setActiveGroup(gid))
         renderer.appendChild(groupNode, header)
@@ -116,11 +116,25 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
         renderer.appendChild(card, groupNode)
         renderer.appendChild(appRoot, card)
 
+        # Reactive active-card binding. The card's class + aria-pressed
+        # mirror `vm.activeGroupId.val == gid` through a
+        # `createRenderEffect`.
+        createRenderEffect proc() =
+          let isActive = vmRef.activeGroupId.val == gid
+          renderer.setAttribute(card, "class",
+            (if isActive: "settings-card active"
+             else: "settings-card"))
+          if isActive:
+            renderer.setAttribute(card, "aria-pressed", "true")
+          else:
+            renderer.removeAttribute(card, "aria-pressed")
+
     appRoot
 
 template activateGroup*(vmRef, groupId): untyped =
-  ## Activate the group with `groupId`. Re-renders are driven by the
-  ## composition root; tests call this through `vm.setActiveGroup`
+  ## Activate the group with `groupId`. Re-renders flow through the
+  ## reactive graph (the shell's `createRenderEffect` over
+  ## `activeGroupId`); tests call this through `vm.setActiveGroup`
   ## directly. The template exists so a click-driver pilot script
   ## reads naturally.
   discard vmRef.setActiveGroup(groupId)

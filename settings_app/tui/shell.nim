@@ -11,6 +11,14 @@
 ## the shell calling the per-kind item components only for the
 ## expanded section.
 ##
+## EX-M16: each group section is built once at mount time, but its
+## ``data-expanded`` attribute and its item children flow through
+## ``createRenderEffect`` over ``vm.activeGroupId.val``. A direct
+## ``vm.setActiveGroup(id)`` call (whether driven by a click or by a
+## test script) toggles ``data-expanded`` on every section and rebuilds
+## the now-expanded section's items inline without any explicit rebuild
+## call from the composition root.
+##
 ## Include-pattern (mirrors `task_app/core/views.nim`): this file is
 ## *included* — never imported — by the Layer-4 composition root
 ## (`settings_app/main_tui.nim`). The composition root imports the
@@ -56,45 +64,61 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
     renderer.setAttribute(appRoot, "class", "settings-app-tui")
     renderer.setAttribute(appRoot, "data-app", "settings-app")
 
-    let activeId = vmRef.activeGroupId.val
     for groupIdx in 0 ..< vmRef.catalog.groups.len:
       closureScope:
         let g = vmRef.catalog.groups[groupIdx]
+        let gid = g.id
         let groupNode = groupContainerLeaf(renderer)
-        renderer.setAttribute(groupNode, "data-group-id", g.id)
-        let isExpanded = activeId == g.id
-        renderer.setAttribute(groupNode, "data-expanded",
-                              (if isExpanded: "true" else: "false"))
+        renderer.setAttribute(groupNode, "data-group-id", gid)
 
         let header = groupHeaderLeaf(renderer, g.label, g.description)
         renderer.setAttribute(header, "data-focusable", "true")
-        renderer.setAttribute(header, "data-group-id", g.id)
+        renderer.setAttribute(header, "data-group-id", gid)
         renderer.addEventListener(header, "click", proc(ev: TerminalEvent) =
-          discard vmRef.setActiveGroup(g.id))
+          discard vmRef.setActiveGroup(gid))
         renderer.appendChild(groupNode, header)
-
-        if isExpanded:
-          for itemIdx in 0 ..< g.items.len:
-            closureScope:
-              let it = g.items[itemIdx]
-              case it.kind
-              of sikToggle:
-                renderer.appendChild(groupNode,
-                  renderToggleItem(renderer, vmRef, it))
-              of sikNumber:
-                renderer.appendChild(groupNode,
-                  renderNumberItem(renderer, vmRef, it))
-              of sikChoice:
-                renderer.appendChild(groupNode,
-                  renderChoiceItem(renderer, vmRef, it))
-
         renderer.appendChild(appRoot, groupNode)
+
+        # Reactive expand/collapse: rebuild the section's item rows
+        # whenever this group transitions between active and inactive.
+        # When inactive only the header remains; when active the
+        # per-kind item rows are appended below it.
+        let capturedItems = g.items
+        var currentItemNodes: seq[typeof(groupNode)] = @[]
+        var isExpandedNow = false
+
+        createRenderEffect proc() =
+          let shouldExpand = vmRef.activeGroupId.val == gid
+          renderer.setAttribute(groupNode, "data-expanded",
+                                (if shouldExpand: "true" else: "false"))
+          if shouldExpand == isExpandedNow:
+            return
+          if shouldExpand:
+            for itemIdx in 0 ..< capturedItems.len:
+              closureScope:
+                let it = capturedItems[itemIdx]
+                var rowNode: typeof(groupNode)
+                case it.kind
+                of sikToggle:
+                  rowNode = renderToggleItem(renderer, vmRef, it)
+                of sikNumber:
+                  rowNode = renderNumberItem(renderer, vmRef, it)
+                of sikChoice:
+                  rowNode = renderChoiceItem(renderer, vmRef, it)
+                renderer.appendChild(groupNode, rowNode)
+                currentItemNodes.add rowNode
+          else:
+            for rowNode in currentItemNodes:
+              renderer.removeChild(groupNode, rowNode)
+            currentItemNodes.setLen(0)
+          isExpandedNow = shouldExpand
 
     appRoot
 
 template expandGroup*(vmRef, groupId): untyped =
-  ## Activate the group with `groupId`. Re-renders are driven by the
-  ## composition root; tests call this through `vm.setActiveGroup`
+  ## Activate the group with `groupId`. Re-renders flow through the
+  ## reactive graph (the shell's `createRenderEffect` over
+  ## `activeGroupId`); tests call this through `vm.setActiveGroup`
   ## directly. The template exists so a keyboard pilot script reads
   ## naturally.
   discard vmRef.setActiveGroup(groupId)

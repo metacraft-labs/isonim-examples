@@ -221,6 +221,15 @@ proc choiceLeaf*(r: MockRenderer; value: string;
   r.addEventListener(selectNode, "change", proc() =
     let picked = selectNode.attributes.getOrDefault("value")
     r.setAttribute(host, "data-value", picked)
+    # Move the `selected` marker to the matching <option> so the
+    # rendered DOM mirrors a real browser's behaviour. Without this
+    # the previous `<option selected="selected">` would persist
+    # alongside the new `<select value="…">` value.
+    for optionNode in selectNode.children:
+      if optionNode.attributes.getOrDefault("value") == picked:
+        r.setAttribute(optionNode, "selected", "selected")
+      else:
+        r.removeAttribute(optionNode, "selected")
     if onChangeRef != nil:
       onChangeRef(picked))
 

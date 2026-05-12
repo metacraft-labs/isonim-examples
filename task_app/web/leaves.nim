@@ -1,48 +1,38 @@
 ## task_app/web/leaves.nim — Layer-1 leaves for the web target.
 ##
+## EX-M16: each leaf is a single `ui(r):` block with reactive bindings.
+## Mutating the VM's signals (via `addTask`, `toggleTask`, `setFilter`,
+## …) automatically propagates to the rendered tree through
+## `createRenderEffect` / `forEachKeyed` — there is no `rerender(vm)`
+## proc and the composition root mounts the tree exactly once.
+##
 ## Concrete platform components for the task-app's high-level view,
 ## written against the `MockRenderer` from
 ## `isonim/testing/mock_dom.nim`. `MockRenderer` is the canonical
 ## headless target for web tests (and the browser `WebRenderer` exposes
 ## the same proc interface, so the same DSL drives both).
 ##
-## DM-M6: each leaf composes its node tree inside a single `ui(r):`
-## block. Web-target wrappers are the raw HTML tags from
-## `isonim/dsl/ui` (`tdiv`, `span`, `button`, `input`, `ul`, `li`,
-## `footer`) — there are no `w*` widget wrappers on the web side
-## because `MockRenderer`/`WebRenderer` build trees out of plain DOM
-## nodes, not the M11+ widget objects. See `docs/dsl-pattern.md`.
-##
 ## To run under `WebRenderer` in a real browser, swap
 ## `import isonim/testing/mock_dom` for
 ## `import isonim/web/web_renderer` in the composition root; every
 ## proc below has a parity overload on `WebRenderer` thanks to the
 ## RendererBackend concept.
-##
-## This module lives in the `isonim-examples` repository — the single
-## canonical home for IsoNim showcase apps. It depends only on
-## `isonim` (reactive core + DSL + MockRenderer); a future
-## `isonim-website/` adapter will swap `MockRenderer` for the
-## `WebRenderer` it ships.
-##
-## Migration history: this module was previously hosted at
-## `isonim-tui/examples/task_app/web/leaves.nim`; EX-M2 (see
-## `codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org`)
-## promoted it to its canonical location here. The Layer-3 VM and
-## Layer-2 view template (consumed via `task_app/core/...`) shipped in
-## EX-M1.
 
 import std/[strutils, tables]
 
 import isonim/core/signals
 import isonim/core/computation  # createRenderEffect (DSL wraps dynamic text/attrs in it)
 import isonim/dsl/ui
+import isonim/dsl/components  # forEachKeyed
 import isonim/testing/mock_dom
 import task_app/core/vm
 
 type
   TaskAppWebLeavesState* = ref object
-    ## Bookkeeping mirror of the TUI `TaskAppLeavesState`.
+    ## Per-VM bookkeeping for the web target. The composition root
+    ## registers one of these through `leavesFor(vm)` so tests can still
+    ## probe the canonical leaf nodes (`inputNode`, `listNode`,
+    ## `summaryNode`, `filterNodes`) directly.
     inputNode*: MockNode
     listNode*: MockNode
     summaryNode*: MockNode
@@ -62,65 +52,6 @@ proc resetWebLeaves*() =
   webLeavesTable.setLen(0)
 
 # ----------------------------------------------------------------------------
-# Re-render helpers
-# ----------------------------------------------------------------------------
-
-proc renderTaskListInto(r: MockRenderer; vm: TaskAppVM;
-                        listNode: MockNode) =
-  r.clearChildren(listNode)
-  let visible = vm.visibleTasks
-  if visible.len == 0:
-    let row = r.createElement("li")
-    let placeholder =
-      case vm.filter.val
-      of fmAll:       "(no tasks yet)"
-      of fmActive:    "(no active tasks)"
-      of fmCompleted: "(no completed tasks)"
-    r.appendChild(row, r.createTextNode(placeholder))
-    r.setStyle(row, "font-style", "italic")
-    r.appendChild(listNode, row)
-    return
-  for t in visible:
-    let row = r.createElement("li")
-    r.setAttribute(row, "data-task-id", $t.id)
-    let toggleBtn = r.createElement("button")
-    let marker = if t.completed: "[x]" else: "[ ]"
-    r.appendChild(toggleBtn, r.createTextNode(marker))
-    let label = r.createElement("span")
-    let display =
-      if t.completed: t.name & " (done)" else: t.name
-    r.appendChild(label, r.createTextNode(display))
-    let removeBtn = r.createElement("button")
-    r.appendChild(removeBtn, r.createTextNode("x"))
-    let taskId = t.id
-    r.addEventListener(toggleBtn, "click", proc() =
-      vm.toggleTask(taskId))
-    r.addEventListener(removeBtn, "click", proc() =
-      vm.removeTask(taskId))
-    r.appendChild(row, toggleBtn)
-    r.appendChild(row, label)
-    r.appendChild(row, removeBtn)
-    r.appendChild(listNode, row)
-
-proc renderSummaryInto(r: MockRenderer; vm: TaskAppVM;
-                       summaryNode: MockNode) =
-  r.clearChildren(summaryNode)
-  let row = r.createElement("span")
-  let active = vm.activeCount
-  let total = vm.totalCount
-  let text = $active & " of " & $total & " remaining"
-  r.appendChild(row, r.createTextNode(text))
-  r.appendChild(summaryNode, row)
-
-proc rerender*(vm: TaskAppVM) =
-  let s = leavesFor(vm)
-  let r = MockRenderer()
-  if s.listNode != nil:
-    renderTaskListInto(r, vm, s.listNode)
-  if s.summaryNode != nil:
-    renderSummaryInto(r, vm, s.summaryNode)
-
-# ----------------------------------------------------------------------------
 # Closure factories — top-level so loop-variable aliasing can't bite.
 # ----------------------------------------------------------------------------
 
@@ -130,12 +61,16 @@ proc makeAddTaskHandler(r: MockRenderer; vm: TaskAppVM;
     let text = inp.attributes.getOrDefault("value")
     vm.addTask(text)
     r.setAttribute(inp, "value", "")
-    rerender(vm)
 
 proc makeFilterClickHandler(vm: TaskAppVM; fm: FilterMode): proc() =
   result = proc() =
     vm.setFilter(fm)
-    rerender(vm)
+
+proc makeToggleHandler(vm: TaskAppVM; id: int): proc() =
+  result = proc() = vm.toggleTask(id)
+
+proc makeRemoveHandler(vm: TaskAppVM; id: int): proc() =
+  result = proc() = vm.removeTask(id)
 
 # ----------------------------------------------------------------------------
 # Layer-1 leaf procs
@@ -147,13 +82,11 @@ proc appShell*(r: MockRenderer; vm: TaskAppVM): MockNode =
     tdiv(class = "task-app")
 
 proc taskInput*(r: MockRenderer; vm: TaskAppVM): MockNode =
-  ## Text input + add button. The input node and add button are
-  ## captured via the DSL `ref =` form; the click handler (built
-  ## outside via a factory) reads the input's current value at submit
-  ## time. The seeded `value` is set after construction because the
-  ## DSL would otherwise wrap a dynamic attribute in
-  ## `createRenderEffect` (the explicit re-render path makes the
-  ## reactive wrapping unnecessary).
+  ## Text input + add button. The input node is captured via the DSL
+  ## `ref =` form; the click handler reads the input's current value at
+  ## submit time. The seeded `value` attribute mirrors `vm.inputText`
+  ## through a `createRenderEffect` so a programmatic
+  ## `vm.setInputText("…")` is reflected without rebuilding the node.
   let s = leavesFor(vm)
   var inpRef, addBtnRef: MockNode
   result = ui(r):
@@ -162,17 +95,27 @@ proc taskInput*(r: MockRenderer; vm: TaskAppVM): MockNode =
             ref = inpRef)
       button(ref = addBtnRef):
         text "Add Task"
-  r.setAttribute(inpRef, "value", vm.inputText.val)
   s.inputNode = inpRef
+  let inputRef = inpRef
+  createRenderEffect proc() =
+    r.setAttribute(inputRef, "value", vm.inputText.val)
   r.addEventListener(addBtnRef, "click",
                      makeAddTaskHandler(r, vm, inpRef))
 
+proc makeFilterSelectionEffect(r: MockRenderer; vm: TaskAppVM;
+                               btn: MockNode; fm: FilterMode) =
+  ## Top-level factory so the captured `fm` / `btn` cannot alias a loop
+  ## variable in `filterBar`.
+  createRenderEffect proc() =
+    if vm.filter.val == fm:
+      r.setAttribute(btn, "aria-pressed", "true")
+    else:
+      r.removeAttribute(btn, "aria-pressed")
+
 proc filterBar*(r: MockRenderer; vm: TaskAppVM): MockNode =
-  ## Three filter buttons. Built inside a `ui(r):` block; per-button
-  ## click handlers are produced by a top-level factory so the captured
-  ## `FilterMode` doesn't alias the loop variable. The selected
-  ## `aria-pressed` attribute is set after construction so unselected
-  ## buttons carry no attribute (preserves the original byte-shape).
+  ## Three filter buttons. The selected `aria-pressed` attribute is
+  ## driven by a `createRenderEffect` over `vm.filter`, so flipping the
+  ## filter signal updates the buttons without rebuilding the bar.
   let s = leavesFor(vm)
   s.filterNodes = @[]
   result = ui(r):
@@ -185,24 +128,91 @@ proc filterBar*(r: MockRenderer; vm: TaskAppVM): MockNode =
     let btn = result.children[i]
     s.filterNodes.add btn
     r.setAttribute(btn, "data-filter", ($fm).toLowerAscii)
-    if vm.filter.val == fm:
-      r.setAttribute(btn, "aria-pressed", "true")
+    makeFilterSelectionEffect(r, vm, btn, fm)
     r.addEventListener(btn, "click",
                        makeFilterClickHandler(vm, fm))
 
+proc renderTaskRow(r: MockRenderer; vm: TaskAppVM; t: Task): MockNode =
+  ## Build a single task row. Each row's marker text / display name /
+  ## per-task handlers are derived once from the task value (the value
+  ## type `Task` is the `forEachKeyed` identity key — task changes
+  ## flow through the keyed-list reconciliation).
+  let taskId = t.id
+  let marker = if t.completed: "[x]" else: "[ ]"
+  let display = if t.completed: t.name & " (done)" else: t.name
+  result = ui(r):
+    li(`data-task-id` = $taskId):
+      button:
+        text marker
+      span:
+        text display
+      button:
+        text "x"
+  r.addEventListener(result.children[0], "click",
+                     makeToggleHandler(vm, taskId))
+  r.addEventListener(result.children[2], "click",
+                     makeRemoveHandler(vm, taskId))
+
+proc placeholderRow(r: MockRenderer; vm: TaskAppVM): MockNode =
+  ## Placeholder shown when `vm.visibleTasks` is empty. The text reflects
+  ## the current filter via `createRenderEffect`.
+  result = ui(r):
+    li()
+  r.setStyle(result, "font-style", "italic")
+  let row = result
+  let txtNode = r.createTextNode("")
+  r.appendChild(row, txtNode)
+  createRenderEffect proc() =
+    let placeholder =
+      case vm.filter.val
+      of fmAll:       "(no tasks yet)"
+      of fmActive:    "(no active tasks)"
+      of fmCompleted: "(no completed tasks)"
+    r.setTextContent(txtNode, placeholder)
+
 proc taskList*(r: MockRenderer; vm: TaskAppVM): MockNode =
+  ## The visible task rows. Built once; `forEachKeyed` watches
+  ## `vm.visibleTasks` and reconciles the list when tasks are added /
+  ## removed / toggled / filtered. An additional `createRenderEffect`
+  ## paints / clears the empty-state placeholder so the empty list still
+  ## reports a row.
   let s = leavesFor(vm)
   var listRef: MockNode
   result = ui(r):
     ul(class = "task-list", ref = listRef)
   s.listNode = listRef
   s.listWidth = 30
-  renderTaskListInto(r, vm, listRef)
+
+  var placeholder: MockNode = nil
+  let listNode = listRef
+  createRenderEffect proc() =
+    let visible = vm.visibleTasks
+    if visible.len == 0 and placeholder == nil:
+      placeholder = placeholderRow(r, vm)
+      r.appendChild(listNode, placeholder)
+    elif visible.len > 0 and placeholder != nil:
+      r.removeChild(listNode, placeholder)
+      placeholder = nil
+
+  forEachKeyed(r, listNode,
+    proc(): seq[Task] = vm.visibleTasks,
+    proc(item: proc(): Task; index: proc(): int): MockNode =
+      renderTaskRow(r, vm, item()))
 
 proc summaryBar*(r: MockRenderer; vm: TaskAppVM): MockNode =
+  ## "N of M remaining" footer. The inner span's text is driven by a
+  ## `createRenderEffect` over `vm.tasks`, so any mutation surfaces here
+  ## without a rebuild.
   let s = leavesFor(vm)
   var summaryRef: MockNode
   result = ui(r):
     footer(class = "task-summary", ref = summaryRef)
   s.summaryNode = summaryRef
-  renderSummaryInto(r, vm, summaryRef)
+  let row = r.createElement("span")
+  let txtNode = r.createTextNode("")
+  r.appendChild(row, txtNode)
+  r.appendChild(summaryRef, row)
+  createRenderEffect proc() =
+    let active = vm.activeCount
+    let total = vm.totalCount
+    r.setTextContent(txtNode, $active & " of " & $total & " remaining")

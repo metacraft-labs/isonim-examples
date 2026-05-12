@@ -6,6 +6,15 @@
 ## resolve against the platform-specific procs by lexical scope (the
 ## same include-pattern as `task_app/core/views.nim`).
 ##
+## EX-M16: each leaf is invoked as a plain Nim proc call; the row is
+## assembled with `renderer.appendChild`. This mirrors the idiom used
+## by the editor's reference views (see
+## `isonim/src/isonim/editor/views/component_detail.nim`). The number
+## leaf owns its own input event listener; the component wires
+## `onChange` to `vm.setNumber`. Per-row reactivity flows through that
+## event-driven path, and the shell-level `createRenderEffect` handles
+## the active-group swap on `vm.activeGroupId` changes.
+##
 ## Leaf surface required in scope at the include site (all per-
 ## platform; never imported here):
 ##
@@ -53,18 +62,18 @@ template renderNumberItem*(renderer, vmRef, settingsItem): untyped {.dirty.} =
   ##     descriptionLeaf      (only when description is non-empty)
   ##     numberLeaf
   block:
+    let numberItemId = settingsItem.id
     let row = itemContainerLeaf(renderer)
     renderer.appendChild(row, labelLeaf(renderer, settingsItem.label))
     if settingsItem.description.len > 0:
       renderer.appendChild(row,
         descriptionLeaf(renderer, settingsItem.description))
-    let initialValue = vmRef.numberValue(settingsItem.id)
-    let numNode = numberLeaf(renderer, initialValue,
-      settingsItem.numberMin,
-      settingsItem.numberMax,
-      settingsItem.numberStep,
-      settingsItem.numberSuffix,
-      proc(newValue: int) =
-        discard vmRef.setNumber(settingsItem.id, newValue))
-    renderer.appendChild(row, numNode)
+    renderer.appendChild(row,
+      numberLeaf(renderer, vmRef.numberValue(numberItemId),
+        settingsItem.numberMin,
+        settingsItem.numberMax,
+        settingsItem.numberStep,
+        settingsItem.numberSuffix,
+        proc(newValue: int) =
+          discard vmRef.setNumber(numberItemId, newValue)))
     row
