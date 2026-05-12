@@ -90,6 +90,12 @@ import std/[options, sequtils, times, unittest]
 import isonim/core/signals
 import isonim/core/resource
 
+# Pull in the NE-Time-M0 facade — `withTimeout`, `scheduleEvery`,
+# `cancelTimer`, `TimerHandle` — that the two new cases at the end of
+# this file exercise. The rest of the suite predates the facade and
+# uses only `sleepFor` (re-exported via `nim_everywhere`).
+import nim_everywhere/time
+
 import services/fake_db
 import task_app/core/vm as task_vm
 import settings_app/core/vm as settings_vm
@@ -362,3 +368,153 @@ suite "EX-M18: Fake-time async test patterns":
     drv.flush()
     check vm.lastError.val.isNone
     check vm.toggleValue("appearance.dark_mode") == true
+
+  # ---------------------------------------------------------------------------
+  # NE-Time-M0 / EX-M18 extensions: exercise the expanded time facade
+  # ---------------------------------------------------------------------------
+  #
+  # The two test cases below are NEW with NE-Time-M0. They demonstrate
+  # how `scheduleEvery` and `withTimeout` integrate with the same
+  # `FakeAsyncContext` / `AsyncDriver` pattern the rest of this suite
+  # uses. Read these alongside the earlier cases — they're the teaching
+  # extension for downstream IsoNim apps that need periodic timers or
+  # deadline-bounded async ops.
+  #
+  # KEY INSIGHT: fake-time isn't just for `sleepFor`. Every primitive
+  # in `nim_everywhere/time` consults the same thread-local
+  # `FakeAsyncContext`, so a test that installs one drives all of them
+  # deterministically. The advance/flush pattern is identical to the
+  # cases above; only the primitive under test changes.
+
+  test "scheduleEvery fires N times during a fake-time advance":
+    ## A periodic 10 ms timer; advance 100 ms of simulated time; assert
+    ## the callback fired exactly 10 times. Under real time this would
+    ## take ~100 ms of wall-clock; under fake time it's microseconds.
+    ##
+    ## Notable details:
+    ##
+    ## - `scheduleEvery` re-arms itself via a closure that consults
+    ##   `TimerHandle.cancelled` before each firing AND before each
+    ##   re-schedule. That guarantees `cancelTimer` immediately stops
+    ##   the timer — no "one more firing" race.
+    ##
+    ## - Under fake time the implementation schedules each firing on
+    ##   the `FakeAsyncContext` directly (bypassing the backend's
+    ##   `addCallback` queue) so all N firings drain within a single
+    ##   `advance(...)` call. This is what makes the assertion
+    ##   `count == 10` exactly (not approximate) deterministic.
+    ##
+    ## - The "advance + flush" cadence works without modification:
+    ##   the AsyncDriver helper's `flush()` already does the right
+    ##   thing because `scheduleEvery` reuses the same primitives.
+    let drv = newAsyncDriver(seed = 42)
+    defer: drv.shutdown()
+
+    var count = 0
+    let h = scheduleEvery(10, proc() = inc count)
+
+    # Advance 100 ms of simulated time. Under the 10 ms interval that
+    # means exactly 10 firings: at fake t=10, 20, 30, ..., 100. The
+    # re-scheduling closure inside `scheduleEvery` schedules each next
+    # firing relative to the *target* tick (not the current `nowMs`),
+    # so a single drain cycle picks up all of them.
+    #
+    # NOTE: `drv.flush(ms)` internally calls `advance(ms)` *twice*
+    # (to handle two-level cascades — see `async_drive.flush`). For a
+    # precise-tick periodic-timer assertion we use the underlying
+    # `ctx.advance` + drain directly so the simulated time advances
+    # exactly 100 ms once.
+    drv.ctx.advance(100)
+    drv.ctx.runPending()
+    drainPlatformCallbacks()
+    check count == 10
+
+    # Cancel — subsequent advances must not produce further firings.
+    # `cancelTimer` is idempotent and a no-op on already-fired handles,
+    # so it's always safe to call.
+    cancelTimer(h)
+    drv.ctx.advance(100)
+    drv.ctx.runPending()
+    drainPlatformCallbacks()
+    check count == 10
+
+  test "withTimeout returns none when the underlying op blows the deadline":
+    ## A simulated 200 ms `fake_db` op wrapped in `withTimeout(100)`.
+    ## After advancing 100 ms the wrapper resolves to `none(seq[Task])`
+    ## (the deadline won). After advancing another 200 ms the original
+    ## op's late completion is observable on the inner future, but the
+    ## wrapper's resolution must NOT change — the OOO-guard inside
+    ## `withTimeout` ensures the wrapper resolves at most once.
+    ##
+    ## This is the cross-of-two-patterns case: the AsyncDriver's fake
+    ## clock supplies the 200 ms latency (via `fake_db.scheduleResult`
+    ## → `sleepFor(latency)`), AND the deadline future inside
+    ## `withTimeout` also routes through the fake clock. Both observe
+    ## the same `advance()` call sequence, so the race resolves
+    ## deterministically.
+    ##
+    ## In a real downstream IsoNim app, the same `withTimeout` call
+    ## would experience real wall-clock latencies — but the assertion
+    ## structure (some on timely completion, none on deadline miss,
+    ## error propagation on failure) is identical.
+
+    # latencyMin == latencyMax == 200 forces every fake_db op to take
+    # exactly 200 ms — no RNG noise to complicate the deadline race.
+    let drv = newAsyncDriver(seed = 42, latencyMin = 200, latencyMax = 200)
+    defer: drv.shutdown()
+
+    # Seed the store so loadTasks has something to return.
+    drv.db.tasks.add Task(id: drv.db.allocTaskId(), name: "alpha",
+                          completed: false)
+
+    # Fire the inner op. It will take 200 ms of simulated time.
+    let innerFut = drv.db.loadTasks()
+
+    # Wrap with a 100 ms deadline. The wrapper resolves to none() at
+    # fake t=100 (deadline first); the inner completes at fake t=200.
+    let wrapper = withTimeout(innerFut, 100)
+
+    var got: Option[seq[Task]]
+    var resolveCount = 0
+    var errSeen = ""
+    wrapper.onComplete(
+      proc(v: Option[seq[Task]]) =
+        got = v
+        resolveCount = resolveCount + 1
+      ,
+      proc(m: string) = errSeen = m)
+
+    # Cross the deadline tick (fake t=100). At this point the
+    # wrapper's `deadline = sleepFor(100)` fires; the wrapper resolves
+    # to none(seq[Task]); the user callback runs and bumps
+    # resolveCount.
+    #
+    # Use `drv.ctx.advance(100)` directly (not `drv.flush(100)`) so
+    # the simulated clock advances exactly 100 ms. `drv.flush` advances
+    # twice for cascade safety; here we want precise control over
+    # which side of the race wins. The two drain cycles below handle
+    # the wrapper → user-callback chain under chronos's callSoon.
+    drv.ctx.advance(100)
+    drv.ctx.runPending()
+    drainPlatformCallbacks()
+    drv.ctx.runPending()
+    drainPlatformCallbacks()
+    check got.isNone
+    check resolveCount == 1
+    check errSeen == ""
+
+    # Cross the inner's late firing (fake t=300, accumulated). The
+    # inner future completes — observable directly via `innerFut.read`
+    # if we ever waitFor'd it — but the wrapper MUST stay at none().
+    # This is the late-completion guarantee that makes `withTimeout`
+    # safe to compose with retry / fallback logic: once the deadline
+    # wins, downstream code can move on without worrying that the
+    # original op's late result will overwrite the timeout state.
+    drv.ctx.advance(200)
+    drv.ctx.runPending()
+    drainPlatformCallbacks()
+    drv.ctx.runPending()
+    drainPlatformCallbacks()
+    check got.isNone           # wrapper unchanged
+    check resolveCount == 1     # exactly one resolution
+    check errSeen == ""

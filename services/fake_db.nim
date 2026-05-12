@@ -30,7 +30,12 @@
 
 import std/[json, options, random, tables]
 
-import nim_everywhere/async_compat
+import nim_everywhere/time
+  # `time` re-exports `async_compat` (PlatformFuture, newFuture,
+  # onCompleteVoid, …) and ships the relocated `sleepFor` that this
+  # module relies on. NE-Time-M0 moved `sleepFor` out of
+  # `async_compat.nim`, so direct importers of `async_compat` would no
+  # longer see it; this single import covers both surfaces.
 
 import task_app/core/types as task_types
 import settings_app/core/types as settings_types
