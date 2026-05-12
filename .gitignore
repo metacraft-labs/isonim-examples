@@ -26,3 +26,8 @@ nimcache/
 tests/browser/node_modules/
 tests/browser/test-results/
 tests/browser/playwright-report/
+
+# npm / playwright (visual review tooling)
+node_modules/
+package-lock.json
+package.json
