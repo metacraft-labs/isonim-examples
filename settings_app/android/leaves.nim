@@ -28,13 +28,15 @@
 ## Cocoa/GPUI/Freya `distinct pointer` aliases). The shell + parity
 ## driver follow the same idiom.
 
-when defined(android):
+when defined(android) or defined(mockJni):
   import std/strutils
 
   import isonim/core/computation  # createRenderEffect
   import isonim_android/renderer
+  import isonim_render_serve/element_tree_attrs
 
   import settings_app/core/vm
+  import settings_app/core/component_paths
 
   # ----------------------------------------------------------------------------
   # Layout containers
@@ -43,6 +45,12 @@ when defined(android):
   proc itemContainerLeaf*(r: AndroidRenderer): AndroidElement =
     let node = r.createElement("div")
     r.setAttribute(node, "class", "settings-item")
+    # EX-M23c: component-path annotation; identical to other renderers.
+    # On the launcher the in-process `-d:mockJni` tree carries the
+    # annotation; on the device the same Nim composition root paints
+    # the real `View` tree, so structural parity is by-construction.
+    r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
+    r.setAttribute(node, ElementKindAttr, "row")
     node
 
   proc labelLeaf*(r: AndroidRenderer; text: string): AndroidElement =
@@ -199,6 +207,8 @@ when defined(android):
   proc groupContainerLeaf*(r: AndroidRenderer): AndroidElement =
     let node = r.createElement("section")
     r.setAttribute(node, "class", "settings-group")
+    r.setAttribute(node, ComponentPathAttr, SettingsGroupPath)
+    r.setAttribute(node, ElementKindAttr, "group")
     node
 
   proc groupHeaderLeaf*(r: AndroidRenderer; label, description: string):
@@ -206,6 +216,8 @@ when defined(android):
     let host = r.createElement("header")
     r.setAttribute(host, "class", "settings-group-header")
     r.setAttribute(host, "data-label", label)
+    r.setAttribute(host, ComponentPathAttr, SettingsGroupHeaderPath)
+    r.setAttribute(host, ElementKindAttr, "group-header")
     if description.len > 0:
       r.setAttribute(host, "data-description", description)
 

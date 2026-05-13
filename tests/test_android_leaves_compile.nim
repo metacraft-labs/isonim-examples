@@ -127,7 +127,11 @@ suite "EX-M6: Android leaves cross-compile gate (Linux-side)":
     check "proc rerender*(vm: TaskAppVM)" in body
     # The whole module body must be gated on `android` so a Linux build
     # sees an empty shell; protect against accidental ungating.
-    check "when defined(android):" in body
+    # RS-M11c relaxed the gate to also accept ``defined(mockJni)`` so
+    # the host-side launcher can build an in-process Android tree
+    # for the element-tree manifest builder.
+    check ("when defined(android):" in body or
+           "when defined(android) or defined(mockJni):" in body)
 
   test "static surface: composition root exports the canonical entry points":
     check fileExists(androidMainPath)
@@ -135,4 +139,5 @@ suite "EX-M6: Android leaves cross-compile gate (Linux-side)":
     check "proc buildTaskApp*(r: AndroidRenderer; vm: TaskAppVM): AndroidElement" in body
     check "proc runTaskApp*(vm: TaskAppVM): AndroidElement" in body
     check "include task_app/core/views" in body
-    check "when defined(android):" in body
+    check ("when defined(android):" in body or
+           "when defined(android) or defined(mockJni):" in body)

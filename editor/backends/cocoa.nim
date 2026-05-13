@@ -7,6 +7,16 @@
 ## The frame source produces real-AppKit-rendered pixels so each emitted
 ## frame is visibly distinct from the other backends' renders.
 ##
+## EX-M23c. The launcher additionally wires an
+## ``ElementTreeProvider`` into the bridge so the editor's preview
+## canvas can hit-test pointer events back to component paths. Mirror
+## of the EX-M23b GPUI / Freya launchers; the manifest builder is
+## ``cocoa_adapter.buildCocoaElementTreeManifest`` against the
+## headless `CocoaElement` tree. The provider closure captures the
+## tree root + the launcher's (width, height) so resize-driven
+## changes propagate through the manifestKey hash and force the
+## bridge to re-emit per the RS-M11 cadence rule.
+##
 ## Gated entirely `when defined(macosx):`. On Linux the file compiles as
 ## an empty shell (no `runDemoBridge` symbol) so that the launcher binary
 ## simply doesn't exist on Linux hosts — the editor's
@@ -19,10 +29,14 @@
 when defined(macosx):
   import isonim_cocoa/renderer as cocoa_renderer
   import isonim/core/owner
+  import isonim/core/computation as iso_computation
+  import isonim/core/signals as iso_signals
 
+  import isonim_render_serve
   import isonim_render_serve/adapters/cocoa_adapter
 
   import task_app/core/vm as task_vm
+  import task_app/cocoa/leaves as task_cocoa_leaves
   import task_app/main_cocoa as task_cocoa
   import settings_app/core/vm as settings_vm
   import settings_app/core/demo_catalog
@@ -52,9 +66,55 @@ when defined(macosx):
         vm.addTask("Walk the dog")
         vm.addTask("Ship EX-M19")
         root = task_cocoa.buildTaskApp(r, vm)
+        # EX-M23c: the Cocoa task_app uses an imperative
+        # `rerender(vm)` pattern (driven by leaf click handlers). The
+        # launcher's direct `vm.addTask` seeds do not flow through
+        # those handlers, so we need a reactive bridge that calls
+        # `rerender(vm)` whenever `vm.tasks.data` settles. Without
+        # this the visible task rows never appear in the host's mock
+        # tree (or in the manifest the bridge emits), even though the
+        # underlying VM has the tasks.
+        let vmRef = vm
+        iso_computation.createRenderEffect proc() =
+          discard iso_signals.val(vmRef.tasks.data)
+          task_cocoa_leaves.rerender(vmRef)
 
-      let src = newCocoaFrameSource(r, root, w, h)
-      runDemoBridgeWith(cfg, src.toAny())
+      # EX-M23c: dimensions are mutable so a future resize I packet can
+      # update them in lock-step with the manifest emission. The captured
+      # closures below read these on every bridge tick.
+      var dynamicW = w
+      var dynamicH = h
+
+      let src = newCocoaFrameSource(r, root, dynamicW, dynamicH)
+      let capturedRoot = root
+
+      # EX-M23c: the manifest provider. The closure captures the Cocoa
+      # tree root + the dynamic (width, height) so resize-driven
+      # bound changes propagate through the manifestKey hash and force
+      # the bridge to re-emit per the RS-M11 cadence rule.
+      let provider = ElementTreeProvider(
+        buildImpl: proc(): ElementTreeManifest {.gcsafe.} =
+          {.cast(gcsafe).}:
+            buildCocoaElementTreeManifest(capturedRoot,
+              dynamicW, dynamicH))
+
+      # EX-M23c: minimal real input dispatch — resize events from the
+      # editor surface update the captured surface dimensions so a
+      # resize-driven state change re-emits the manifest. Click / key
+      # dispatch is out of scope for this milestone (mirror of GPUI /
+      # Freya launchers).
+      let resizingSink = newAnyInputSink(
+        proc(event: InputEvent) {.gcsafe.} =
+          if event.kind != iekResize: return
+          if event.width <= 0 or event.height <= 0: return
+          if event.width == dynamicW and event.height == dynamicH: return
+          {.cast(gcsafe).}:
+            dynamicW = event.width
+            dynamicH = event.height
+            src.width = dynamicW
+            src.height = dynamicH)
+
+      runDemoBridgeWith(cfg, src.toAny(), provider, resizingSink)
       dispose()
 
   proc runDemoBridge*(backend: string) =

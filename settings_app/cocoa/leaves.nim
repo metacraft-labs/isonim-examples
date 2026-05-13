@@ -27,8 +27,10 @@ when defined(macosx):
 
   import isonim/core/computation  # createRenderEffect
   import isonim_cocoa/renderer
+  import isonim_render_serve/element_tree_attrs
 
   import settings_app/core/vm
+  import settings_app/core/component_paths
 
   # ----------------------------------------------------------------------------
   # Layout containers
@@ -37,6 +39,13 @@ when defined(macosx):
   proc itemContainerLeaf*(r: CocoaRenderer): CocoaElement =
     let node = r.createElement("div")
     r.setAttribute(node, "class", "settings-item")
+    # EX-M23c: component-path annotation; identical strings to TUI /
+    # GPUI / Freya / Android counterparts (the cross-renderer
+    # set-equality invariant). AppKit's headless capture path does
+    # not read ``data-*`` attributes, so F-packet output is
+    # byte-identical.
+    r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
+    r.setAttribute(node, ElementKindAttr, "row")
     node
 
   proc labelLeaf*(r: CocoaRenderer; text: string): CocoaElement =
@@ -193,6 +202,8 @@ when defined(macosx):
   proc groupContainerLeaf*(r: CocoaRenderer): CocoaElement =
     let node = r.createElement("section")
     r.setAttribute(node, "class", "settings-group")
+    r.setAttribute(node, ComponentPathAttr, SettingsGroupPath)
+    r.setAttribute(node, ElementKindAttr, "group")
     node
 
   proc groupHeaderLeaf*(r: CocoaRenderer; label, description: string):
@@ -200,6 +211,8 @@ when defined(macosx):
     let host = r.createElement("header")
     r.setAttribute(host, "class", "settings-group-header")
     r.setAttribute(host, "data-label", label)
+    r.setAttribute(host, ComponentPathAttr, SettingsGroupHeaderPath)
+    r.setAttribute(host, ElementKindAttr, "group-header")
     if description.len > 0:
       r.setAttribute(host, "data-description", description)
 

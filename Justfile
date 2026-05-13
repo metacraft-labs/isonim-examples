@@ -195,6 +195,7 @@ build-backends-android:
     @mkdir -p build/backends
     @echo "[build-backends-android] isonim-examples-android"
     nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
+        -d:mockJni \
         -o:build/backends/isonim-examples-android \
         editor/backends/android.nim 2>&1 | tee -a test-logs/build-backends.log
 

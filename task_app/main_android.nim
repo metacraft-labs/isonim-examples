@@ -48,7 +48,7 @@
 ##     -o:libtask_app.so \
 ##     isonim-examples/task_app/main_android.nim
 
-when defined(android):
+when defined(android) or defined(mockJni):
   import isonim_android/renderer
 
   import task_app/core/vm

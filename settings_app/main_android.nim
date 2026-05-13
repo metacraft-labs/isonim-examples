@@ -34,7 +34,7 @@
 ## `buildSettingsApp` / `runSettingsApp` procs below are imported by
 ## `task_app/main_android.nim`'s `-d:androidGui` block for that purpose.
 
-when defined(android):
+when defined(android) or defined(mockJni):
   import std/tables
 
   import isonim/core/signals

@@ -31,21 +31,49 @@
 ## available on both POSIX host toolchains. On other hosts the file
 ## compiles as an empty shell.
 ##
-## *Why no in-process Android renderer?* The launcher runs on the *host*
-## (not the device). Replaying the EX-M6 / EX-M22 leaves through the
-## `AndroidRenderer` host-side via `-d:mockJni` would let us build the
-## demo trees in-process, but the renderer would still target the
-## MockJNI shim — the resulting "view tree" lives entirely in Nim memory
-## and has no associated raster surface. The honest answer for the
-## EX-M21 acceptance test is therefore: drive the on-device tree via
-## adb and capture the device's framebuffer.
+## EX-M23c. The launcher additionally wires an
+## ``ElementTreeProvider`` into the bridge so the editor's preview
+## canvas can hit-test pointer events back to component paths. Pixels
+## continue to flow from `adb exec-out screencap` against the
+## device's framebuffer; the manifest tree is sourced from a
+## *parallel* in-process `AndroidRenderer` built under `-d:mockJni`
+## via the same `task_app/main_android` / `settings_app/main_android`
+## composition root the device's runtime uses. The two trees are
+## structurally identical because they share the Nim composition
+## root, so `componentPath` identity is byte-stable across the host's
+## mock tree and the device's real tree.
+##
+## Test policy. The launcher subprocess test (RS-M11c /
+## `tests/test_android_launcher_element_tree.nim`) FAILS — never
+## skips — when no Android device is reachable via `adb`. Per the
+## user's standing instruction, a missing adb device is a real test
+## environment defect, not a skip-worthy condition.
 
 when defined(macosx) or defined(linux):
   import std/[osproc, streams, strutils]
 
   import isonim_render_serve
+  import isonim_render_serve/adapters/android_adapter
 
   import editor/backends/common
+
+  # EX-M23c: the launcher additionally hosts an in-process Android
+  # renderer tree (under -d:mockJni) which feeds the element-tree
+  # manifest builder. Pixels still come from `adb exec-out screencap`
+  # against the connected device; the mock tree is invisible to
+  # users and exists solely to materialise the `componentPath` set
+  # the manifest carries.
+  when defined(mockJni):
+    import isonim/core/owner
+    import isonim/core/computation as iso_computation
+    import isonim/core/signals as iso_signals
+
+    import task_app/core/vm as task_vm
+    import task_app/android/leaves as task_android_leaves
+    import task_app/main_android as task_android
+    import settings_app/core/vm as settings_vm
+    import settings_app/core/demo_catalog
+    import settings_app/main_android as settings_android
 
   const
     DefaultWidth = 800
@@ -187,8 +215,67 @@ when defined(macosx) or defined(linux):
     let w = if cfg.width > 0: cfg.width else: DefaultWidth
     let h = if cfg.height > 0: cfg.height else: DefaultHeight
     launchActivity(cfg.demo)
-    let src = newAdbScreencapFrameSource(width = w, height = h)
-    runDemoBridgeWith(cfg, src.toAny())
+    when defined(mockJni):
+      ## EX-M23c: build a *parallel* in-process Android renderer tree
+      ## via the same Layer-4 composition root the device uses. The
+      ## tree never produces pixels (pixels still come from `adb
+      ## exec-out screencap` below); it only feeds the manifest
+      ## builder so the bridge can advertise
+      ## `capabilities.elementTree = true` and emit an `element-tree`
+      ## sub-kind packet under the existing RS-M11 cadence rules.
+      ## Structural parity with the on-device tree is by-construction
+      ## (both compile the same Nim composition root).
+      createRoot proc(dispose: proc()) =
+        let mockR = AndroidRenderer()
+        var mockRoot: AndroidElement
+        case cfg.demo
+        of "settings":
+          let catalog = buildDemoSettingsCatalog()
+          let vm = newSettingsVM(catalog)
+          mockRoot = settings_android.buildSettingsApp(mockR, vm)
+        else:
+          let vm = newTaskAppVM()
+          vm.addTask("Buy groceries")
+          vm.addTask("Walk the dog")
+          vm.addTask("Ship EX-M23c")
+          mockRoot = task_android.buildTaskApp(mockR, vm)
+          # EX-M23c: same reactive bridge as the Cocoa launcher — the
+          # Android leaves use the same imperative `rerender(vm)`
+          # pattern, and the launcher's direct `vm.addTask` seeds do
+          # not flow through any leaf click handler.
+          let vmRef = vm
+          iso_computation.createRenderEffect proc() =
+            discard iso_signals.val(vmRef.tasks.data)
+            task_android_leaves.rerender(vmRef)
+
+        var dynamicW = w
+        var dynamicH = h
+
+        let src = newAdbScreencapFrameSource(width = w, height = h)
+        let capturedRoot = mockRoot
+
+        let provider = ElementTreeProvider(
+          buildImpl: proc(): ElementTreeManifest {.gcsafe.} =
+            {.cast(gcsafe).}:
+              buildAndroidElementTreeManifest(capturedRoot,
+                dynamicW, dynamicH))
+
+        let resizingSink = newAnyInputSink(
+          proc(event: InputEvent) {.gcsafe.} =
+            if event.kind != iekResize: return
+            if event.width <= 0 or event.height <= 0: return
+            if event.width == dynamicW and event.height == dynamicH: return
+            {.cast(gcsafe).}:
+              dynamicW = event.width
+              dynamicH = event.height
+              src.width = dynamicW
+              src.height = dynamicH)
+
+        runDemoBridgeWith(cfg, src.toAny(), provider, resizingSink)
+        dispose()
+    else:
+      let src = newAdbScreencapFrameSource(width = w, height = h)
+      runDemoBridgeWith(cfg, src.toAny())
 
   proc runDemoBridge*(backend: string) =
     let cfg = parseLauncherArgs(backend)

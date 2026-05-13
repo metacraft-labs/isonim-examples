@@ -81,8 +81,10 @@
 when defined(macosx):
   import isonim/core/signals
   import isonim_cocoa/renderer
+  import isonim_render_serve/element_tree_attrs
 
   import task_app/core/vm
+  import task_app/core/component_paths
 
   # ----------------------------------------------------------------------------
   # Per-VM bookkeeping (mirrors `tui/leaves.nim`, `web/leaves.nim`,
@@ -163,6 +165,8 @@ when defined(macosx):
     for t in visible:
       let row = r.createElement("li")
       r.setAttribute(row, "data-task-id", $t.id)
+      r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
+      r.setAttribute(row, ElementKindAttr, "row")
       if t.completed:
         r.setAttribute(row, "class", "completed")
 
@@ -252,6 +256,12 @@ when defined(macosx):
     let app = r.createElement("div")
     r.setAttribute(app, "class", "task-app")
     r.setAttribute(app, "data-app", "task-app")
+    # EX-M23c: component-path annotation. The RS-M5 AppKit capture
+    # path keys off real ``NSView`` geometry + draw calls and never
+    # reads ``data-*`` attributes, so adding the path leaves the
+    # F-packet stream byte-identical.
+    r.setAttribute(app, ComponentPathAttr, TaskAppPath)
+    r.setAttribute(app, ElementKindAttr, "app-shell")
     app
 
   proc taskInput*(r: CocoaRenderer; vm: TaskAppVM): CocoaElement =
@@ -267,6 +277,8 @@ when defined(macosx):
     let s = leavesFor(vm)
     let wrapper = r.createElement("div")
     r.setAttribute(wrapper, "class", "task-input")
+    r.setAttribute(wrapper, ComponentPathAttr, TaskInputPath)
+    r.setAttribute(wrapper, ElementKindAttr, "input")
 
     let inp = r.createElement("input")
     r.setAttribute(inp, "type", "text")
@@ -293,6 +305,8 @@ when defined(macosx):
     s.filterButtons = @[]
     let wrapper = r.createElement("div")
     r.setAttribute(wrapper, "class", "filter-bar")
+    r.setAttribute(wrapper, ComponentPathAttr, FilterBarPath)
+    r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
 
     for fm in [fmAll, fmActive, fmCompleted]:
       let btn = r.createElement("button")
@@ -316,6 +330,8 @@ when defined(macosx):
     let s = leavesFor(vm)
     let listNode = r.createElement("ul")
     r.setAttribute(listNode, "class", "task-list")
+    r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
+    r.setAttribute(listNode, ElementKindAttr, "list")
     s.listNode = listNode
     renderTaskListInto(r, vm, listNode)
     listNode
@@ -325,6 +341,8 @@ when defined(macosx):
     let s = leavesFor(vm)
     let summaryNode = r.createElement("footer")
     r.setAttribute(summaryNode, "class", "task-summary")
+    r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
+    r.setAttribute(summaryNode, ElementKindAttr, "summary")
     s.summaryNode = summaryNode
     renderSummaryInto(r, vm, summaryNode)
     summaryNode
