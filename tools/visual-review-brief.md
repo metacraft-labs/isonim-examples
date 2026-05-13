@@ -66,28 +66,33 @@ represents; use that to pick the right expected-elements block.
 The editor's chrome with no story selected (or with the default story
 showing):
 
-- **Left edge:** the M57 backend strip — a vertical column of six tabs
-  (Web / TUI / GPUI / Freya / Cocoa / Android), each as a small icon
-  or short label. Cocoa and Android may appear disabled (greyed) on
-  hosts without those launchers.
-- **Left panel** (after the M57 strip): a story browser with at least
-  two top-level groups (`Task App` and `Settings App`), each
-  expandable into a tree of categories (`Foundations`, `Components`,
-  `Patterns`, `Pages`, `Flows`) and stories underneath.
-- **Centre preview pane:** a live rendering of the currently-selected
-  story. With no story selected, an empty-state illustration or a
-  default landing screen with the editor's value proposition.
+- **NO global top bar.** The shell should sit edge-to-edge at the very
+  top of the viewport — no "IsoNim Editor / isonim-examples / v0.1.0"
+  strip above the panels.
+- **NO left-edge or right-edge chip columns.** Backend / viewport /
+  mode chips have all moved into the preview-pane top toolbar.
+- **Left panel:** a story browser with at least two top-level groups
+  (`Task App` and `Settings App`), each expandable into a tree of
+  categories (`Foundations`, `Components`, `Patterns`, `Pages`,
+  `Flows`) and stories underneath.
+- **Centre preview pane:** a top toolbar that contains, in one row
+  (wrapping to two rows on narrow viewports if needed):
+  1. The view-switcher (Flow / Detail / Page / Foundations / Vector).
+  2. Backend chips (Web / TUI / GPUI / Freya / Cocoa / Droid). Cocoa
+     and Android may appear disabled (greyed) on hosts without those
+     launchers.
+  3. Viewport chips (Desktop / Laptop / Tablet / Phone or TUI cell
+     viewports when TUI is selected).
+  4. Mode chips (View / Comment / Edit).
+  Below the toolbar is the preview canvas — empty-state landing card,
+  or a live story render once a story is selected.
 - **Right panel:** the inspector — a properties / styles / AI-chat
   area. May start collapsed showing only tab labels.
-- **Right edge:** the View / Comment / Edit mode strip — a vertical
-  column of three tab buttons.
-- **Top of frame:** an editor header or title bar with the project
-  name "IsoNim Examples Editor" and optional global controls.
 
 ### View: `story-selected-*` (Settings App / Group / Appearance)
 
 After clicking through `Settings App` → `Group stories` → `Appearance`
-in the sidebar:
+in the sidebar (default backend is Web):
 
 - Sidebar's `Appearance` row is highlighted with the accent color.
 - Preview pane shows the **Appearance settings group rendered through
@@ -100,6 +105,27 @@ in the sidebar:
   itself is the focal point, not the editor chrome.
 - Inspector panel on the right shows properties for the
   currently-selected component / story.
+
+### View: `story-selected-tui-*` (Settings App / Group / Appearance, TUI backend)
+
+Same selection as `story-selected-*`, but with the TUI chip clicked in
+the preview-pane toolbar:
+
+- TUI chip in the preview-pane toolbar should be highlighted (accent
+  glow / aria-pressed=true).
+- Preview iframe should render the **TUI-styled** version of the same
+  Appearance group:
+  - **Monospace font** throughout (system mono / Menlo / Consolas).
+  - **ASCII / box-drawing borders** (`+----+`, `|`, `+`) for cards and
+    rows — NO rounded corners, NO drop shadows.
+  - Toggle widgets rendered as `[ ]` / `[x]` text instead of CSS
+    pills.
+  - Choice widgets rendered as `( ) Default  (•) Solarized` text
+    radio-style.
+  - Distinct, lower-fidelity "this is the terminal" look — clearly
+    different from the Web srcdoc.
+- The point is that clicking the TUI chip in the toolbar **visibly
+  changes the iframe content** to a monospace cell-grid look.
 
 ### Viewport notes
 

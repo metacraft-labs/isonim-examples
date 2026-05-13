@@ -61,6 +61,32 @@ const views = {
       }
     },
   },
+  "story-selected-tui": {
+    description: "Story selected, then TUI backend chip clicked in the preview-pane toolbar",
+    setup: async (page) => {
+      const groupHeader = await page.$(
+        '[aria-label="Toggle Settings App / Group stories"]',
+      );
+      if (groupHeader) {
+        await groupHeader.click();
+        await page.waitForTimeout(150);
+      }
+      const story = await page.$(
+        '[aria-label="Select story Settings App / Group / Appearance"]',
+      );
+      if (story) {
+        await story.click();
+        await page.waitForTimeout(200);
+      }
+      const tuiChip = await page.$(
+        '[aria-label="Preview backend TUI"]',
+      );
+      if (tuiChip) {
+        await tuiChip.click();
+        await page.waitForTimeout(250);
+      }
+    },
+  },
 };
 
 // Parse args.

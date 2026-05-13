@@ -1047,17 +1047,439 @@ proc renderPreviewContentHtml(item: StoryItem): string =
 </div>
 """
 
-func previewDocumentHtmlFor(item: StoryItem; title, body: string): string =
+const tuiOverlayStyles = """
+/* TUI backend overlay — monospace cell-grid look. The HTML structure
+   is shared across backends; this stylesheet recasts every Web card /
+   pill / row into ASCII-bordered terminal frames. */
+body {
+  background: #050606 !important;
+  color: #C8FFCB !important;
+  font-family: 'JetBrains Mono', Menlo, Consolas, 'Courier New', monospace !important;
+  font-size: 13px !important;
+  line-height: 1.4 !important;
+  letter-spacing: 0 !important;
+  padding: 20px !important;
+}
+.app { max-width: 720px !important; gap: 16px !important; }
+.app-title, .app-subtitle, .row-title, .row-hint, .group-title,
+.choice-pill, .number, .task .name, .task .badge, .summary, .summary .clear,
+.flow-step .body .step-title, .flow-step .body .step-desc,
+.task-input-text, .task-input-glyph, .swatch {
+  font-family: inherit !important;
+  letter-spacing: 0 !important;
+}
+.app-header {
+  border-bottom: 1px dashed #1F4D2F !important;
+  padding-bottom: 8px !important;
+}
+.app-title { color: #BFFFC1 !important; font-weight: 600 !important; }
+.app-subtitle { color: #66996B !important; }
+.card, .filter-bar, .task-input, .task {
+  background: #0B0F0C !important;
+  border: 1px solid #2E6B3C !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 12px 14px !important;
+}
+.card::before {
+  content: '+-- ' attr(class) ' --------------------------------+';
+  display: block;
+  color: #2E6B3C;
+  font-size: 11px;
+  margin-bottom: 8px;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.group-title {
+  color: #6BCC7A !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  margin-bottom: 6px !important;
+}
+.row {
+  border-bottom: 1px dashed #1F4D2F !important;
+  padding: 6px 0 !important;
+}
+.row::before {
+  content: '| ';
+  color: #2E6B3C;
+  margin-right: 4px;
+}
+.row-title { color: #DAFFD4 !important; font-weight: 500 !important; }
+.row-hint { color: #61996A !important; }
+/* Toggle as text [ ] / [x]. */
+.toggle {
+  width: auto !important;
+  height: auto !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  color: #BFFFC1 !important;
+  font-family: inherit !important;
+}
+.toggle::after { content: ''; background: none; position: static; width: 0; height: 0; }
+.toggle::before {
+  content: '[ ]';
+  color: #6BCC7A;
+}
+.toggle.on::before { content: '[x]'; color: #BFFFC1; }
+/* Choice pills as ( ) / (*). */
+.choice { gap: 12px !important; }
+.choice-pill {
+  background: transparent !important;
+  border: none !important;
+  color: #66996B !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  font-weight: 500 !important;
+}
+.choice-pill::before {
+  content: '( ) ';
+  color: #2E6B3C;
+}
+.choice-pill.active {
+  color: #BFFFC1 !important;
+  background: transparent !important;
+}
+.choice-pill.active::before {
+  content: '(*) ';
+  color: #6BCC7A;
+}
+.number {
+  background: #0B0F0C !important;
+  border: 1px solid #2E6B3C !important;
+  color: #BFFFC1 !important;
+  border-radius: 0 !important;
+  padding: 4px 8px !important;
+  width: 64px !important;
+}
+.filter-bar { padding: 6px !important; gap: 0 !important; }
+.filter-bar .pill {
+  background: transparent !important;
+  border-radius: 0 !important;
+  color: #66996B !important;
+}
+.filter-bar .pill::before {
+  content: '[ ';
+  color: #2E6B3C;
+}
+.filter-bar .pill::after {
+  content: ' ]';
+  color: #2E6B3C;
+}
+.filter-bar .pill.active {
+  color: #BFFFC1 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.filter-bar .pill.active::before { content: '[*'; color: #6BCC7A; }
+.filter-bar .pill.active::after { content: '*]'; color: #6BCC7A; }
+.task .checkbox {
+  width: auto !important; height: auto !important;
+  border: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+.task .checkbox::before { content: '[ ]'; color: #6BCC7A; }
+.task.done .checkbox { background: transparent !important; }
+.task.done .checkbox::before { content: '[x]'; color: #BFFFC1; }
+.task.done .checkbox::after { content: ''; }
+.task-input-glyph::before { content: '> '; color: #6BCC7A; }
+.task-input-glyph { color: transparent !important; }
+.summary .clear, .flow-step .num {
+  background: transparent !important;
+  color: #6BCC7A !important;
+  border-radius: 0 !important;
+}
+.flow-step { border-bottom: 1px dashed #1F4D2F !important; }
+.backend-band {
+  font-family: inherit;
+  font-size: 11px;
+  color: #2E6B3C;
+  padding: 6px 0;
+  letter-spacing: 0;
+}
+"""
+
+const gpuiOverlayStyles = """
+/* GPUI backend overlay — bright, tight, AppKit/Big Sur-ish vibe. */
+body {
+  background: #1A1B22 !important;
+  color: #F0F1F5 !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif !important;
+  font-size: 13px !important;
+  padding: 28px !important;
+}
+.card, .task-input, .task, .filter-bar {
+  background: linear-gradient(180deg, #2B2E3A 0%, #232631 100%) !important;
+  border: 1px solid #3A3D4A !important;
+  border-radius: 12px !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 12px 28px rgba(0,0,0,0.32) !important;
+}
+.app-title { color: #FFFFFF !important; font-weight: 600 !important; }
+.app-subtitle { color: #B5B9C9 !important; }
+.row-title { font-weight: 500 !important; }
+.toggle { box-shadow: 0 1px 2px rgba(0,0,0,0.5) inset !important; }
+.toggle.on {
+  background: linear-gradient(180deg, #3CB0FE 0%, #0079FF 100%) !important;
+}
+.choice-pill.active {
+  background: linear-gradient(180deg, #3CB0FE 0%, #0079FF 100%) !important;
+  border-color: #0066CC !important;
+  color: #FFFFFF !important;
+}
+.number {
+  background: #14151B !important;
+  border-color: #3A3D4A !important;
+  border-radius: 6px !important;
+}
+.backend-band {
+  background: #14ACA1;
+  color: #0E342F;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 4px 14px;
+  display: inline-block;
+  border-radius: 999px;
+}
+"""
+
+const freyaOverlayStyles = """
+/* Freya backend overlay — Material 3 card aesthetic. */
+body {
+  background: #F4F6FA !important;
+  color: #1B1D29 !important;
+  font-family: 'Roboto', 'Inter', -apple-system, system-ui, sans-serif !important;
+  font-size: 14px !important;
+  padding: 28px !important;
+}
+.app { gap: 20px !important; }
+.app-header { padding-bottom: 12px !important; border-bottom: 1px solid #E0E3EC !important; }
+.app-title { color: #1B1D29 !important; font-weight: 500 !important; }
+.app-subtitle { color: #555867 !important; }
+.card, .task-input, .task, .filter-bar {
+  background: #FFFFFF !important;
+  border: none !important;
+  border-radius: 18px !important;
+  box-shadow: 0 2px 6px rgba(20, 22, 34, 0.05), 0 0 0 1px #E2E5EE inset !important;
+  padding: 18px 20px !important;
+}
+.group-title {
+  color: #6E5BFF !important;
+  text-transform: none !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+}
+.row { border-bottom: 1px solid #ECEFF7 !important; }
+.row-title { color: #1B1D29 !important; font-weight: 500 !important; }
+.row-hint { color: #5A5E6C !important; }
+.toggle { background: #C8CBD8 !important; }
+.toggle.on { background: #6E5BFF !important; }
+.toggle::after { background: #FFFFFF !important; }
+.choice-pill {
+  background: transparent !important;
+  border: 1px solid #C8CBD8 !important;
+  color: #555867 !important;
+}
+.choice-pill.active {
+  background: #EFEBFF !important;
+  color: #4F3CD9 !important;
+  border-color: #6E5BFF !important;
+}
+.number {
+  background: #F4F6FA !important;
+  border: 1px solid #C8CBD8 !important;
+  color: #1B1D29 !important;
+  border-radius: 8px !important;
+}
+.filter-bar { background: #EFF1F8 !important; }
+.filter-bar .pill { color: #555867 !important; }
+.filter-bar .pill.active {
+  background: #FFFFFF !important;
+  color: #4F3CD9 !important;
+  box-shadow: 0 1px 3px rgba(20,22,34,0.08) !important;
+}
+.task { padding: 14px 18px !important; }
+.task .name { color: #1B1D29 !important; }
+.task .checkbox { border-color: #6E5BFF !important; }
+.task.done .checkbox { background: #6E5BFF !important; border-color: #6E5BFF !important; }
+.backend-band {
+  background: #6E5BFF;
+  color: #FFFFFF;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 4px 14px;
+  display: inline-block;
+  border-radius: 999px;
+}
+"""
+
+const cocoaOverlayStyles = """
+/* Cocoa backend overlay — AppKit / NSWindow vibrancy. */
+body {
+  background: linear-gradient(180deg, #2E3034 0%, #1A1C1F 100%) !important;
+  color: #F2F2F7 !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif !important;
+  font-size: 13px !important;
+  padding: 24px !important;
+}
+.card, .task-input, .task, .filter-bar {
+  background: rgba(58, 60, 66, 0.65) !important;
+  backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 0 0 0.5px rgba(255,255,255,0.04), 0 10px 24px rgba(0,0,0,0.4) !important;
+}
+.app-title { color: #FFFFFF !important; font-weight: 590 !important; letter-spacing: -0.01em !important; }
+.app-subtitle { color: rgba(235, 235, 245, 0.6) !important; }
+.row-title { color: #FFFFFF !important; font-weight: 510 !important; }
+.row-hint { color: rgba(235, 235, 245, 0.55) !important; }
+.toggle { background: rgba(120, 120, 128, 0.32) !important; }
+.toggle.on { background: #30D158 !important; }
+.choice-pill {
+  background: rgba(120, 120, 128, 0.20) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+  color: rgba(235, 235, 245, 0.78) !important;
+}
+.choice-pill.active {
+  background: #007AFF !important;
+  border-color: #007AFF !important;
+  color: #FFFFFF !important;
+}
+.filter-bar .pill.active { background: rgba(120, 120, 128, 0.32) !important; color: #FFFFFF !important; }
+.number {
+  background: rgba(118, 118, 128, 0.24) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+  color: #FFFFFF !important;
+  border-radius: 6px !important;
+}
+.backend-band {
+  background: rgba(0,122,255,0.85);
+  color: #FFFFFF;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 4px 14px;
+  display: inline-block;
+  border-radius: 999px;
+  backdrop-filter: blur(20px);
+}
+"""
+
+const androidOverlayStyles = """
+/* Android backend overlay — Material 3 dark theme tile. */
+body {
+  background: #16131B !important;
+  color: #E6E0EC !important;
+  font-family: 'Roboto', 'Inter', -apple-system, system-ui, sans-serif !important;
+  font-size: 14px !important;
+  padding: 22px !important;
+}
+.card, .task-input, .task, .filter-bar {
+  background: #221E29 !important;
+  border: none !important;
+  border-radius: 20px !important;
+  box-shadow: 0 1px 0 #2D2935 inset !important;
+  padding: 18px 20px !important;
+}
+.app-title { color: #E6E0EC !important; font-weight: 500 !important; }
+.app-subtitle { color: #CAC4D0 !important; }
+.group-title {
+  color: #D0BCFF !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+.row-title { color: #E6E0EC !important; }
+.row-hint { color: #CAC4D0 !important; }
+.toggle { background: #49454F !important; }
+.toggle.on { background: #D0BCFF !important; }
+.toggle::after { background: #381E72 !important; }
+.toggle.on::after { background: #FFFFFF !important; }
+.choice-pill {
+  background: transparent !important;
+  border: 1px solid #79747E !important;
+  color: #CAC4D0 !important;
+  border-radius: 999px !important;
+}
+.choice-pill.active {
+  background: #4F378B !important;
+  border-color: #4F378B !important;
+  color: #FFFFFF !important;
+}
+.number {
+  background: #2B2730 !important;
+  border-color: #49454F !important;
+  color: #E6E0EC !important;
+  border-radius: 8px !important;
+}
+.backend-band {
+  background: #D0BCFF;
+  color: #381E72;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 4px 14px;
+  display: inline-block;
+  border-radius: 999px;
+}
+"""
+
+func backendOverlayStylesFor(platform: Platform): string =
+  ## Per-backend CSS overlay layered on top of the shared base styles.
+  ## Each non-Web backend gets a distinct visual signature so clicking a
+  ## chip in the preview-pane top toolbar visibly changes the iframe.
+  case platform
+  of pbWeb: ""
+  of pbTui: tuiOverlayStyles
+  of pbGpui: gpuiOverlayStyles
+  of pbFreya: freyaOverlayStyles
+  of pbCocoa: cocoaOverlayStyles
+  of pbAndroid: androidOverlayStyles
+
+func backendBandLabel(platform: Platform): string =
+  case platform
+  of pbWeb: ""
+  of pbTui: "TUI - monospace cell grid"
+  of pbGpui: "GPUI - native macOS-style adapter"
+  of pbFreya: "Freya - Material card adapter"
+  of pbCocoa: "Cocoa - AppKit vibrancy"
+  of pbAndroid: "Android - Material 3 dark"
+
+func previewDocumentHtmlFor(item: StoryItem; title, body: string;
+                            platform: Platform): string =
   let subtitle = if body.len > 0: body else: item.description
   result = "<!doctype html><html><head><meta charset=\"utf-8\"/><title>"
   result.add title
   result.add "</title><style>"
   result.add previewBaseStyles
-  result.add "</style></head><body><main class=\"app\" data-story=\""
+  result.add "</style>"
+  let overlay = backendOverlayStylesFor(platform)
+  if overlay.len > 0:
+    result.add "<style data-backend=\""
+    result.add $platform
+    result.add "\">"
+    result.add overlay
+    result.add "</style>"
+  result.add "</head><body data-backend=\""
+  result.add $platform
+  result.add "\"><main class=\"app\" data-story=\""
   result.add item.group
   result.add "/"
   result.add item.name
-  result.add "\"><header class=\"app-header\"><span class=\"app-title\">"
+  result.add "\">"
+  let band = backendBandLabel(platform)
+  if band.len > 0:
+    result.add "<div class=\"backend-band\">"
+    result.add band
+    result.add "</div>"
+  result.add "<header class=\"app-header\"><span class=\"app-title\">"
   result.add item.name
   result.add "</span><span class=\"app-subtitle\">"
   result.add subtitle
@@ -1066,7 +1488,10 @@ func previewDocumentHtmlFor(item: StoryItem; title, body: string): string =
   result.add "</main></body></html>"
 
 proc demoPreviewHook*(story: StoryRef; platform: Platform): ProjectPreview =
-  ## Project-owned preview hook for the demo editor.
+  ## Project-owned preview hook for the demo editor. The `platform`
+  ## argument carries the currently-selected `PreviewBackend`; the
+  ## returned `documentHtml` is per-backend styled so clicking a chip
+  ## in the preview-pane toolbar visibly changes the iframe.
   let groups = buildDemoStoryGroups()
   var item: StoryItem
   var itemIndex = -1
@@ -1083,7 +1508,7 @@ proc demoPreviewHook*(story: StoryRef; platform: Platform): ProjectPreview =
     sourceLine: 1,
     fixtureName: item.group & "." & item.name,
     renderKind: item.kind.renderKind)
-  let html = previewDocumentHtmlFor(item, title, body)
+  let html = previewDocumentHtmlFor(item, title, body, platform)
   ProjectPreview(
     status: ppsRendered,
     story: resolvedStory,
