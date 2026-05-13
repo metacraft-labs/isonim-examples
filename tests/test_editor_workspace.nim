@@ -175,14 +175,20 @@ suite "EX-M14: newDemoEditorWorkspace":
 # ---------------------------------------------------------------------------
 
 suite "EX-M14: newDemoBackendRegistry":
-  test "registers exactly Web / TUI / GPUI / Freya":
+  test "registers exactly Web / TUI / GPUI / Freya plus host-specific extras":
     let reg = newDemoBackendRegistry("/tmp/isonim-examples-build")
     check reg.binaryFor(pbWeb).isSome
     check reg.binaryFor(pbTui).isSome
     check reg.binaryFor(pbGpui).isSome
     check reg.binaryFor(pbFreya).isSome
-    check reg.binaryFor(pbCocoa).isNone
-    check reg.binaryFor(pbAndroid).isNone
+    when defined(macosx):
+      check reg.binaryFor(pbCocoa).isSome
+    else:
+      check reg.binaryFor(pbCocoa).isNone
+    when defined(macosx) or defined(linux):
+      check reg.binaryFor(pbAndroid).isSome
+    else:
+      check reg.binaryFor(pbAndroid).isNone
 
   test "registered paths use the build directory":
     let reg = newDemoBackendRegistry("/tmp/isonim-examples-build")

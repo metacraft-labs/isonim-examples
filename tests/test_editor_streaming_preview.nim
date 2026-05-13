@@ -43,8 +43,14 @@ suite "EX-M14: streaming-preview registry":
       let p = reg.binaryFor(backend)
       check p.isSome
       check fileExists(p.get())
-    check reg.binaryFor(pbCocoa).isNone
-    check reg.binaryFor(pbAndroid).isNone
+    when defined(macosx):
+      check reg.binaryFor(pbCocoa).isSome
+    else:
+      check reg.binaryFor(pbCocoa).isNone
+    when defined(macosx) or defined(linux):
+      check reg.binaryFor(pbAndroid).isSome
+    else:
+      check reg.binaryFor(pbAndroid).isNone
 
   test "StreamingPreviewVM reflects available backends on this host":
     createRoot proc(dispose: proc()) =

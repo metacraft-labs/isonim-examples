@@ -87,6 +87,8 @@ func sourceFileFor*(group, name: string; kind: StoryKind): string =
     else: TaskAppViewsSource
   of skGuideline:
     DemoEditorWorkspaceSource
+  of skVectorSymbol:
+    DemoEditorWorkspaceSource
 
 func appOf*(group: string): string =
   ## Best-effort recovery of the parent demo app from a story group.
@@ -397,6 +399,7 @@ func renderKind(kind: StoryKind): string =
   of skPage: "page"
   of skFlow: "flow"
   of skGuideline: "guideline"
+  of skVectorSymbol: "vector-symbol"
 
 func findStoryItem(groups: seq[StoryGroup]; story: StoryRef;
     itemOut: var StoryItem; indexOut: var int): bool =
@@ -439,6 +442,7 @@ func previewBodyFor(item: StoryItem; platform: Platform): string =
   of skFoundation: item.description
   of skGuideline: item.description
   of skFlow: item.description
+  of skVectorSymbol: item.description
 
 const previewBaseStyles = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1038,6 +1042,18 @@ proc renderPreviewContentHtml(item: StoryItem): string =
     """
 <div class="card">
   <div class="group-title">Guideline</div>
+  <div class="row">
+    <div class="row-label">
+      <div class="row-title">""" & item.name & """</div>
+      <div class="row-hint">""" & item.description & """</div>
+    </div>
+  </div>
+</div>
+"""
+  of skVectorSymbol:
+    """
+<div class="card">
+  <div class="group-title">Vector Symbol</div>
   <div class="row">
     <div class="row-label">
       <div class="row-title">""" & item.name & """</div>
