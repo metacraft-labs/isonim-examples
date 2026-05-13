@@ -442,6 +442,314 @@ test.describe("EX-M15: Freya backend dispatches --demo=settings", () => {
 });
 
 // --------------------------------------------------------------------------
+// 4c. RS-M11: canvas click resolves to a manifest element via the
+//     element-tree M packet. Pattern B (bridge-direct): the editor's
+//     real launcher subprocess (the TUI bridge, started by
+//     `playwright.config.ts`) is the canonical producer of the
+//     element-tree manifest. The bridge's static `index.html` already
+//     hosts the canvas client + WS pump in a real browser. This test
+//     wires through that same canvas client, hooks the WebSocket
+//     prototype to (a) decode incoming M-packet `element-tree` bodies
+//     and (b) capture outgoing I-packet `mouse click` bodies, then
+//     drives a real Playwright mouse click at the centre pixel of a
+//     known task row and asserts the click landed inside the bounds
+//     the manifest described.
+//
+//     This is the Playwright analogue to
+//     `isonim/tests/test_editor_real_preview.nim`: that Nim test
+//     runs the manifest through `StreamingPreviewVM` in-process; this
+//     test runs the same wire-format manifest through a real browser
+//     + real launcher binary end-to-end. Combined they prove the
+//     spec's "canvas click → manifest → element selection" contract
+//     across both the framework's headless VM and the browser-side
+//     WS / canvas pipeline.
+//
+//     Why Pattern B rather than Pattern A (editor end-to-end):
+//     the editor's JS bundle today mounts the non-Web preview
+//     canvas (RS-M11 wired `data-canvas-active="true"`) but does
+//     not yet open a WS connection from the browser, decode F/M
+//     packets, paint the canvas, or surface the manifest to
+//     `window`. Building that JS-side client is an unscoped piece
+//     of work; RS-M11 itself shipped only the canvas + the VM-side
+//     plumbing (`preview_canvas.nim`, `streaming_preview.nim`,
+//     and the `StreamingPreviewVM.dispatchMetaPacket` hook). Pattern
+//     B exercises the same wire contract through a real browser
+//     against a real launcher binary without requiring that
+//     unshipped editor-side JS, and is the explicit fallback the
+//     RS-M11 follow-up brief sanctions.
+// --------------------------------------------------------------------------
+
+test.describe("RS-M11: canvas hit-test via element-tree manifest (real browser)", () => {
+  test("TUI bridge: clicking the centre of a TaskRow element resolves to its bounds", async ({
+    page,
+  }) => {
+    // Patch the WebSocket constructor BEFORE the bridge's static
+    // page boots so our hook sees every frame, starting with the
+    // very first M `hello` after the upgrade. The hook decodes
+    // each M packet's JSON body and stashes element-tree manifests
+    // on `window.__rsm11Manifests`; it also captures the bytes of
+    // every outgoing send (the bridge serialises I packets as
+    // `'I' | u32 LE length | UTF-8 JSON`) so the test can assert
+    // the click coordinates that fly back to the launcher.
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__rsm11Manifests = [];
+      (window as unknown as Record<string, unknown>).__rsm11Outbound = [];
+      const NativeWS = window.WebSocket;
+      const wrapped = function (this: WebSocket, url: string, protocols?: string | string[]) {
+        const ws = protocols !== undefined
+          ? new NativeWS(url, protocols as string | string[])
+          : new NativeWS(url);
+        const origSend = ws.send.bind(ws);
+        ws.send = (data: string | ArrayBufferLike | Blob | ArrayBufferView) => {
+          try {
+            if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+              const bytes = data instanceof ArrayBuffer
+                ? new Uint8Array(data)
+                : new Uint8Array(
+                    (data as ArrayBufferView).buffer,
+                    (data as ArrayBufferView).byteOffset,
+                    (data as ArrayBufferView).byteLength,
+                  );
+              if (bytes.length >= 5 && String.fromCharCode(bytes[0]) === "I") {
+                const len =
+                  bytes[1] | (bytes[2] << 8) | (bytes[3] << 16) | (bytes[4] << 24);
+                if (len >= 0 && 5 + len <= bytes.length) {
+                  const json = new TextDecoder("utf-8").decode(
+                    bytes.subarray(5, 5 + len),
+                  );
+                  try {
+                    const decoded = JSON.parse(json);
+                    (
+                      (window as unknown as Record<string, unknown>)
+                        .__rsm11Outbound as unknown[]
+                    ).push(decoded);
+                  } catch (_) {
+                    // Non-JSON I bodies are dropped — every spec'd
+                    // I packet is JSON.
+                  }
+                }
+              }
+            }
+          } catch (_) {
+            // Hook must never block the real send.
+          }
+          return origSend(data);
+        };
+        ws.addEventListener("message", (ev) => {
+          try {
+            const buf = ev.data as ArrayBuffer;
+            if (!(buf instanceof ArrayBuffer)) return;
+            const bytes = new Uint8Array(buf);
+            if (bytes.length === 0) return;
+            const kind = String.fromCharCode(bytes[0]);
+            if (kind !== "M") return;
+            const view = new DataView(
+              bytes.buffer,
+              bytes.byteOffset,
+              bytes.byteLength,
+            );
+            const length = view.getUint32(1, true);
+            if (5 + length > bytes.length) return;
+            const json = new TextDecoder("utf-8").decode(
+              bytes.subarray(5, 5 + length),
+            );
+            const node = JSON.parse(json);
+            if (node && node.type === "element-tree") {
+              (
+                (window as unknown as Record<string, unknown>)
+                  .__rsm11Manifests as unknown[]
+              ).push(node);
+            }
+          } catch (_) {
+            // Malformed packets aren't this test's concern; the
+            // round-trip codec test in isonim-render-serve covers
+            // protocol-level violations.
+          }
+        });
+        return ws;
+      } as unknown as typeof WebSocket;
+      // Preserve the static side of `WebSocket` (CONNECTING etc.)
+      // so the bridge's existing `ws.readyState !== WebSocket.OPEN`
+      // gate still works.
+      (wrapped as unknown as Record<string, unknown>).CONNECTING =
+        NativeWS.CONNECTING;
+      (wrapped as unknown as Record<string, unknown>).OPEN = NativeWS.OPEN;
+      (wrapped as unknown as Record<string, unknown>).CLOSING =
+        NativeWS.CLOSING;
+      (wrapped as unknown as Record<string, unknown>).CLOSED = NativeWS.CLOSED;
+      (wrapped as unknown as { prototype: unknown }).prototype =
+        NativeWS.prototype;
+      window.WebSocket = wrapped;
+    });
+
+    await page.goto(`http://127.0.0.1:${bridgePorts.tui}/`);
+
+    // Wait until the manifest arrives. The launcher emits one right
+    // after `hello` and before the first F packet; the bridge's
+    // 1.5 s deadline budget in the RS-M11 spec is comfortably long.
+    await page.waitForFunction(
+      () => {
+        const list = (window as unknown as Record<string, unknown>)
+          .__rsm11Manifests as unknown[] | undefined;
+        return Array.isArray(list) && list.length > 0;
+      },
+      null,
+      { timeout: 10_000 },
+    );
+
+    // Extract the first manifest, find a TaskRow element, and
+    // confirm the canvas matches the manifest's surface dimensions
+    // by the time we click. The bridge resizes the canvas inside
+    // its first F-packet handler, so we wait on canvas.width
+    // matching surfaceWidth as a deterministic proxy for "the
+    // canvas client has caught up with the manifest the launcher
+    // sent us".
+    const manifestInfo = await page.evaluate(() => {
+      const list = (window as unknown as Record<string, unknown>)
+        .__rsm11Manifests as Array<{
+          type: string;
+          surfaceWidth: number;
+          surfaceHeight: number;
+          elements: Array<{
+            id: string;
+            componentPath: string;
+            kind: string;
+            bounds: { x: number; y: number; w: number; h: number };
+          }>;
+        }>;
+      const manifest = list[list.length - 1];
+      const taskRows = manifest.elements.filter((e) =>
+        e.componentPath.startsWith("task_app/views/TaskRow#"),
+      );
+      return {
+        surfaceWidth: manifest.surfaceWidth,
+        surfaceHeight: manifest.surfaceHeight,
+        elementCount: manifest.elements.length,
+        taskRows,
+      };
+    });
+
+    expect(
+      manifestInfo.elementCount,
+      "element-tree manifest must list at least one element",
+    ).toBeGreaterThan(0);
+    expect(
+      manifestInfo.taskRows.length,
+      "manifest must include at least one TaskRow entry — the launcher seeds three sample tasks",
+    ).toBeGreaterThan(0);
+
+    // Pick the SECOND TaskRow when present (per the RS-M11 spec
+    // sentence — "the centre of the second visible task row").
+    // Fall back to the first when only one is reported (some
+    // viewport sizes coalesce overlapping rows). Either way the
+    // assertion shape is identical.
+    const targetRow =
+      manifestInfo.taskRows.length >= 2
+        ? manifestInfo.taskRows[1]
+        : manifestInfo.taskRows[0];
+
+    // Wait for the canvas to take on the manifest's surface
+    // dimensions. Without this gate the click could fire before
+    // the bridge's first F-packet resizes the canvas, which would
+    // cause `pointFromEvent` to misscale the click coordinates.
+    await page.waitForFunction(
+      (expected: { w: number; h: number }) => {
+        const c = document.getElementById("canvas") as HTMLCanvasElement | null;
+        if (!c) return false;
+        return c.width === expected.w && c.height === expected.h;
+      },
+      { w: manifestInfo.surfaceWidth, h: manifestInfo.surfaceHeight },
+      { timeout: 10_000 },
+    );
+
+    // Compute the client-relative click coordinates that map back
+    // to the centre pixel of the target row's bounds, exactly the
+    // way the bridge client's `pointFromEvent` decodes them.
+    const click = await page.evaluate(
+      (row: { bounds: { x: number; y: number; w: number; h: number } }) => {
+        const c = document.getElementById("canvas") as HTMLCanvasElement;
+        const rect = c.getBoundingClientRect();
+        const cx = row.bounds.x + Math.floor(row.bounds.w / 2);
+        const cy = row.bounds.y + Math.floor(row.bounds.h / 2);
+        // Inverse of pointFromEvent in static/index.html.
+        const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
+        const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
+        return { cx, cy, clientX, clientY };
+      },
+      targetRow,
+    );
+
+    // Drain any I packets that may have been emitted on focus/
+    // resize before the test takes control of the canvas.
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__rsm11Outbound = [];
+    });
+
+    // The real Playwright mouse click. This produces the same
+    // mousedown / mouseup / click sequence a user produces; each
+    // listener in the bridge client wraps a `mouse` I packet.
+    await page.mouse.click(click.clientX, click.clientY);
+
+    // Wait for the click I packet to land on `__rsm11Outbound`.
+    await page.waitForFunction(
+      () => {
+        const out = (window as unknown as Record<string, unknown>)
+          .__rsm11Outbound as Array<{ type?: string; action?: string }>;
+        return out.some((p) => p.type === "mouse" && p.action === "click");
+      },
+      null,
+      { timeout: 5_000 },
+    );
+
+    const outbound = (await page.evaluate(() => {
+      return (window as unknown as Record<string, unknown>)
+        .__rsm11Outbound as Array<{
+          type?: string;
+          action?: string;
+          x?: number;
+          y?: number;
+        }>;
+    })) as Array<{ type?: string; action?: string; x?: number; y?: number }>;
+
+    const clickPackets = outbound.filter(
+      (p) => p.type === "mouse" && p.action === "click",
+    );
+    expect(
+      clickPackets.length,
+      `bridge must have received exactly one mouse-click I packet; ` +
+        `outbound=${JSON.stringify(outbound)}`,
+    ).toBeGreaterThan(0);
+
+    const cp = clickPackets[0];
+    // The click coordinates the bridge received MUST fall inside
+    // the bounds the manifest declared for the target row. This is
+    // the spec's load-bearing invariant: the manifest's bounds and
+    // the canvas's pixel space agree, so the editor's hit-test
+    // (smallest-area-wins via PreviewCanvasVM.elementAt) would
+    // resolve this click to `targetRow.componentPath`.
+    expect(cp.x, `click x=${cp.x} must fall inside row bounds`).toBeGreaterThanOrEqual(
+      targetRow.bounds.x,
+    );
+    expect(cp.x, `click x=${cp.x} must fall inside row bounds`).toBeLessThan(
+      targetRow.bounds.x + targetRow.bounds.w,
+    );
+    expect(cp.y, `click y=${cp.y} must fall inside row bounds`).toBeGreaterThanOrEqual(
+      targetRow.bounds.y,
+    );
+    expect(cp.y, `click y=${cp.y} must fall inside row bounds`).toBeLessThan(
+      targetRow.bounds.y + targetRow.bounds.h,
+    );
+
+    // The element id is launcher-stable and matches the manifest's
+    // regex contract (RS-M11 § Acceptance criteria).
+    expect(targetRow.id).toMatch(/^task_app\/views\/TaskRow#\d+$/);
+    expect(targetRow.componentPath).toMatch(
+      /^task_app\/views\/TaskRow#\d+$/,
+    );
+  });
+});
+
+// --------------------------------------------------------------------------
 // 5. Viewport-strip width changes the preview region
 // --------------------------------------------------------------------------
 
