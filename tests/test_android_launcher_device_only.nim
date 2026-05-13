@@ -6,9 +6,14 @@
 ## device's framebuffer with non-zero variance (proves real device
 ## content, not a uniform / placeholder buffer).
 ##
-## Skipped if no Android device is reachable via `adb devices`. Gated
-## `when defined(macosx) or defined(linux):`; on other hosts the body
-## skips with a single `check true` pointer to this docstring.
+## Fails (does NOT skip) when no Android device is reachable via
+## `adb devices`. Gated `when defined(macosx) or defined(linux):`; on
+## other hosts the body compiles as a single `check true` pointer to
+## this docstring. The no-skip policy follows the user's standing
+## instruction (`feedback_real_environment_tests.md`): a missing adb
+## device is a real test environment defect, not a skip-worthy
+## condition. CI environments without an Android device fail fast with
+## a clear diagnostic naming the missing prerequisite.
 ##
 ## What this test verifies for EX-M21:
 ##
@@ -69,51 +74,59 @@ when defined(macosx) or defined(linux):
       dev += abs(pixels[p * 4 + 2].int64 - meanB)
     dev.float / pixelCount.float
 
+  const NoDeviceDiagnostic = """
+EX-M21: no Android device reachable via adb. The Android launcher
+frame-source pipeline test requires at least one device or emulator
+in `adb devices` reporting the `device` state. Per the user's
+standing instruction (real-environment tests only; obstacles must be
+removed, not worked around), this is a hard failure, not a skip.
+Attach an emulator / device and re-run.
+"""
+
+  template requireAdbDevice() =
+    if not adbDevicePresent():
+      echo NoDeviceDiagnostic
+    require adbDevicePresent()
+
   suite "EX-M21: Android launcher frame-source pipeline":
 
     test "device is reachable via adb":
-      check adbDevicePresent()
+      requireAdbDevice()
 
     test "captureFrame produces RGBA8888 of configured dimensions":
-      if not adbDevicePresent():
-        skip()
-      else:
-        let src = newAdbScreencapFrameSource(width = 320, height = 240)
-        let frame = src.captureFrame()
-        check frame.width == 320
-        check frame.height == 240
-        check frame.pixels.len == 320 * 240 * 4
+      requireAdbDevice()
+      let src = newAdbScreencapFrameSource(width = 320, height = 240)
+      let frame = src.captureFrame()
+      check frame.width == 320
+      check frame.height == 240
+      check frame.pixels.len == 320 * 240 * 4
 
     test "captureFrame variance > 0 (real device content)":
-      if not adbDevicePresent():
-        skip()
-      else:
-        let src = newAdbScreencapFrameSource(width = 320, height = 240)
-        let frame = src.captureFrame()
-        let v = pixelVariance(frame.pixels)
-        # Any non-uniform device screen returns variance well above 0.5
-        # (text, status bar, app chrome). A black-screen device returns
-        # 0; a uniform-colour test pattern returns 0. The connected
-        # R5CX1130V0X test device is never in those states during CI.
-        check v > 0.5
+      requireAdbDevice()
+      let src = newAdbScreencapFrameSource(width = 320, height = 240)
+      let frame = src.captureFrame()
+      let v = pixelVariance(frame.pixels)
+      # Any non-uniform device screen returns variance well above 0.5
+      # (text, status bar, app chrome). A black-screen device returns
+      # 0; a uniform-colour test pattern returns 0. The connected
+      # R5CX1130V0X test device is never in those states during CI.
+      check v > 0.5
 
     test "two captures of an unchanging screen agree on most bytes":
-      if not adbDevicePresent():
-        skip()
-      else:
-        let src = newAdbScreencapFrameSource(width = 320, height = 240)
-        let frame1 = src.captureFrame()
-        let frame2 = src.captureFrame()
-        # Status-bar clock + battery indicators may tick between the
-        # two captures, but the bulk of the frame should match. Require
-        # at least 80% of bytes to agree as a sanity check that
-        # screencap returns a stable view rather than per-call noise.
-        check frame1.pixels.len == frame2.pixels.len
-        var agree = 0
-        for i in 0 ..< frame1.pixels.len:
-          if frame1.pixels[i] == frame2.pixels[i]: inc agree
-        let agreeRatio = agree.float / frame1.pixels.len.float
-        check agreeRatio > 0.8
+      requireAdbDevice()
+      let src = newAdbScreencapFrameSource(width = 320, height = 240)
+      let frame1 = src.captureFrame()
+      let frame2 = src.captureFrame()
+      # Status-bar clock + battery indicators may tick between the
+      # two captures, but the bulk of the frame should match. Require
+      # at least 80% of bytes to agree as a sanity check that
+      # screencap returns a stable view rather than per-call noise.
+      check frame1.pixels.len == frame2.pixels.len
+      var agree = 0
+      for i in 0 ..< frame1.pixels.len:
+        if frame1.pixels[i] == frame2.pixels[i]: inc agree
+      let agreeRatio = agree.float / frame1.pixels.len.float
+      check agreeRatio > 0.8
 
 else:
   suite "EX-M21: Android launcher (macOS/Linux host)":
