@@ -86,20 +86,32 @@ proc resolveStaticDir*(cfgStatic: string): string =
     return fallback
   cfgStatic # last resort — bridge will 404 the canvas page
 
-proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource) =
+proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
+                       elementTree: ElementTreeProvider = nil;
+                       inputSink: AnyInputSink = nil) =
   ## Boot the WebSocket bridge against an already-constructed frame
   ## source. Launchers call this after they've assembled a real demo
   ## frame source (TUI rasterizer / GPUI adapter / Freya adapter / web
   ## stub bridge).
-  let sink = newBufferedInputSink()
+  ##
+  ## EX-M23: launchers that advertise the `elementTree` capability
+  ## pass a non-nil `ElementTreeProvider` so the bridge emits one
+  ## manifest per connect + one per (id, bounds)-change. Launchers
+  ## that need to react to inbound I packets pass a non-nil
+  ## `inputSink` (e.g. the TUI launcher's resize-aware sink that
+  ## forwards `iekResize` events to the harness).
+  let sink =
+    if inputSink != nil: inputSink
+    else: newBufferedInputSink().toAny()
   let bridgeCfg = BridgeConfig(
     port: Port(cfg.port),
     staticDir: resolveStaticDir(cfg.staticDir),
     backend: cfg.backend,
     frameIntervalMs: max(1, 1000 div cfg.fps),
     maxFrames: 0,
-    inputSink: sink.toAny(),
-    frameSource: source)
+    inputSink: sink,
+    frameSource: source,
+    elementTree: elementTree)
   let s = newServer(bridgeCfg)
   echo "isonim-examples-", cfg.backend, " demo=", cfg.demo,
     " listening on http://127.0.0.1:", cfg.port,

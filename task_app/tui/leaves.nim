@@ -89,7 +89,9 @@ proc appShell*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   ## Top-level container. Holds the rest of the leaves.
   discard vm
   ui(r):
-    tdiv(class = "task-app", `data-app` = "task-app")
+    tdiv(class = "task-app", `data-app` = "task-app",
+         `data-component-path` = "task_app/views/TaskApp",
+         `data-component-kind` = "app-shell")
 
 proc taskInput*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   ## Single-line text field that adds a task on Enter. The InputWidget
@@ -104,6 +106,9 @@ proc taskInput*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
     onChange = makeInputChangeHandler(vm),
     onSubmit = makeInputSubmitHandler(vm, s))
   s.inputWidget = inp
+  r.setAttribute(inp.node, "data-component-path",
+    "task_app/views/TaskInput")
+  r.setAttribute(inp.node, "data-component-kind", "input")
   ui(r):
     embedNode(inp.node)
 
@@ -131,6 +136,9 @@ proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
       of fmCompleted: 2
     for i, b in buttons:
       b.setSelected(i == want)
+  r.setAttribute(rs.node, "data-component-path",
+    "task_app/views/FilterBar")
+  r.setAttribute(rs.node, "data-component-kind", "filter-bar")
   ui(r):
     embedNode(rs.node)
 
@@ -147,6 +155,13 @@ proc renderTaskRow(r: TerminalRenderer; vm: TaskAppVM;
                 label)
   result = r.createElement("div")
   r.setAttribute(result, "data-task-id", $t.id)
+  # EX-M23: stable component path for the element-tree manifest.
+  # `#<id>` segment keeps the manifest entries distinguishable so
+  # the editor's hit-test can resolve a row click back to a unique
+  # selection.
+  r.setAttribute(result, "data-component-path",
+    "task_app/views/TaskRow#" & $t.id)
+  r.setAttribute(result, "data-component-kind", "row")
   r.appendChild(result, r.createTextNode(body))
   if t.completed:
     r.setStyle(result, "italic", "true")
@@ -172,7 +187,9 @@ proc taskList*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   let s = leavesFor(vm)
   var listRef: TerminalNode
   result = ui(r):
-    tdiv(class = "task-list", ref = listRef)
+    tdiv(class = "task-list", ref = listRef,
+         `data-component-path` = "task_app/views/TaskList",
+         `data-component-kind` = "list")
   s.listNode = listRef
   s.listWidth = 30
   let listNode = listRef
@@ -199,7 +216,9 @@ proc summaryBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   let s = leavesFor(vm)
   var summaryRef: TerminalNode
   result = ui(r):
-    tdiv(class = "task-summary", ref = summaryRef)
+    tdiv(class = "task-summary", ref = summaryRef,
+         `data-component-path` = "task_app/views/SummaryBar",
+         `data-component-kind` = "summary")
   s.summaryNode = summaryRef
   let row = r.createElement("div")
   let txtNode = r.createTextNode("")

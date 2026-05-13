@@ -9,10 +9,21 @@
 ## `task_app/core/vm`'s sample data (when `--demo=task`) or settings
 ## group/item labels from `settings_app/core/demo_catalog` (when
 ## `--demo=settings`).
+##
+## EX-M23 (TUI slice). The launcher additionally wires an
+## `ElementTreeProvider` into the bridge so the editor's
+## preview-canvas can hit-test pointer events back to component
+## paths. The provider walks the harness's compositor on every
+## bridge tick and emits a manifest via `tui_adapter.buildTui-
+## ElementTreeManifest`; the bridge handles cadence (emit on
+## change, never on idle frames). The Layer-1 leaves under
+## `task_app/tui/leaves.nim` and `settings_app/tui/leaves.nim`
+## annotate every visible node with `data-component-path`.
 
 import isonim_tui
 import isonim/core/owner
 
+import isonim_render_serve
 import isonim_render_serve/adapters/tui_adapter
 
 import task_app/core/vm as task_vm
@@ -63,7 +74,38 @@ proc runTuiDemo(cfg: LauncherConfig) =
       {.cast(gcsafe).}: capturedHarness.screenBuffer
     let src = newTuiFrameSource(bufferGetter, cols, rows,
                                 DefaultCellW, DefaultCellH)
-    runDemoBridgeWith(cfg, src.toAny())
+
+    # EX-M23: the manifest provider. The closure captures `harness`
+    # by reference; on every call we flush the compositor (cheap when
+    # nothing has changed — the harness's flush is idempotent against
+    # the reactive graph's fixpoint) and read the latest layout.
+    var dynamicCols = cols
+    var dynamicRows = rows
+    let provider = ElementTreeProvider(
+      buildImpl: proc(): ElementTreeManifest {.gcsafe.} =
+        {.cast(gcsafe).}:
+          capturedHarness.flush()
+          buildTuiElementTreeManifest(capturedHarness,
+            dynamicCols, dynamicRows, DefaultCellW, DefaultCellH))
+
+    # EX-M23: minimal real input dispatch — resize events from the
+    # editor surface flow through to the harness so a resize-driven
+    # state change actually mutates the manifest. (Click / key
+    # dispatch follows the same shape but isn't required to land
+    # this milestone; the editor's hit-test path uses the manifest
+    # to decide what to select before any click I packets fly.)
+    let resizingSink = newAnyInputSink(
+      proc(event: InputEvent) {.gcsafe.} =
+        if event.kind != iekResize: return
+        let newCols = max(10, event.width div DefaultCellW)
+        let newRows = max(8, event.height div DefaultCellH)
+        if newCols == dynamicCols and newRows == dynamicRows: return
+        {.cast(gcsafe).}:
+          capturedHarness.resize(newCols, newRows)
+          dynamicCols = newCols
+          dynamicRows = newRows
+          capturedHarness.flush())
+    runDemoBridgeWith(cfg, src.toAny(), provider, resizingSink)
     dispose()
 
 proc runDemoBridge*(backend: string) =
