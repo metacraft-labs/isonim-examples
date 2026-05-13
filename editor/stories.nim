@@ -431,18 +431,22 @@ func previewBodyFor(item: StoryItem; platform: Platform): string =
   ## binary's UI — but the editor's source-impact view still reads it for
   ## the title / breadcrumb.
   ##
-  ## NOTE: this is the *plain-text* description; the rich showcase HTML
-  ## that the iframe actually displays is built in
-  ## `previewDocumentHtmlFor` below. Keeping the body text short means
-  ## the source-impact view's breadcrumb stays readable.
-  case item.kind
-  of skPage: item.group & " / " & item.name
-  of skComponent: item.description
-  of skPattern: item.description
-  of skFoundation: item.description
-  of skGuideline: item.description
-  of skFlow: item.description
-  of skVectorSymbol: item.description
+  ## The body embeds the active backend label so consumers (and tests)
+  ## can observe which backend the preview was generated for. The body
+  ## text is used by `previewDocumentHtmlFor` as the subtitle on the
+  ## rendered showcase HTML; the backend label is also rendered as a
+  ## visible "band" in the document via `backendBandLabel`.
+  let base = case item.kind
+    of skPage: item.group & " / " & item.name
+    of skComponent: item.description
+    of skPattern: item.description
+    of skFoundation: item.description
+    of skGuideline: item.description
+    of skFlow: item.description
+    of skVectorSymbol: item.description
+  case platform
+  of pbWeb: base
+  else: base & " — " & $platform
 
 const previewBaseStyles = """
 * { box-sizing: border-box; margin: 0; padding: 0; }

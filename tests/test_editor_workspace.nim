@@ -140,8 +140,8 @@ suite "EX-M14: newDemoEditorWorkspace":
     check webSettings.status == ppsRendered
     check webTask.documentHtml.len > 0
     check webSettings.documentHtml.len > 0
-    check "<h1>" in webTask.documentHtml
-    check "<h1>" in webSettings.documentHtml
+    check "app-title" in webTask.documentHtml
+    check "app-title" in webSettings.documentHtml
     check "Task App / TaskInput / Empty" in webTask.documentHtml
     check "Settings App / Group / Appearance" in webSettings.documentHtml
     # metadata's source file should match the catalog's mapping
