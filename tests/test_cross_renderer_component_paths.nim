@@ -1,0 +1,267 @@
+## test_cross_renderer_component_paths — RS-M11b / EX-M23b
+## cross-renderer parity invariant.
+##
+## Spawns *all three* real launcher binaries (TUI / GPUI / Freya)
+## against the same seeded ``task_app`` demo, decodes each launcher's
+## first ``element-tree`` M packet, and asserts:
+##
+##   a) Set-equality of ``componentPath`` strings across the three
+##      manifests. Same demo content → same component identity in
+##      every renderer; this is the cross-renderer architecture
+##      invariant.
+##   b) Each ``componentPath`` matches the
+##      ``^[a-zA-Z0-9_./-]+(#[0-9]+)?$`` regex RS-M11 locks.
+##   c) Every entry's ``bounds`` falls inside its manifest's reported
+##      surface dimensions.
+##
+## No mock launcher, no in-process frame-source substitute, no
+## synthetic manifest fixture. Each binary IS the producer.
+
+import std/[asyncdispatch, asyncnet, base64, json, nativesockets, net,
+            os, osproc, sets, strutils, times, unittest]
+
+import isonim_render_serve
+
+const ManifestDeadlineMs = 1500
+
+# ---------------------------------------------------------------------------
+# WS client helpers (same shape as the per-renderer launcher tests).
+# ---------------------------------------------------------------------------
+
+proc recvSome(fd: AsyncFD; size: int): Future[string] {.async.} =
+  var buf = newString(size)
+  let n = await asyncdispatch.recvInto(fd, addr buf[0], size)
+  if n <= 0: return ""
+  buf.setLen(n)
+  result = buf
+
+proc handshake(s: AsyncSocket; host: string; port: int) {.async.} =
+  let key = encode("0123456789abcdef0123")
+  let req = "GET / HTTP/1.1\r\n" &
+            "Host: " & host & ":" & $port & "\r\n" &
+            "Upgrade: websocket\r\n" &
+            "Connection: Upgrade\r\n" &
+            "Sec-WebSocket-Key: " & key & "\r\n" &
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+  await s.send(req)
+  let fd = AsyncFD(getFd(s))
+  var resp = ""
+  while not resp.contains("\r\n\r\n"):
+    let chunk = await recvSome(fd, 4096)
+    if chunk.len == 0: break
+    resp.add(chunk)
+  doAssert resp.startsWith("HTTP/1.1 101"),
+    "handshake failed: " & resp
+
+proc connectWs(port: int): Future[AsyncSocket] {.async.} =
+  let sock = newAsyncSocket()
+  await sock.connect("127.0.0.1", Port(port))
+  await handshake(sock, "127.0.0.1", port)
+  result = sock
+
+type DecState = ref object
+  dec: WsFrameDecoder
+
+proc newDecState(): DecState =
+  DecState(dec: initWsFrameDecoder())
+
+proc recvOnePacket(sock: AsyncSocket; state: DecState):
+                   Future[string] {.async.} =
+  let fd = AsyncFD(getFd(sock))
+  var msg = state.dec.popMessage()
+  while not msg.complete:
+    let chunk = await recvSome(fd, 16384)
+    if chunk.len == 0: break
+    state.dec.feed(chunk)
+    msg = state.dec.popMessage()
+  if msg.complete: return msg.payload
+  result = ""
+
+# ---------------------------------------------------------------------------
+# Binary resolution
+# ---------------------------------------------------------------------------
+
+proc resolveLauncherBinary(envVar, binSuffix: string): string =
+  let envPath = getEnv(envVar)
+  if envPath.len > 0:
+    if fileExists(envPath): return envPath
+    raise newException(IOError,
+      "$" & envVar & " points at non-existent file: " & envPath)
+  let repoRoot = currentSourcePath().parentDir().parentDir()
+  let local = repoRoot / "build" / "backends" / ("isonim-examples-" & binSuffix)
+  if fileExists(local): return local
+  raise newException(IOError,
+    "isonim-examples-" & binSuffix & " binary not found at " & local & "\n" &
+    "Run `just build-backends` in isonim-examples first, or set " &
+    "$" & envVar & " to a built binary.")
+
+proc pickPort(): int =
+  let s = newSocket()
+  s.bindAddr(Port(0))
+  let p = s.getLocalAddr()[1]
+  s.close()
+  int(p)
+
+proc waitForListen(port: int; deadlineMs: int): bool =
+  let deadline = epochTime() + (deadlineMs.float / 1000.0)
+  while epochTime() < deadline:
+    try:
+      let s = newSocket()
+      defer: s.close()
+      s.connect("127.0.0.1", Port(port), timeout = 50)
+      return true
+    except CatchableError:
+      sleep(25)
+  false
+
+# ---------------------------------------------------------------------------
+# Component-path syntax check (RS-M11 lock).
+# ---------------------------------------------------------------------------
+
+proc isComponentPathLegal(s: string): bool =
+  ## Match ``^[a-zA-Z0-9_./-]+(#[0-9]+)?$``. Hand-rolled to avoid the
+  ## std/re module (which is a heavyweight import for what's a
+  ## character-class check).
+  if s.len == 0: return false
+  var i = 0
+  # Body: at least one ``[a-zA-Z0-9_./-]``.
+  while i < s.len:
+    let ch = s[i]
+    if ch == '#': break
+    if not (ch in {'a' .. 'z'} or ch in {'A' .. 'Z'} or
+            ch in {'0' .. '9'} or ch in {'_', '.', '/', '-'}):
+      return false
+    inc i
+  if i == 0: return false
+  if i == s.len: return true
+  # Suffix: '#' followed by at least one digit, all digits.
+  if s[i] != '#': return false
+  inc i
+  if i >= s.len: return false
+  while i < s.len:
+    if s[i] notin {'0' .. '9'}: return false
+    inc i
+  true
+
+# ---------------------------------------------------------------------------
+# Launcher fixture: spawn → fetch manifest → kill.
+# ---------------------------------------------------------------------------
+
+type
+  Launcher = ref object
+    process: Process
+    port: int
+    name: string
+
+proc launch(name, envVar: string): Launcher =
+  let bin = resolveLauncherBinary(envVar, name)
+  let port = pickPort()
+  let args = @["--demo=tasks", "--port", $port, "--fps", "60"]
+  let p = startProcess(bin, args = args,
+                       options = {poStdErrToStdOut, poUsePath})
+  if not waitForListen(port, deadlineMs = 4000):
+    p.terminate()
+    discard p.waitForExit(timeout = 1000)
+    raise newException(IOError,
+      "launcher " & bin & " did not bind to 127.0.0.1:" & $port &
+      " within 4s")
+  Launcher(process: p, port: port, name: name)
+
+proc stop(l: Launcher) =
+  if l.process != nil and l.process.running:
+    l.process.terminate()
+    discard l.process.waitForExit(timeout = 2000)
+
+proc fetchFirstManifest(l: Launcher): ElementTreeManifest =
+  ## Real WS connect to ``l.port``, drain packets until the first
+  ## ``element-tree`` M packet, decode and return.
+  proc flow(): Future[ElementTreeManifest] {.async.} =
+    let sock = await connectWs(l.port)
+    let dec = newDecState()
+    let start = epochTime()
+    while epochTime() - start < (ManifestDeadlineMs.float / 1000.0):
+      let payload = await recvOnePacket(sock, dec)
+      if payload.len == 0: continue
+      case payload[0]
+      of 'M':
+        let meta = decodeMeta(stringToBytes(payload))
+        if isElementTreeBody(meta.json):
+          sock.close()
+          return decodeElementTreeJson(meta.json)
+      of 'F':
+        doAssert false,
+          l.name & ": F packet arrived before the first element-tree manifest"
+      else: discard
+    sock.close()
+    raise newException(IOError,
+      l.name & ": no manifest arrived within deadline")
+  waitFor flow()
+
+proc pathSet(m: ElementTreeManifest): HashSet[string] =
+  result = initHashSet[string]()
+  for e in m.elements:
+    result.incl e.componentPath
+
+# ---------------------------------------------------------------------------
+# Suite
+# ---------------------------------------------------------------------------
+
+suite "EX-M23b / RS-M11b: cross-renderer componentPath parity":
+
+  test "TUI / GPUI / Freya manifests are set-identical for task_app":
+    when defined(windows):
+      skip()
+    else:
+      let tui = launch("tui", "ISONIM_EXAMPLES_TUI_BIN")
+      defer: tui.stop()
+      let gpui = launch("gpui", "ISONIM_EXAMPLES_GPUI_BIN")
+      defer: gpui.stop()
+      let freya = launch("freya", "ISONIM_EXAMPLES_FREYA_BIN")
+      defer: freya.stop()
+
+      let tuiM = fetchFirstManifest(tui)
+      let gpuiM = fetchFirstManifest(gpui)
+      let freyaM = fetchFirstManifest(freya)
+
+      let tuiPaths = pathSet(tuiM)
+      let gpuiPaths = pathSet(gpuiM)
+      let freyaPaths = pathSet(freyaM)
+
+      # Per-renderer sanity: the seeded task_app demo always seeds the
+      # same three tasks plus a FilterBar / SummaryBar; require at
+      # least 5 distinct paths (3 task rows + FilterBar + SummaryBar).
+      check tuiPaths.len >= 5
+      check gpuiPaths.len >= 5
+      check freyaPaths.len >= 5
+
+      # Cross-renderer parity. Surface the diff as a human-readable
+      # message if the test fails; the check itself is the set
+      # equality.
+      let tuiOnly = tuiPaths - gpuiPaths
+      let gpuiOnly = gpuiPaths - tuiPaths
+      let freyaOnly = freyaPaths - tuiPaths
+      let tuiMinusFreya = tuiPaths - freyaPaths
+      if tuiPaths != gpuiPaths or tuiPaths != freyaPaths:
+        echo "componentPath parity diff (tui vs gpui vs freya):"
+        echo "  tui only:   ", tuiOnly
+        echo "  gpui only:  ", gpuiOnly
+        echo "  freya only: ", freyaOnly
+        echo "  tui minus freya: ", tuiMinusFreya
+      check tuiPaths == gpuiPaths
+      check tuiPaths == freyaPaths
+      check gpuiPaths == freyaPaths
+
+      # Per-entry RS-M11 syntax check.
+      for m in [tuiM, gpuiM, freyaM]:
+        for e in m.elements:
+          if not isComponentPathLegal(e.componentPath):
+            echo "illegal componentPath: ", e.componentPath
+          check isComponentPathLegal(e.componentPath)
+
+      # Bounds-inside-surface check, every entry, every renderer.
+      for m in [tuiM, gpuiM, freyaM]:
+        for e in m.elements:
+          check e.bounds.x >= 0
+          check e.bounds.y >= 0
+          check e.bounds.x + e.bounds.w <= m.surfaceWidth
+          check e.bounds.y + e.bounds.h <= m.surfaceHeight

@@ -23,7 +23,9 @@ import isonim/dsl/ui
 import isonim/dsl/components    # forEachKeyed
 import isonim_tui
 import isonim_tui/dsl/widget_blocks
+import isonim_render_serve/element_tree_attrs
 import task_app/core/vm
+import task_app/core/component_paths
 
 # `forEachKeyed` builds a `HashMap[TerminalNode, int]` over the current
 # child nodes when reconciling. `TerminalNode` is a `ref object` without
@@ -90,7 +92,7 @@ proc appShell*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   discard vm
   ui(r):
     tdiv(class = "task-app", `data-app` = "task-app",
-         `data-component-path` = "task_app/views/TaskApp",
+         `data-component-path` = TaskAppPath,
          `data-component-kind` = "app-shell")
 
 proc taskInput*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
@@ -106,9 +108,8 @@ proc taskInput*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
     onChange = makeInputChangeHandler(vm),
     onSubmit = makeInputSubmitHandler(vm, s))
   s.inputWidget = inp
-  r.setAttribute(inp.node, "data-component-path",
-    "task_app/views/TaskInput")
-  r.setAttribute(inp.node, "data-component-kind", "input")
+  r.setAttribute(inp.node, ComponentPathAttr, TaskInputPath)
+  r.setAttribute(inp.node, ElementKindAttr, "input")
   ui(r):
     embedNode(inp.node)
 
@@ -136,9 +137,8 @@ proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
       of fmCompleted: 2
     for i, b in buttons:
       b.setSelected(i == want)
-  r.setAttribute(rs.node, "data-component-path",
-    "task_app/views/FilterBar")
-  r.setAttribute(rs.node, "data-component-kind", "filter-bar")
+  r.setAttribute(rs.node, ComponentPathAttr, FilterBarPath)
+  r.setAttribute(rs.node, ElementKindAttr, "filter-bar")
   ui(r):
     embedNode(rs.node)
 
@@ -159,9 +159,8 @@ proc renderTaskRow(r: TerminalRenderer; vm: TaskAppVM;
   # `#<id>` segment keeps the manifest entries distinguishable so
   # the editor's hit-test can resolve a row click back to a unique
   # selection.
-  r.setAttribute(result, "data-component-path",
-    "task_app/views/TaskRow#" & $t.id)
-  r.setAttribute(result, "data-component-kind", "row")
+  r.setAttribute(result, ComponentPathAttr, taskRowPath(t.id))
+  r.setAttribute(result, ElementKindAttr, "row")
   r.appendChild(result, r.createTextNode(body))
   if t.completed:
     r.setStyle(result, "italic", "true")
@@ -188,7 +187,7 @@ proc taskList*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   var listRef: TerminalNode
   result = ui(r):
     tdiv(class = "task-list", ref = listRef,
-         `data-component-path` = "task_app/views/TaskList",
+         `data-component-path` = TaskListPath,
          `data-component-kind` = "list")
   s.listNode = listRef
   s.listWidth = 30
@@ -217,7 +216,7 @@ proc summaryBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   var summaryRef: TerminalNode
   result = ui(r):
     tdiv(class = "task-summary", ref = summaryRef,
-         `data-component-path` = "task_app/views/SummaryBar",
+         `data-component-path` = SummaryBarPath,
          `data-component-kind` = "summary")
   s.summaryNode = summaryRef
   let row = r.createElement("div")

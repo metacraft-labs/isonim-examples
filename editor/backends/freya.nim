@@ -12,11 +12,19 @@
 ## settings composition (`settings_app/main_freya.buildSettingsApp`)
 ## rather than falling back to `task_app`. This matches the GPUI
 ## launcher's pre-existing dispatch shape (`editor/backends/gpui.nim`).
+##
+## EX-M23b. The launcher additionally wires an
+## ``ElementTreeProvider`` into the bridge so the editor's preview
+## canvas can hit-test pointer events back to component paths. Mirror
+## of the GPUI launcher; the manifest builder is
+## ``freya_adapter.buildFreyaElementTreeManifest`` against the
+## Freya tree.
 
 import isonim_freya/renderer as freya_renderer
 import isonim_freya/bindings as freya_bindings
 import isonim/core/owner
 
+import isonim_render_serve
 import isonim_render_serve/adapters/freya_adapter
 
 import task_app/core/vm as task_vm
@@ -54,8 +62,30 @@ proc runFreyaDemo(cfg: LauncherConfig) =
       vm.addTask("Ship EX-M14")
       root = task_freya.buildTaskApp(r, vm)
 
-    let src = newFreyaFrameSource(r, root, w, h)
-    runDemoBridgeWith(cfg, src.toAny())
+    var dynamicW = w
+    var dynamicH = h
+
+    let src = newFreyaFrameSource(r, root, dynamicW, dynamicH)
+    let capturedRoot = root
+
+    let provider = ElementTreeProvider(
+      buildImpl: proc(): ElementTreeManifest {.gcsafe.} =
+        {.cast(gcsafe).}:
+          buildFreyaElementTreeManifest(capturedRoot,
+            dynamicW, dynamicH))
+
+    let resizingSink = newAnyInputSink(
+      proc(event: InputEvent) {.gcsafe.} =
+        if event.kind != iekResize: return
+        if event.width <= 0 or event.height <= 0: return
+        if event.width == dynamicW and event.height == dynamicH: return
+        {.cast(gcsafe).}:
+          dynamicW = event.width
+          dynamicH = event.height
+          src.width = dynamicW
+          src.height = dynamicH)
+
+    runDemoBridgeWith(cfg, src.toAny(), provider, resizingSink)
     dispose()
 
 proc runDemoBridge*(backend: string) =

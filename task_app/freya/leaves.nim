@@ -23,8 +23,10 @@ import isonim/core/computation  # createRenderEffect
 import isonim/dsl/components    # forEachKeyed
 import isonim_freya/renderer
 import isonim_freya/bindings
+import isonim_render_serve/element_tree_attrs
 
 import task_app/core/vm
+import task_app/core/component_paths
 
 # ----------------------------------------------------------------------------
 # Per-VM bookkeeping for tests that probe leaf nodes directly.
@@ -85,6 +87,13 @@ proc appShell*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   let app = r.createElement("div")
   r.setAttribute(app, "class", "task-app")
   r.setAttribute(app, "data-app", "task-app")
+  # EX-M23b: component-path annotation. Mirror of GPUI; identical
+  # string values keep cross-renderer parity. The Freya rasteriser
+  # keys off ``tag`` + ``label`` (``colourForTag`` in
+  # ``isonim-render-serve/.../freya_adapter.nim``), so arbitrary
+  # ``data-*`` attributes do NOT influence pixel output.
+  r.setAttribute(app, ComponentPathAttr, TaskAppPath)
+  r.setAttribute(app, ElementKindAttr, "app-shell")
   app
 
 proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
@@ -95,6 +104,8 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   let s = leavesFor(vm)
   let wrapper = r.createElement("div")
   r.setAttribute(wrapper, "class", "task-input")
+  r.setAttribute(wrapper, ComponentPathAttr, TaskInputPath)
+  r.setAttribute(wrapper, ElementKindAttr, "input")
 
   let inp = r.createElement("input")
   r.setAttribute(inp, "type", "text")
@@ -123,6 +134,8 @@ proc filterBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   s.filterButtons = @[]
   let wrapper = r.createElement("div")
   r.setAttribute(wrapper, "class", "filter-bar")
+  r.setAttribute(wrapper, ComponentPathAttr, FilterBarPath)
+  r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
 
   for fm in [fmAll, fmActive, fmCompleted]:
     let btn = r.createElement("button")
@@ -138,6 +151,8 @@ proc filterBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
 proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   let row = r.createElement("li")
   r.setAttribute(row, "data-task-id", $t.id)
+  r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
+  r.setAttribute(row, ElementKindAttr, "row")
   if t.completed:
     r.setAttribute(row, "class", "completed")
 
@@ -179,6 +194,8 @@ proc taskList*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   let s = leavesFor(vm)
   let listNode = r.createElement("ul")
   r.setAttribute(listNode, "class", "task-list")
+  r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
+  r.setAttribute(listNode, ElementKindAttr, "list")
   s.listNode = listNode
 
   var placeholder: FreyaElement = nil
@@ -203,6 +220,8 @@ proc summaryBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   let s = leavesFor(vm)
   let summaryNode = r.createElement("footer")
   r.setAttribute(summaryNode, "class", "task-summary")
+  r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
+  r.setAttribute(summaryNode, ElementKindAttr, "summary")
   s.summaryNode = summaryNode
   let row = r.createElement("span")
   r.appendChild(summaryNode, row)

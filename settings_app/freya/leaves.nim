@@ -10,8 +10,10 @@ import std/strutils
 import isonim/core/computation  # createRenderEffect
 import isonim_freya/renderer
 import isonim_freya/bindings
+import isonim_render_serve/element_tree_attrs
 
 import settings_app/core/vm
+import settings_app/core/component_paths
 
 # ----------------------------------------------------------------------------
 # Layout containers
@@ -20,6 +22,9 @@ import settings_app/core/vm
 proc itemContainerLeaf*(r: FreyaRenderer): FreyaElement =
   let node = r.createElement("div")
   r.setAttribute(node, "class", "settings-item")
+  # EX-M23b: component-path annotation; identical string to GPUI + TUI.
+  r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
+  r.setAttribute(node, ElementKindAttr, "row")
   node
 
 proc labelLeaf*(r: FreyaRenderer; text: string): FreyaElement =
@@ -172,6 +177,8 @@ proc choiceLeaf*(r: FreyaRenderer; vmRef: SettingsVM; itemId: string;
 proc groupContainerLeaf*(r: FreyaRenderer): FreyaElement =
   let node = r.createElement("section")
   r.setAttribute(node, "class", "settings-group")
+  r.setAttribute(node, ComponentPathAttr, SettingsGroupPath)
+  r.setAttribute(node, ElementKindAttr, "group")
   node
 
 proc groupHeaderLeaf*(r: FreyaRenderer; label, description: string):
@@ -179,6 +186,8 @@ proc groupHeaderLeaf*(r: FreyaRenderer; label, description: string):
   let host = r.createElement("header")
   r.setAttribute(host, "class", "settings-group-header")
   r.setAttribute(host, "data-label", label)
+  r.setAttribute(host, ComponentPathAttr, SettingsGroupHeaderPath)
+  r.setAttribute(host, ElementKindAttr, "group-header")
   if description.len > 0:
     r.setAttribute(host, "data-description", description)
 

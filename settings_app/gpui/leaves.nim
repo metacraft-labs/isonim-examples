@@ -10,8 +10,10 @@ import std/strutils
 import isonim/core/computation  # createRenderEffect
 import isonim_gpui/renderer
 import isonim_gpui/bindings
+import isonim_render_serve/element_tree_attrs
 
 import settings_app/core/vm
+import settings_app/core/component_paths
 
 # ----------------------------------------------------------------------------
 # Layout containers
@@ -20,6 +22,11 @@ import settings_app/core/vm
 proc itemContainerLeaf*(r: GpuiRenderer): GpuiElement =
   let node = r.createElement("div")
   r.setAttribute(node, "class", "settings-item")
+  # EX-M23b: component-path annotation. Mirrors what
+  # ``settings_app/tui/leaves.itemContainerLeaf`` writes, keeping the
+  # cross-renderer ``componentPath`` set identical.
+  r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
+  r.setAttribute(node, ElementKindAttr, "row")
   node
 
 proc labelLeaf*(r: GpuiRenderer; text: string): GpuiElement =
@@ -172,6 +179,8 @@ proc choiceLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
 proc groupContainerLeaf*(r: GpuiRenderer): GpuiElement =
   let node = r.createElement("section")
   r.setAttribute(node, "class", "settings-group")
+  r.setAttribute(node, ComponentPathAttr, SettingsGroupPath)
+  r.setAttribute(node, ElementKindAttr, "group")
   node
 
 proc groupHeaderLeaf*(r: GpuiRenderer; label, description: string):
@@ -179,6 +188,8 @@ proc groupHeaderLeaf*(r: GpuiRenderer; label, description: string):
   let host = r.createElement("header")
   r.setAttribute(host, "class", "settings-group-header")
   r.setAttribute(host, "data-label", label)
+  r.setAttribute(host, ComponentPathAttr, SettingsGroupHeaderPath)
+  r.setAttribute(host, ElementKindAttr, "group-header")
   if description.len > 0:
     r.setAttribute(host, "data-description", description)
 

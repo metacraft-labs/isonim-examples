@@ -16,8 +16,10 @@ import isonim_tui/widgets/input
 import isonim_tui/widgets/option_list
 import isonim_tui/widgets/static as staticWidget
 import isonim_tui/css/properties
+import isonim_render_serve/element_tree_attrs
 
 import settings_app/core/vm
+import settings_app/core/component_paths
 
 # ----------------------------------------------------------------------------
 # Constants
@@ -40,9 +42,8 @@ proc itemContainerLeaf*(r: TerminalRenderer): TerminalNode =
   r.setAttribute(node, "data-orientation", "horizontal")
   # EX-M23: every leaf carries a component path so the element-tree
   # manifest the launcher emits can resolve clicks back to a story.
-  r.setAttribute(node, "data-component-path",
-    "settings_app/views/SettingsRow")
-  r.setAttribute(node, "data-component-kind", "row")
+  r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
+  r.setAttribute(node, ElementKindAttr, "row")
   node
 
 proc labelLeaf*(r: TerminalRenderer; text: string): TerminalNode =
@@ -233,9 +234,8 @@ proc groupContainerLeaf*(r: TerminalRenderer): TerminalNode =
   r.setAttribute(node, "class", "settings-group")
   r.setAttribute(node, "data-orientation", "vertical")
   r.setAttribute(node, "data-expanded", "false")
-  r.setAttribute(node, "data-component-path",
-    "settings_app/views/SettingsGroup")
-  r.setAttribute(node, "data-component-kind", "group")
+  r.setAttribute(node, ComponentPathAttr, SettingsGroupPath)
+  r.setAttribute(node, ElementKindAttr, "group")
   node
 
 proc groupHeaderLeaf*(r: TerminalRenderer; label, description: string):
@@ -243,9 +243,8 @@ proc groupHeaderLeaf*(r: TerminalRenderer; label, description: string):
   let host = r.createElement("header")
   r.setAttribute(host, "class", "settings-group-header")
   r.setAttribute(host, "data-label", label)
-  r.setAttribute(host, "data-component-path",
-    "settings_app/views/SettingsGroupHeader")
-  r.setAttribute(host, "data-component-kind", "group-header")
+  r.setAttribute(host, ComponentPathAttr, SettingsGroupHeaderPath)
+  r.setAttribute(host, ElementKindAttr, "group-header")
   if description.len > 0:
     r.setAttribute(host, "data-description", description)
 
