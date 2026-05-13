@@ -30,9 +30,12 @@
 ##      `task_app/android/leaves.nim` to assert the five canonical leaf
 ##      signatures (`appShell`, `taskInput`, `filterBar`, `taskList`,
 ##      `summaryBar`) are present, plus the per-VM `leavesFor` /
-##      `resetAndroidLeaves` / `rerender` helpers. If anyone deletes
-##      one of those without renaming the contract, the gate fails
-##      before the macOS engineer has to find out at integration time.
+##      `resetAndroidLeaves` helpers. The leaves bind to VM signals
+##      reactively via `createRenderEffect` / `forEachKeyed` (matching
+##      the GPUI / Freya / Cocoa pattern) — there is no longer a
+##      `rerender(vm)` proc. If anyone deletes one of these without
+##      renaming the contract, the gate fails before the macOS engineer
+##      has to find out at integration time.
 ##
 ##   3. **Composition-root surface check.** Same idea for
 ##      `task_app/main_android.nim` — assert the composition root still
@@ -124,7 +127,13 @@ suite "EX-M6: Android leaves cross-compile gate (Linux-side)":
     # Per-VM bookkeeping helpers used by the composition root + tests.
     check "proc leavesFor*(vm: TaskAppVM): TaskAppAndroidLeavesState" in body
     check "proc resetAndroidLeaves*()" in body
-    check "proc rerender*(vm: TaskAppVM)" in body
+    # EX-M23c follow-up: the leaves are now reactive (each `createElement`
+    # is paired with a `createRenderEffect` so VM mutations propagate
+    # through the reactive graph). There is no longer a public
+    # `rerender(vm)` proc; instead, assert the reactive pattern is in
+    # use.
+    check "createRenderEffect" in body
+    check "forEachKeyed" in body
     # The whole module body must be gated on `android` so a Linux build
     # sees an empty shell; protect against accidental ungating.
     # RS-M11c relaxed the gate to also accept ``defined(mockJni)`` so

@@ -1,5 +1,13 @@
 ## task_app/android/leaves.nim — Layer-1 leaves for the Android target.
 ##
+## EX-M23c follow-up: each leaf builds its node tree once and binds
+## reactively via `createRenderEffect` + `forEachKeyed`. There is no
+## public `rerender(vm)` proc; VM mutations propagate to the rendered
+## tree through the reactive graph.  This mirrors the GPUI / Freya /
+## Cocoa reactive pattern (see `task_app/gpui/leaves.nim`,
+## `task_app/freya/leaves.nim`, and `task_app/cocoa/leaves.nim`) so a
+## single cross-renderer convention drives every renderer.
+##
 ## Concrete platform components for the task-app's high-level view,
 ## written against the `AndroidRenderer` from `isonim_android/renderer`.
 ## Each leaf returns an `AndroidElement` ready for `appendChild`. Leaves
@@ -9,40 +17,20 @@
 ## EX-M6 status: **partial-linux**.
 ##
 ## This is the Linux-host scaffold. The whole module body is gated with
-## `when defined(android)` because driving the *real* Android leaves
-## requires either a JNI runtime (real device / emulator, via
-## `-d:commandBuffer`) or the in-process MockJNI shim
+## `when defined(android) or defined(mockJni)` because driving the
+## *real* Android leaves requires either a JNI runtime (real device /
+## emulator, via `-d:commandBuffer`) or the in-process MockJNI shim
 ## (`-d:mockJni`) that the existing `isonim-android` tests use. The
 ## `isonim_android/renderer` Nim module itself compiles cleanly on a
-## Linux host (no `{.passL.}` / `{.emit.}` C blocks — the AndroidRenderer
-## is portable Nim that talks to the JNI bridge through
+## Linux host (no `{.passL.}` / `{.emit.}` C blocks — the
+## AndroidRenderer is portable Nim that talks to the JNI bridge through
 ## `isonim_android/jni_callbacks`, which is a hard `{.error.}` unless
 ## either `mockJni` or `commandBuffer` is set). On Linux this module
-## therefore compiles as an empty shell so the regular `just test` keeps
-## passing unchanged. The cross-compile gate test
+## therefore compiles as an empty shell so the regular `just test`
+## keeps passing unchanged. The cross-compile gate test
 ## (`tests/test_android_leaves_compile.nim`) drives `nim check
 ## --os:android -d:mockJni` over a thin Android-only fixture so we
 ## catch leaf-surface drift from this host without needing an emulator.
-##
-## On Android (and on the macOS host running the emulator) the module
-## ships the same shape as the EX-M3 (GPUI), EX-M4 (Freya), and EX-M5
-## (Cocoa) leaves — same per-VM `leavesFor(vm)` side-table, the same
-## `rerender(vm)` manual re-render pattern (matching the existing
-## `isonim-android/demos/task-manager/src/main.nim` "imperative
-## reactive rendering" pattern, which is honest for the same reactive-
-## core reasons as the GPUI/Freya/Cocoa leaves), and the same
-## `appShell` / `taskInput` / `filterBar` / `taskList` / `summaryBar`
-## leaf names so `task_app/core/views.nim`'s include-pattern resolves
-## transparently.
-##
-## Implementation note (carried over from EX-M3/EX-M4/EX-M5): the
-## existing Android demo also takes the manual re-render path because
-## the shared reactive core's memo-observer notification doesn't yet
-## copy the observers list before iterating. The shared core's
-## TUI/web/GPUI/Freya/Cocoa leaves take the same path via
-## `rerender(vm)`; we mirror it here so the six flavours stay
-## consistent and the cross-renderer parity test can drive all of them
-## with the same script.
 ##
 ## API gap: AndroidRenderer's `addEventListener` for an `<input>` (=>
 ## `EditText`) does not currently expose a "submit" event — Android
@@ -51,46 +39,12 @@
 ## brief, we use the closest available primitive: a click on the "Add"
 ## button reads the current `inputText` signal value (mutated when the
 ## composition root sets a value, or when a test calls
-## `vm.setInputText`) and pushes a task. This matches what
-## `isonim-android/demos/task-manager/src/main.nim` already did with
-## its programmatic add path, while keeping the VM as the single source
-## of truth.
-##
-## Hand-off to the macOS M1 engineer (full list in the EX-M6 status
-## entry's `:notes:` block):
-##   1. Verify this module builds cleanly on a real Android target
-##      (emulator on Apple Silicon) with the JNI runtime available
-##      (`-d:commandBuffer`) — the Linux side proves the leaf surface
-##      compiles via `nim check --os:android -d:mockJni` on the
-##      Android-only fixture in `tests/test_android_leaves_compile.nim`.
-##   2. Run the integration test
-##      `tests/test_android_leaves_android_only.nim` on the emulator —
-##      the assertions mirror EX-M3/EX-M4/EX-M5's scripted scenario and
-##      exercise the real Android view tree + the `fireEvent` testing
-##      helper from `renderer.nim`. Compile with `-d:android -d:mockJni`
-##      for host-side runs and `-d:android -d:commandBuffer` for the
-##      real emulator path.
-##   3. After both checks pass, delete
-##      `isonim-android/demos/task-manager/src/main.nim` (~221 LOC, the
-##      from-scratch port that this module supersedes) and add
-##      forwarding wiring (Justfile / README / CI) mirroring
-##      `isonim-gpui` (EX-M3), `isonim-freya` (EX-M4), and `isonim-cocoa`
-##      (EX-M5) cleanups.
-##   4. Extend the cross-renderer parity test (currently in
-##      `tests/test_freya_leaves_end_to_end.nim`) to include Android as
-##      the 6th renderer, gated `when defined(android)`. The
-##      `from task_app/main_android as android_app import runTaskApp,
-##      rerender, resetAndroidLeaves` import pattern (mirroring the
-##      EX-M4 GPUI workaround) avoids the `pointer`-alias overload
-##      ambiguity flagged in the EX-M4 status notes (see "Symbol-
-##      collision gotcha" in EX-M5 — `AndroidElement = ViewHandle = int64`
-##      so the collision shape is slightly different from
-##      `Cocoa/GPUI/Freya`'s `distinct pointer`, but the workaround
-##      idiom is the same).
-##   5. Flip the EX-M6 `:status:` from `partial-linux` to `complete`.
+## `vm.setInputText`) and pushes a task.
 
 when defined(android) or defined(mockJni):
   import isonim/core/signals
+  import isonim/core/computation  # createRenderEffect
+  import isonim/dsl/components    # forEachKeyed
   import isonim_android/renderer
   import isonim_render_serve/element_tree_attrs
 
@@ -130,129 +84,32 @@ when defined(android) or defined(mockJni):
     androidLeavesTable.setLen(0)
 
   # ----------------------------------------------------------------------------
-  # Re-render helpers
-  # ----------------------------------------------------------------------------
-
-  proc clearChildren(r: AndroidRenderer; node: AndroidElement) =
-    while r.childCount(node) > 0:
-      let c = r.nthChild(node, 0)
-      if c == 0: break
-      r.removeChild(node, c)
-
-  # Forward declaration: per-row click handlers re-render after mutating
-  # the VM, but `rerender` itself calls `renderTaskListInto` (which uses
-  # the closure factories below). Forward-declare so the cycle resolves.
-  proc rerender*(vm: TaskAppVM)
-
-  proc makeToggleHandler(vm: TaskAppVM; id: int): proc() =
-    ## Top-level factory so the captured `id` cannot alias a loop
-    ## variable in `renderTaskListInto`. Mirrors the per-task closure
-    ## pattern used by the GPUI / Freya / Cocoa / web leaves' click
-    ## handlers.
-    result = proc() =
-      vm.toggleTask(id)
-      rerender(vm)
-
-  proc makeRemoveHandler(vm: TaskAppVM; id: int): proc() =
-    result = proc() =
-      vm.removeTask(id)
-      rerender(vm)
-
-  proc renderTaskListInto(r: AndroidRenderer; vm: TaskAppVM;
-                          listNode: AndroidElement) =
-    ## Wipe `listNode`'s children and rebuild from `vm.visibleTasks`.
-    clearChildren(r, listNode)
-    let visible = vm.visibleTasks
-    if visible.len == 0:
-      let row = r.createElement("p")
-      r.setAttribute(row, "class", "empty")
-      let placeholder =
-        case vm.filter.val
-        of fmAll:       "(no tasks yet)"
-        of fmActive:    "(no active tasks)"
-        of fmCompleted: "(no completed tasks)"
-      r.setTextContent(row, placeholder)
-      r.appendChild(listNode, row)
-      return
-    for t in visible:
-      let row = r.createElement("li")
-      r.setAttribute(row, "data-task-id", $t.id)
-      r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
-      r.setAttribute(row, ElementKindAttr, "row")
-      if t.completed:
-        r.setAttribute(row, "class", "completed")
-
-      let toggleBtn = r.createElement("button")
-      let marker = if t.completed: "[x]" else: "[ ]"
-      r.setTextContent(toggleBtn, marker)
-      r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
-      r.appendChild(row, toggleBtn)
-
-      let label = r.createElement("span")
-      let display =
-        if t.completed: t.name & " (done)" else: t.name
-      r.setTextContent(label, display)
-      r.appendChild(row, label)
-
-      let removeBtn = r.createElement("button")
-      r.setAttribute(removeBtn, "class", "remove")
-      r.setTextContent(removeBtn, "x")
-      r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
-      r.appendChild(row, removeBtn)
-
-      r.appendChild(listNode, row)
-
-  proc renderSummaryInto(r: AndroidRenderer; vm: TaskAppVM;
-                         summaryNode: AndroidElement) =
-    clearChildren(r, summaryNode)
-    let row = r.createElement("span")
-    let active = vm.activeCount
-    let total = vm.totalCount
-    let text = $active & " of " & $total & " remaining"
-    r.setTextContent(row, text)
-    r.appendChild(summaryNode, row)
-
-  proc syncFilterButtons(r: AndroidRenderer; vm: TaskAppVM;
-                         buttons: seq[AndroidElement]) =
-    if buttons.len != 3: return
-    let want =
-      case vm.filter.val
-      of fmAll:       0
-      of fmActive:    1
-      of fmCompleted: 2
-    for i, b in buttons:
-      if i == want:
-        r.setAttribute(b, "class", "selected")
-        r.setAttribute(b, "aria-pressed", "true")
-      else:
-        r.setAttribute(b, "class", "")
-        r.removeAttribute(b, "aria-pressed")
-
-  proc rerender*(vm: TaskAppVM) =
-    ## Re-build any sub-trees that depend on VM state. Called after every
-    ## action.
-    let s = leavesFor(vm)
-    let r = AndroidRenderer()
-    if s.listNode != 0:
-      renderTaskListInto(r, vm, s.listNode)
-    if s.summaryNode != 0:
-      renderSummaryInto(r, vm, s.summaryNode)
-    if s.filterButtons.len == 3:
-      syncFilterButtons(r, vm, s.filterButtons)
-
-  # ----------------------------------------------------------------------------
   # Closure factories — top-level so loop-variable aliasing can't bite.
   # ----------------------------------------------------------------------------
 
+  proc makeToggleHandler(vm: TaskAppVM; id: int): proc() =
+    result = proc() = vm.toggleTask(id)
+
+  proc makeRemoveHandler(vm: TaskAppVM; id: int): proc() =
+    result = proc() = vm.removeTask(id)
+
   proc makeAddTaskHandler(vm: TaskAppVM): proc() =
-    result = proc() =
-      vm.addTask(vm.inputText.val)
-      rerender(vm)
+    result = proc() = vm.addTask(vm.inputText.val)
 
   proc makeFilterClickHandler(vm: TaskAppVM; fm: FilterMode): proc() =
-    result = proc() =
-      vm.setFilter(fm)
-      rerender(vm)
+    result = proc() = vm.setFilter(fm)
+
+  proc makeFilterSelectionEffect(r: AndroidRenderer; vm: TaskAppVM;
+                                 btn: AndroidElement; fm: FilterMode) =
+    ## Top-level factory so the captured `fm` / `btn` cannot alias a
+    ## loop variable in `filterBar`.
+    createRenderEffect proc() =
+      if vm.filter.val == fm:
+        r.setAttribute(btn, "class", "selected")
+        r.setAttribute(btn, "aria-pressed", "true")
+      else:
+        r.setAttribute(btn, "class", "")
+        r.removeAttribute(btn, "aria-pressed")
 
   # ----------------------------------------------------------------------------
   # Layer-1 leaf procs — invoked by views.nim
@@ -278,9 +135,10 @@ when defined(android) or defined(mockJni):
     app
 
   proc taskInput*(r: AndroidRenderer; vm: TaskAppVM): AndroidElement =
-    ## Text input + add button. The input node holds the current draft via
-    ## its `value` attribute (mirroring `vm.inputText`). The add button's
-    ## click handler reads `vm.inputText.val` and pushes the task.
+    ## Text input + add button. The input's `value` attribute mirrors
+    ## `vm.inputText` reactively. The add button's click handler reads
+    ## `vm.inputText.val` (mutated by tests via `vm.setInputText`) and
+    ## pushes the task.
     ##
     ## API gap (see module docstring): AndroidRenderer's input surface
     ## has no submit/IME-action event for `EditText`-mapped elements
@@ -296,9 +154,12 @@ when defined(android) or defined(mockJni):
     let inp = r.createElement("input")
     r.setAttribute(inp, "type", "text")
     r.setAttribute(inp, "placeholder", "New task...")
-    r.setAttribute(inp, "value", vm.inputText.val)
     s.inputNode = inp
     r.appendChild(wrapper, inp)
+
+    let inpRef = inp
+    createRenderEffect proc() =
+      r.setAttribute(inpRef, "value", vm.inputText.val)
 
     let addBtn = r.createElement("button")
     r.setAttribute(addBtn, "type", "submit")
@@ -312,8 +173,7 @@ when defined(android) or defined(mockJni):
   proc filterBar*(r: AndroidRenderer; vm: TaskAppVM): AndroidElement =
     ## Three-button filter selector (All / Active / Completed). Each
     ## button click routes through the VM's `setFilter` action; the
-    ## visible "selected" class is mirrored back from the VM's filter
-    ## signal via `syncFilterButtons` on every `rerender`.
+    ## "selected" class is driven by a `createRenderEffect` per button.
     let s = leavesFor(vm)
     s.filterButtons = @[]
     let wrapper = r.createElement("div")
@@ -326,44 +186,102 @@ when defined(android) or defined(mockJni):
       r.setTextContent(btn, $fm)
       r.setAttribute(btn, "data-filter", $fm)
       r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
-      if vm.filter.val == fm:
-        r.setAttribute(btn, "class", "selected")
-        r.setAttribute(btn, "aria-pressed", "true")
-      else:
-        r.setAttribute(btn, "class", "")
+      makeFilterSelectionEffect(r, vm, btn, fm)
       r.appendChild(wrapper, btn)
       s.filterButtons.add btn
 
     wrapper
 
+  proc renderTaskRow(r: AndroidRenderer; vm: TaskAppVM; t: Task): AndroidElement =
+    let row = r.createElement("li")
+    r.setAttribute(row, "data-task-id", $t.id)
+    r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
+    r.setAttribute(row, ElementKindAttr, "row")
+    if t.completed:
+      r.setAttribute(row, "class", "completed")
+
+    let toggleBtn = r.createElement("button")
+    let marker = if t.completed: "[x]" else: "[ ]"
+    r.setTextContent(toggleBtn, marker)
+    r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
+    r.appendChild(row, toggleBtn)
+
+    let label = r.createElement("span")
+    let display =
+      if t.completed: t.name & " (done)" else: t.name
+    r.setTextContent(label, display)
+    r.appendChild(row, label)
+
+    let removeBtn = r.createElement("button")
+    r.setAttribute(removeBtn, "class", "remove")
+    r.setTextContent(removeBtn, "x")
+    r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
+    r.appendChild(row, removeBtn)
+
+    row
+
+  proc placeholderRow(r: AndroidRenderer; vm: TaskAppVM): AndroidElement =
+    result = r.createElement("p")
+    r.setAttribute(result, "class", "empty")
+    let placeholderNode = result
+    createRenderEffect proc() =
+      let placeholder =
+        case vm.filter.val
+        of fmAll:       "(no tasks yet)"
+        of fmActive:    "(no active tasks)"
+        of fmCompleted: "(no completed tasks)"
+      r.setTextContent(placeholderNode, placeholder)
+
   proc taskList*(r: AndroidRenderer; vm: TaskAppVM): AndroidElement =
-    ## The visible task rows (or an empty-state placeholder). The wrapper
-    ## `<ul>` is built once; `renderTaskListInto` populates and re-
-    ## populates the body on every `rerender`.
+    ## The visible task rows (or an empty-state placeholder). Built once;
+    ## `forEachKeyed` watches `vm.visibleTasks` and reconciles when the
+    ## VM mutates.
     let s = leavesFor(vm)
     let listNode = r.createElement("ul")
     r.setAttribute(listNode, "class", "task-list")
     r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
     r.setAttribute(listNode, ElementKindAttr, "list")
     s.listNode = listNode
-    renderTaskListInto(r, vm, listNode)
+
+    # `AndroidElement = ViewHandle = int64` — the nil/empty sentinel is
+    # the literal `0` (mirror of `if c == 0: break` further up in the
+    # module's earlier imperative form).
+    var placeholder: AndroidElement = 0
+    createRenderEffect proc() =
+      let visible = vm.visibleTasks
+      if visible.len == 0 and placeholder == 0:
+        placeholder = placeholderRow(r, vm)
+        r.appendChild(listNode, placeholder)
+      elif visible.len > 0 and placeholder != 0:
+        r.removeChild(listNode, placeholder)
+        placeholder = 0
+
+    forEachKeyed(r, listNode,
+      proc(): seq[Task] = vm.visibleTasks,
+      proc(item: proc(): Task; index: proc(): int): AndroidElement =
+        renderTaskRow(r, vm, item()))
+
     listNode
 
   proc summaryBar*(r: AndroidRenderer; vm: TaskAppVM): AndroidElement =
-    ## "N of M remaining" footer.
+    ## "N of M remaining" footer. Reactive on `vm.tasks`.
     let s = leavesFor(vm)
     let summaryNode = r.createElement("footer")
     r.setAttribute(summaryNode, "class", "task-summary")
     r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
     r.setAttribute(summaryNode, ElementKindAttr, "summary")
     s.summaryNode = summaryNode
-    renderSummaryInto(r, vm, summaryNode)
+    let row = r.createElement("span")
+    r.appendChild(summaryNode, row)
+    createRenderEffect proc() =
+      let active = vm.activeCount
+      let total = vm.totalCount
+      r.setTextContent(row, $active & " of " & $total & " remaining")
     summaryNode
 
 else:
   ## Linux/non-android hosts: the leaf surface is intentionally empty.
-  ## See the module docstring for the EX-M6 partial-linux rationale and
-  ## the macOS hand-off checklist. Use `nim check --os:android
-  ## -d:mockJni` (driven by `tests/test_android_leaves_compile.nim`)
-  ## to validate the leaf bodies' JNI-facing surface from this host.
+  ## See `task_app/cocoa/leaves.nim` for the same gating rationale.
+  ## The cross-compile gate (`tests/test_android_leaves_compile.nim`)
+  ## validates the Android renderer surface from this host.
   discard

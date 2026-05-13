@@ -43,6 +43,12 @@
 ## root, so `componentPath` identity is byte-stable across the host's
 ## mock tree and the device's real tree.
 ##
+## EX-M23c follow-up. The task_app Android leaves were refactored to
+## a `createRenderEffect + forEachKeyed` reactive pattern (matching
+## the GPUI / Freya / Cocoa leaves) so the leaves track VM signal
+## changes on their own. The launcher no longer needs a reactive
+## bridge that calls `rerender(vm)` after the seed tasks land.
+##
 ## Test policy. The launcher subprocess test (RS-M11c /
 ## `tests/test_android_launcher_element_tree.nim`) FAILS — never
 ## skips — when no Android device is reachable via `adb`. Per the
@@ -65,11 +71,8 @@ when defined(macosx) or defined(linux):
   # the manifest carries.
   when defined(mockJni):
     import isonim/core/owner
-    import isonim/core/computation as iso_computation
-    import isonim/core/signals as iso_signals
 
     import task_app/core/vm as task_vm
-    import task_app/android/leaves as task_android_leaves
     import task_app/main_android as task_android
     import settings_app/core/vm as settings_vm
     import settings_app/core/demo_catalog
@@ -238,15 +241,13 @@ when defined(macosx) or defined(linux):
           vm.addTask("Buy groceries")
           vm.addTask("Walk the dog")
           vm.addTask("Ship EX-M23c")
+          # EX-M23c follow-up: the Android task_app leaves are now
+          # reactive (`createRenderEffect + forEachKeyed`), matching
+          # the GPUI / Freya / Cocoa pattern. The leaves' own effects
+          # pick up the seeded tasks as they settle on
+          # `vm.tasks.data`; no launcher-side `rerender(vm)` bridge
+          # is needed.
           mockRoot = task_android.buildTaskApp(mockR, vm)
-          # EX-M23c: same reactive bridge as the Cocoa launcher — the
-          # Android leaves use the same imperative `rerender(vm)`
-          # pattern, and the launcher's direct `vm.addTask` seeds do
-          # not flow through any leaf click handler.
-          let vmRef = vm
-          iso_computation.createRenderEffect proc() =
-            discard iso_signals.val(vmRef.tasks.data)
-            task_android_leaves.rerender(vmRef)
 
         var dynamicW = w
         var dynamicH = h

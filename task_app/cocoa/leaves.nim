@@ -1,5 +1,13 @@
 ## task_app/cocoa/leaves.nim — Layer-1 leaves for the Cocoa target.
 ##
+## EX-M23c follow-up: each leaf builds its node tree once and binds
+## reactively via `createRenderEffect` + `forEachKeyed`. There is no
+## public `rerender(vm)` proc; VM mutations propagate to the rendered
+## tree through the reactive graph.  This mirrors the GPUI / Freya
+## reactive pattern (see `task_app/gpui/leaves.nim` and
+## `task_app/freya/leaves.nim`) so a single cross-renderer convention
+## drives every renderer.
+##
 ## Concrete platform components for the task-app's high-level view,
 ## written against the `CocoaRenderer` from `isonim_cocoa/renderer`.
 ## Each leaf returns a `CocoaElement` ready for `appendChild`. Leaves
@@ -22,23 +30,6 @@
 ## --os:macosx` over a thin Cocoa-only fixture so we catch leaf-surface
 ## drift from this host without needing a macOS box.
 ##
-## On macOS the module ships the same shape as the EX-M3 (GPUI) and
-## EX-M4 (Freya) leaves — same per-VM `leavesFor(vm)` side-table, the
-## same `rerender(vm)` manual re-render pattern (matching the existing
-## `isonim-cocoa/demos/task-manager/src/main.nim` "imperative reactive
-## rendering" comment, which is honest for the same reactive-core
-## reasons as the GPUI/Freya leaves), and the same `appShell` /
-## `taskInput` / `filterBar` / `taskList` / `summaryBar` leaf names so
-## `task_app/core/views.nim`'s include-pattern resolves transparently.
-##
-## Implementation note (carried over from EX-M3/EX-M4): the existing
-## Cocoa demo also takes the manual re-render path because the shared
-## reactive core's memo-observer notification doesn't yet copy the
-## observers list before iterating. The shared core's TUI/web/GPUI/
-## Freya leaves take the same path via `rerender(vm)`; we mirror it
-## here so the five flavours stay consistent and the cross-renderer
-## parity test can drive all of them with the same script.
-##
 ## API gap: Cocoa's `CocoaRenderer` does not expose an `onSubmit`-style
 ## handler for `<input>`-mapped elements (`renderer.nim`'s `tagMap`
 ## maps `input` to `ekInput` -> `NSTextField`; the
@@ -49,42 +40,31 @@
 ## closest available primitive: a click on the "Add" button reads the
 ## current `inputText` signal value (mutated when the composition root
 ## sets a value, or when a test calls `vm.setInputText`) and pushes a
-## task. This matches what `isonim-cocoa/demos/task-manager/src/main.nim`
-## already did with its placeholder "Task N" generation, while keeping
-## the VM as the single source of truth.
-##
-## Hand-off to the macOS M1 engineer (full list in the EX-M5 status
-## entry's `:notes:` block):
-##   1. Verify this module builds cleanly on a real macOS host with
-##      AppKit available (the Linux side proves the leaf surface
-##      compiles via `nim check --os:macosx` on the Cocoa-only fixture
-##      in `tests/test_cocoa_leaves_compile.nim`).
-##   2. Run the integration test
-##      `tests/test_cocoa_leaves_macos_only.nim` on macOS — the assertions
-##      mirror EX-M3/EX-M4's scripted scenario and exercise the real
-##      AppKit view tree + the `fireEvent` testing helper from
-##      `renderer.nim`.
-##   3. After both checks pass on macOS, delete
-##      `isonim-cocoa/demos/task-manager/src/main.nim` (453 LOC, the
-##      from-scratch port that this module supersedes) and add
-##      forwarding wiring (Justfile / README / CI) mirroring
-##      `isonim-gpui` (EX-M3) and `isonim-freya` (EX-M4) cleanups.
-##   4. Extend the cross-renderer parity test (currently in
-##      `tests/test_freya_leaves_end_to_end.nim`) to include Cocoa as
-##      the 5th renderer, gated `when defined(macosx)`. The
-##      `from task_app/main_cocoa as cocoa_app import runTaskApp,
-##      rerender, resetCocoaLeaves` import pattern (mirroring the
-##      EX-M4 GPUI workaround) avoids the `pointer`-alias overload
-##      ambiguity flagged in the EX-M4 status notes.
-##   5. Flip the EX-M5 `:status:` from `partial-linux` to `complete`.
+## task.
 
 when defined(macosx):
+  import std/hashes
   import isonim/core/signals
+  import isonim/core/computation  # createRenderEffect
+  import isonim/dsl/components    # forEachKeyed
   import isonim_cocoa/renderer
+  # `CocoaElement = Id = distinct pointer`; `Id`'s borrowed `==` lives
+  # in `isonim_cocoa/objc_runtime`. `forEachKeyed`/`reconcileArrays` is
+  # generic and uses `mixin \`==\`` / `mixin hash` at the instantiation
+  # site (reconcile's `Table[N, int]`), so we need both operators
+  # visible in this module.
+  import isonim_cocoa/objc_runtime
   import isonim_render_serve/element_tree_attrs
 
   import task_app/core/vm
   import task_app/core/component_paths
+
+  proc hash(e: CocoaElement): Hash {.inline.} =
+    ## Required for `forEachKeyed`'s reconcile-step `Table[CocoaElement,
+    ## int]` lookup. Re-uses `pointer`'s `hash` so distinct elements
+    ## sharing the same backing pointer (impossible in practice) would
+    ## hash identically.
+    hashes.hash(cast[pointer](e))
 
   # ----------------------------------------------------------------------------
   # Per-VM bookkeeping (mirrors `tui/leaves.nim`, `web/leaves.nim`,
@@ -119,128 +99,32 @@ when defined(macosx):
     cocoaLeavesTable.setLen(0)
 
   # ----------------------------------------------------------------------------
-  # Re-render helpers
-  # ----------------------------------------------------------------------------
-
-  proc clearChildren(r: CocoaRenderer; node: CocoaElement) =
-    while r.childCount(node) > 0:
-      let c = r.nthChild(node, 0)
-      if pointer(c) == nil: break
-      r.removeChild(node, c)
-
-  # Forward declaration: per-row click handlers re-render after mutating
-  # the VM, but `rerender` itself calls `renderTaskListInto` (which uses
-  # the closure factories below). Forward-declare so the cycle resolves.
-  proc rerender*(vm: TaskAppVM)
-
-  proc makeToggleHandler(vm: TaskAppVM; id: int): proc() =
-    ## Top-level factory so the captured `id` cannot alias a loop
-    ## variable in `renderTaskListInto`. Mirrors the per-task closure
-    ## pattern used by the GPUI / Freya / web leaves' click handlers.
-    result = proc() =
-      vm.toggleTask(id)
-      rerender(vm)
-
-  proc makeRemoveHandler(vm: TaskAppVM; id: int): proc() =
-    result = proc() =
-      vm.removeTask(id)
-      rerender(vm)
-
-  proc renderTaskListInto(r: CocoaRenderer; vm: TaskAppVM;
-                          listNode: CocoaElement) =
-    ## Wipe `listNode`'s children and rebuild from `vm.visibleTasks`.
-    clearChildren(r, listNode)
-    let visible = vm.visibleTasks
-    if visible.len == 0:
-      let row = r.createElement("p")
-      r.setAttribute(row, "class", "empty")
-      let placeholder =
-        case vm.filter.val
-        of fmAll:       "(no tasks yet)"
-        of fmActive:    "(no active tasks)"
-        of fmCompleted: "(no completed tasks)"
-      r.setTextContent(row, placeholder)
-      r.appendChild(listNode, row)
-      return
-    for t in visible:
-      let row = r.createElement("li")
-      r.setAttribute(row, "data-task-id", $t.id)
-      r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
-      r.setAttribute(row, ElementKindAttr, "row")
-      if t.completed:
-        r.setAttribute(row, "class", "completed")
-
-      let toggleBtn = r.createElement("button")
-      let marker = if t.completed: "[x]" else: "[ ]"
-      r.setTextContent(toggleBtn, marker)
-      r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
-      r.appendChild(row, toggleBtn)
-
-      let label = r.createElement("span")
-      let display =
-        if t.completed: t.name & " (done)" else: t.name
-      r.setTextContent(label, display)
-      r.appendChild(row, label)
-
-      let removeBtn = r.createElement("button")
-      r.setAttribute(removeBtn, "class", "remove")
-      r.setTextContent(removeBtn, "x")
-      r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
-      r.appendChild(row, removeBtn)
-
-      r.appendChild(listNode, row)
-
-  proc renderSummaryInto(r: CocoaRenderer; vm: TaskAppVM;
-                         summaryNode: CocoaElement) =
-    clearChildren(r, summaryNode)
-    let row = r.createElement("span")
-    let active = vm.activeCount
-    let total = vm.totalCount
-    let text = $active & " of " & $total & " remaining"
-    r.setTextContent(row, text)
-    r.appendChild(summaryNode, row)
-
-  proc syncFilterButtons(r: CocoaRenderer; vm: TaskAppVM;
-                         buttons: seq[CocoaElement]) =
-    if buttons.len != 3: return
-    let want =
-      case vm.filter.val
-      of fmAll:       0
-      of fmActive:    1
-      of fmCompleted: 2
-    for i, b in buttons:
-      if i == want:
-        r.setAttribute(b, "class", "selected")
-        r.setAttribute(b, "aria-pressed", "true")
-      else:
-        r.setAttribute(b, "class", "")
-        r.removeAttribute(b, "aria-pressed")
-
-  proc rerender*(vm: TaskAppVM) =
-    ## Re-build any sub-trees that depend on VM state. Called after every
-    ## action.
-    let s = leavesFor(vm)
-    let r = CocoaRenderer()
-    if pointer(s.listNode) != nil:
-      renderTaskListInto(r, vm, s.listNode)
-    if pointer(s.summaryNode) != nil:
-      renderSummaryInto(r, vm, s.summaryNode)
-    if s.filterButtons.len == 3:
-      syncFilterButtons(r, vm, s.filterButtons)
-
-  # ----------------------------------------------------------------------------
   # Closure factories — top-level so loop-variable aliasing can't bite.
   # ----------------------------------------------------------------------------
 
+  proc makeToggleHandler(vm: TaskAppVM; id: int): proc() =
+    result = proc() = vm.toggleTask(id)
+
+  proc makeRemoveHandler(vm: TaskAppVM; id: int): proc() =
+    result = proc() = vm.removeTask(id)
+
   proc makeAddTaskHandler(vm: TaskAppVM): proc() =
-    result = proc() =
-      vm.addTask(vm.inputText.val)
-      rerender(vm)
+    result = proc() = vm.addTask(vm.inputText.val)
 
   proc makeFilterClickHandler(vm: TaskAppVM; fm: FilterMode): proc() =
-    result = proc() =
-      vm.setFilter(fm)
-      rerender(vm)
+    result = proc() = vm.setFilter(fm)
+
+  proc makeFilterSelectionEffect(r: CocoaRenderer; vm: TaskAppVM;
+                                 btn: CocoaElement; fm: FilterMode) =
+    ## Top-level factory so the captured `fm` / `btn` cannot alias a loop
+    ## variable in `filterBar`.
+    createRenderEffect proc() =
+      if vm.filter.val == fm:
+        r.setAttribute(btn, "class", "selected")
+        r.setAttribute(btn, "aria-pressed", "true")
+      else:
+        r.setAttribute(btn, "class", "")
+        r.removeAttribute(btn, "aria-pressed")
 
   # ----------------------------------------------------------------------------
   # Layer-1 leaf procs — invoked by views.nim
@@ -265,9 +149,10 @@ when defined(macosx):
     app
 
   proc taskInput*(r: CocoaRenderer; vm: TaskAppVM): CocoaElement =
-    ## Text input + add button. The input node holds the current draft via
-    ## its `value` attribute (mirroring `vm.inputText`). The add button's
-    ## click handler reads `vm.inputText.val` and pushes the task.
+    ## Text input + add button. The input's `value` attribute mirrors
+    ## `vm.inputText` reactively. The add button's click handler reads
+    ## `vm.inputText.val` (mutated by tests via `vm.setInputText`) and
+    ## pushes the task.
     ##
     ## API gap (see module docstring): Cocoa's renderer surface has no
     ## `onSubmit` event for input-mapped elements (NSTextField needs
@@ -283,9 +168,12 @@ when defined(macosx):
     let inp = r.createElement("input")
     r.setAttribute(inp, "type", "text")
     r.setAttribute(inp, "placeholder", "New task...")
-    r.setAttribute(inp, "value", vm.inputText.val)
     s.inputNode = inp
     r.appendChild(wrapper, inp)
+
+    let inpRef = inp
+    createRenderEffect proc() =
+      r.setAttribute(inpRef, "value", vm.inputText.val)
 
     let addBtn = r.createElement("button")
     r.setAttribute(addBtn, "type", "submit")
@@ -299,8 +187,7 @@ when defined(macosx):
   proc filterBar*(r: CocoaRenderer; vm: TaskAppVM): CocoaElement =
     ## Three-button filter selector (All / Active / Completed). Each
     ## button click routes through the VM's `setFilter` action; the
-    ## visible "selected" class is mirrored back from the VM's filter
-    ## signal via `syncFilterButtons` on every `rerender`.
+    ## "selected" class is driven by a `createRenderEffect` per button.
     let s = leavesFor(vm)
     s.filterButtons = @[]
     let wrapper = r.createElement("div")
@@ -313,44 +200,104 @@ when defined(macosx):
       r.setTextContent(btn, $fm)
       r.setAttribute(btn, "data-filter", $fm)
       r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
-      if vm.filter.val == fm:
-        r.setAttribute(btn, "class", "selected")
-        r.setAttribute(btn, "aria-pressed", "true")
-      else:
-        r.setAttribute(btn, "class", "")
+      makeFilterSelectionEffect(r, vm, btn, fm)
       r.appendChild(wrapper, btn)
       s.filterButtons.add btn
 
     wrapper
 
+  proc renderTaskRow(r: CocoaRenderer; vm: TaskAppVM; t: Task): CocoaElement =
+    let row = r.createElement("li")
+    r.setAttribute(row, "data-task-id", $t.id)
+    r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
+    r.setAttribute(row, ElementKindAttr, "row")
+    if t.completed:
+      r.setAttribute(row, "class", "completed")
+
+    let toggleBtn = r.createElement("button")
+    let marker = if t.completed: "[x]" else: "[ ]"
+    r.setTextContent(toggleBtn, marker)
+    r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
+    r.appendChild(row, toggleBtn)
+
+    let label = r.createElement("span")
+    let display =
+      if t.completed: t.name & " (done)" else: t.name
+    r.setTextContent(label, display)
+    r.appendChild(row, label)
+
+    let removeBtn = r.createElement("button")
+    r.setAttribute(removeBtn, "class", "remove")
+    r.setTextContent(removeBtn, "x")
+    r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
+    r.appendChild(row, removeBtn)
+
+    row
+
+  proc placeholderRow(r: CocoaRenderer; vm: TaskAppVM): CocoaElement =
+    result = r.createElement("p")
+    r.setAttribute(result, "class", "empty")
+    let placeholderNode = result
+    createRenderEffect proc() =
+      let placeholder =
+        case vm.filter.val
+        of fmAll:       "(no tasks yet)"
+        of fmActive:    "(no active tasks)"
+        of fmCompleted: "(no completed tasks)"
+      r.setTextContent(placeholderNode, placeholder)
+
   proc taskList*(r: CocoaRenderer; vm: TaskAppVM): CocoaElement =
-    ## The visible task rows (or an empty-state placeholder). The wrapper
-    ## `<ul>` is built once; `renderTaskListInto` populates and re-
-    ## populates the body on every `rerender`.
+    ## The visible task rows (or an empty-state placeholder). Built once;
+    ## `forEachKeyed` watches `vm.visibleTasks` and reconciles when the
+    ## VM mutates.
     let s = leavesFor(vm)
     let listNode = r.createElement("ul")
     r.setAttribute(listNode, "class", "task-list")
     r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
     r.setAttribute(listNode, ElementKindAttr, "list")
     s.listNode = listNode
-    renderTaskListInto(r, vm, listNode)
+
+    # `CocoaElement = Id = distinct pointer` — the nil sentinel is
+    # `CocoaElement(Id(nil))` and the "is set" check goes through
+    # `pointer(...)`. Mirrors the existing `pointer(s.listNode) != nil`
+    # idiom further up in the module.
+    var placeholder: CocoaElement = CocoaElement(Id(nil))
+    createRenderEffect proc() =
+      let visible = vm.visibleTasks
+      if visible.len == 0 and pointer(placeholder) == nil:
+        placeholder = placeholderRow(r, vm)
+        r.appendChild(listNode, placeholder)
+      elif visible.len > 0 and pointer(placeholder) != nil:
+        r.removeChild(listNode, placeholder)
+        placeholder = CocoaElement(Id(nil))
+
+    forEachKeyed(r, listNode,
+      proc(): seq[Task] = vm.visibleTasks,
+      proc(item: proc(): Task; index: proc(): int): CocoaElement =
+        renderTaskRow(r, vm, item()))
+
     listNode
 
   proc summaryBar*(r: CocoaRenderer; vm: TaskAppVM): CocoaElement =
-    ## "N of M remaining" footer.
+    ## "N of M remaining" footer. Reactive on `vm.tasks`.
     let s = leavesFor(vm)
     let summaryNode = r.createElement("footer")
     r.setAttribute(summaryNode, "class", "task-summary")
     r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
     r.setAttribute(summaryNode, ElementKindAttr, "summary")
     s.summaryNode = summaryNode
-    renderSummaryInto(r, vm, summaryNode)
+    let row = r.createElement("span")
+    r.appendChild(summaryNode, row)
+    createRenderEffect proc() =
+      let active = vm.activeCount
+      let total = vm.totalCount
+      r.setTextContent(row, $active & " of " & $total & " remaining")
     summaryNode
 
 else:
   ## Linux/non-macOS hosts: the leaf surface is intentionally empty.
-  ## See the module docstring for the EX-M5 partial-linux rationale and
-  ## the macOS hand-off checklist. Use `nim check --os:macosx` (driven
-  ## by `tests/test_cocoa_leaves_compile.nim`) to validate the leaf
+  ## See the module docstring for the EX-M5 partial-linux rationale.
+  ## Use `nim check --os:macosx` (driven by
+  ## `tests/test_cocoa_leaves_compile.nim`) to validate the leaf
   ## bodies' AppKit-facing surface from this host.
   discard

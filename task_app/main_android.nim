@@ -269,9 +269,13 @@ when defined(android) or defined(mockJni):
           {.exportc: jniPrefix & "handleEvent", cdecl, dynlib.} =
         ## Dispatch the registered callback for the given id. The
         ## callback (registered by the leaves via `r.addEventListener`)
-        ## typically mutates the VM and calls `rerender(vm)`. The Kotlin
-        ## host should call `rebuildTaskAppUI` afterwards to pick up the
-        ## new tree from a fresh command buffer.
+        ## mutates the VM (e.g. `vm.toggleTask(id)`); the leaves'
+        ## `createRenderEffect` subscriptions react to the change and
+        ## update the materialised view tree directly.  The Kotlin
+        ## host's `rebuildTaskAppUI` entry point exists as the
+        ## belt-and-braces re-render path (still safe to call after
+        ## every event); it rebuilds the tree wholesale from the
+        ## current VM state.
         fireCallback(int32(callbackId))
 
       proc setInputText(env: JNIEnvPtr; cls: JClass; text: JString)

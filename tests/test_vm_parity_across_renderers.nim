@@ -63,12 +63,17 @@ import isonim_tui  # newTerminalTestHarness
 # file still parses on Linux because the `when defined()` guard
 # excludes the import + the driver registration; macOS/Android hosts
 # pick the entries up automatically.
+#
+# EX-M23c follow-up: Cocoa/Android leaves are now reactive (matching
+# GPUI/Freya), so the imperative `rerender(vm)` proc is gone. The
+# drivers below mount the tree once and let the leaves react to VM
+# signal changes through `createRenderEffect`.
 when defined(macosx):
   from task_app/main_cocoa as cocoa_app import
-    runTaskApp, rerender, resetCocoaLeaves
+    runTaskApp, resetCocoaLeaves
 when defined(android):
   from task_app/main_android as android_app import
-    runTaskApp, rerender, resetAndroidLeaves
+    runTaskApp, resetAndroidLeaves
 
 import ./helpers/parity_snapshot
 
@@ -76,8 +81,10 @@ import ./helpers/parity_snapshot
 # Scenarios — every entry mutates the VM through the public action
 # surface (`addTask`, `toggleTask`, `setFilter`, `setInputText`).
 # Renderer leaves observe the mutations through `createRenderEffect`
-# and the per-renderer `rerender(vm)` proc; the parity invariant is
-# that the VM's terminal snapshot is identical regardless of which
+# (and, for the few renderers that previously needed it, a
+# per-renderer `rerender(vm)` proc — removed in the EX-M23c follow-up
+# in favour of the reactive pattern). The parity invariant is that
+# the VM's terminal snapshot is identical regardless of which
 # renderer drove it.
 # ---------------------------------------------------------------------------
 
@@ -231,7 +238,10 @@ when defined(macosx):
         discard cocoa_app.runTaskApp(vm)
         drv.flush()
         script(vm, drv)
-        cocoa_app.rerender(vm)
+        # EX-M23c follow-up: the leaves are reactive (they observe
+        # VM signal changes via `createRenderEffect`), so no manual
+        # `rerender(vm)` call is needed. The driver only resets the
+        # per-VM bookkeeping table so successive scenarios start clean.
         cocoa_app.resetCocoaLeaves())
   drivers.add cocoaDriver()
 
@@ -244,7 +254,8 @@ when defined(android):
         discard android_app.runTaskApp(vm)
         drv.flush()
         script(vm, drv)
-        android_app.rerender(vm)
+        # EX-M23c follow-up: same as cocoaDriver — leaves are reactive,
+        # no manual `rerender(vm)` call is needed.
         android_app.resetAndroidLeaves())
   drivers.add androidDriver()
 

@@ -45,12 +45,25 @@ when defined(macosx):
 
   # Composition root — drags in the leaves + the Layer-2 view template.
   import task_app/main_cocoa as cocoa_app
+  import ./helpers/async_drive
 
   suite "EX-M5: Cocoa leaves drive the canonical core through real AppKit":
 
     test "scripted scenario: add 3, toggle 1, filter switches stay consistent":
-      let vm = newTaskAppVM()
+      ## EX-M23c follow-up: this test was failing under the old
+      ## imperative `rerender(vm)` pattern because the click handler
+      ## fired `rerender` synchronously, before the async
+      ## `db.saveTask` chain settled — so the rendered tree never
+      ## reflected the new task. With the reactive leaves
+      ## (`createRenderEffect + forEachKeyed`) the rendered tree
+      ## reacts to `vm.tasks.data` settling, so the test now drives
+      ## the same `AsyncDriver` pattern used by the GPUI / Freya
+      ## end-to-end tests (`drv.flush()` after every action).
+      let drv = newAsyncDriver()
+      defer: drv.shutdown()
+      let vm = newTaskAppVM(drv.db)
       let root = cocoa_app.runTaskApp(vm)
+      drv.flush()
       let r = CocoaRenderer()
 
       # ── Topology: appShell wrapper + 4 leaves (input / filter / list /
@@ -72,11 +85,11 @@ when defined(macosx):
 
       # ── 1. Add three tasks via the real Add-button click handler.
       vm.setInputText("buy milk")
-      r.fireEvent(s.addBtn, "click")
+      r.fireEvent(s.addBtn, "click"); drv.flush()
       vm.setInputText("write specs")
-      r.fireEvent(s.addBtn, "click")
+      r.fireEvent(s.addBtn, "click"); drv.flush()
       vm.setInputText("review pr")
-      r.fireEvent(s.addBtn, "click")
+      r.fireEvent(s.addBtn, "click"); drv.flush()
 
       check vm.tasks.val.len == 3
       check vm.activeCount == 3
@@ -92,7 +105,7 @@ when defined(macosx):
       # ── 2. Toggle the first task via its per-row toggle button.
       let toggleBtn0 = r.nthChild(row0, 0)
       check pointer(toggleBtn0) != nil
-      r.fireEvent(toggleBtn0, "click")
+      r.fireEvent(toggleBtn0, "click"); drv.flush()
 
       check vm.tasks.val[0].completed == true
       check vm.activeCount == 2
@@ -128,8 +141,9 @@ when defined(macosx):
       check r.getAttribute(s.filterButtons[2], "class") == "selected"
 
       # ── 5. Empty-state placeholder for a fresh VM.
-      let vm2 = newTaskAppVM()
+      let vm2 = newTaskAppVM(newFakeDb(seed = 99))
       let root2 = cocoa_app.runTaskApp(vm2)
+      drv.flush()
       check pointer(root2) != nil
       let s2 = cocoa_app.leavesFor(vm2)
       check r.childCount(s2.listNode) == 1
