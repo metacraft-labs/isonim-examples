@@ -952,6 +952,334 @@ test.describe("RS-M11 Pattern A: editor bundle renders real TUI pixels", () => {
 });
 
 // --------------------------------------------------------------------------
+// 4e. M-EVP-10 canvas affordances
+//     Hover label, selection outline, breadcrumb, edit-mode handles —
+//     parity with the Web iframe path's `editablePreviewDocument`
+//     affordances. Each test drives the real TUI launcher through the
+//     editor's `attachBridgeClient`, derives coordinates from the
+//     element-tree manifest, simulates the relevant pointer / mode
+//     interaction, and asserts the overlay DOM marker.
+// --------------------------------------------------------------------------
+
+test.describe("M-EVP-10 canvas affordances", () => {
+  async function bootEditorWithTuiCanvas(page: Page): Promise<{
+    surfaceWidth: number;
+    surfaceHeight: number;
+    targetRow: {
+      id: string;
+      componentPath: string;
+      bounds: { x: number; y: number; w: number; h: number };
+    };
+  }> {
+    // Test-mode flag must be set before the editor bundle boots so the
+    // hover / selection mirrors fire on the very first event. Production
+    // builds leave the flag unset (the JS shim's `=== true` guard keeps
+    // the side channel off normal page lifetimes).
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+    });
+    await gotoEditor(page);
+
+    // Open a Task App / TaskList story so the component-detail view
+    // mounts the canvas.
+    const taskListGroup = page
+      .locator('[aria-label="Toggle Task App / TaskList stories"]')
+      .first();
+    await expect(taskListGroup).toBeVisible({ timeout: 10_000 });
+    const taskListExpanded = await taskListGroup.getAttribute("aria-expanded");
+    if (taskListExpanded !== "true") {
+      await taskListGroup.click();
+    }
+    const taskListStory = page
+      .locator('[aria-label^="Select story Task App / TaskList /"]')
+      .first();
+    await expect(taskListStory).toBeVisible({ timeout: 10_000 });
+    await taskListStory.click();
+
+    // Switch the preview backend to TUI; the canvas becomes active.
+    const tuiChip = page
+      .locator('[data-preview-backend="tui"]')
+      .first();
+    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
+    await tuiChip.click();
+
+    const canvas = page
+      .locator('canvas[data-canvas-active="true"]')
+      .first();
+    await expect(canvas).toBeVisible({ timeout: 10_000 });
+
+    // Wait for first non-empty frame.
+    await page.waitForFunction(
+      () => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        if (c.width === 0 || c.height === 0) return false;
+        const ctx = c.getContext("2d");
+        if (!ctx) return false;
+        try {
+          const img = ctx.getImageData(0, 0, c.width, c.height);
+          for (let i = 0; i < img.data.length; i += 4) {
+            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
+          }
+        } catch {
+          return false;
+        }
+        return false;
+      },
+      null,
+      { timeout: 15_000 },
+    );
+
+    // Wait for the element-tree manifest to land via the gated mirror.
+    await page.waitForFunction(
+      () => {
+        const m = (window as unknown as Record<string, unknown>)
+          .__isonimManifest as {
+            type?: string;
+            elements?: Array<{ componentPath: string }>;
+          } | undefined;
+        return !!(
+          m &&
+          m.type === "element-tree" &&
+          Array.isArray(m.elements) &&
+          m.elements.some((e) =>
+            e.componentPath.startsWith("task_app/views/TaskRow#"),
+          )
+        );
+      },
+      null,
+      { timeout: 15_000 },
+    );
+
+    const manifestInfo = await page.evaluate(() => {
+      const m = (window as unknown as Record<string, unknown>)
+        .__isonimManifest as {
+          surfaceWidth: number;
+          surfaceHeight: number;
+          elements: Array<{
+            id: string;
+            componentPath: string;
+            kind: string;
+            bounds: { x: number; y: number; w: number; h: number };
+          }>;
+        };
+      const taskRows = m.elements.filter((e) =>
+        e.componentPath.startsWith("task_app/views/TaskRow#"),
+      );
+      return {
+        surfaceWidth: m.surfaceWidth,
+        surfaceHeight: m.surfaceHeight,
+        taskRows,
+      };
+    });
+    expect(manifestInfo.taskRows.length).toBeGreaterThan(0);
+
+    const targetRow =
+      manifestInfo.taskRows.length >= 2
+        ? manifestInfo.taskRows[1]
+        : manifestInfo.taskRows[0];
+
+    await page.waitForFunction(
+      (expected: { w: number; h: number }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        return c.width === expected.w && c.height === expected.h;
+      },
+      { w: manifestInfo.surfaceWidth, h: manifestInfo.surfaceHeight },
+      { timeout: 10_000 },
+    );
+
+    return {
+      surfaceWidth: manifestInfo.surfaceWidth,
+      surfaceHeight: manifestInfo.surfaceHeight,
+      targetRow,
+    };
+  }
+
+  async function pointForBoundsCentre(
+    page: Page,
+    bounds: { x: number; y: number; w: number; h: number },
+  ): Promise<{ clientX: number; clientY: number }> {
+    return page.evaluate((row) => {
+      const list = document.querySelectorAll(
+        'canvas[data-canvas-active="true"]',
+      );
+      const c = list[0] as HTMLCanvasElement;
+      const rect = c.getBoundingClientRect();
+      const cx = row.x + Math.floor(row.w / 2);
+      const cy = row.y + Math.floor(row.h / 2);
+      const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
+      const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
+      return { clientX, clientY };
+    }, bounds);
+  }
+
+  test("hover over a manifest element paints the hover label", async ({
+    page,
+  }) => {
+    const { targetRow } = await bootEditorWithTuiCanvas(page);
+    const point = await pointForBoundsCentre(page, targetRow.bounds);
+    await page.mouse.move(point.clientX, point.clientY);
+
+    await page.waitForFunction(
+      (expected: string) => {
+        const v = (window as unknown as Record<string, unknown>)
+          .__isonimHoveredComponentPath;
+        return typeof v === "string" && v === expected;
+      },
+      targetRow.componentPath,
+      { timeout: 10_000 },
+    );
+
+    const hoverLabel = page.locator('[data-canvas-hover-label="true"]').first();
+    await expect(hoverLabel).toBeVisible({ timeout: 5_000 });
+    await expect(hoverLabel).toHaveText(targetRow.componentPath);
+  });
+
+  test("clicking a manifest element paints the selection outline at the bounds", async ({
+    page,
+  }) => {
+    const { targetRow } = await bootEditorWithTuiCanvas(page);
+    const point = await pointForBoundsCentre(page, targetRow.bounds);
+    await page.mouse.click(point.clientX, point.clientY);
+
+    await page.waitForFunction(
+      (expected: string) => {
+        const v = (window as unknown as Record<string, unknown>)
+          .__isonimSelectedComponentPath;
+        return typeof v === "string" && v === expected;
+      },
+      targetRow.componentPath,
+      { timeout: 10_000 },
+    );
+
+    const outline = page
+      .locator('[data-canvas-selection-outline="true"]')
+      .first();
+    await expect(outline).toBeVisible({ timeout: 5_000 });
+    await expect(outline).toHaveAttribute("data-element-id", targetRow.id);
+
+    // Compare outline CSS coordinates against the manifest bounds scaled
+    // into CSS pixel space — same transform Pattern A's pointFromEvent
+    // uses (inverse direction). 1px tolerance per the spec.
+    const measurement = await page.evaluate(
+      (row: { x: number; y: number; w: number; h: number }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        const c = list[0] as HTMLCanvasElement;
+        const outline = document.querySelector(
+          '[data-canvas-selection-outline="true"]',
+        ) as HTMLElement | null;
+        if (!c || !outline) return null;
+        const canvasRect = c.getBoundingClientRect();
+        const outlineRect = outline.getBoundingClientRect();
+        const sx = canvasRect.width / c.width;
+        const sy = canvasRect.height / c.height;
+        return {
+          expectedLeft: canvasRect.left + row.x * sx,
+          expectedTop: canvasRect.top + row.y * sy,
+          expectedWidth: row.w * sx,
+          expectedHeight: row.h * sy,
+          actualLeft: outlineRect.left,
+          actualTop: outlineRect.top,
+          actualWidth: outlineRect.width,
+          actualHeight: outlineRect.height,
+        };
+      },
+      targetRow.bounds,
+    );
+    expect(measurement).not.toBeNull();
+    const m = measurement!;
+    expect(Math.abs(m.actualLeft - m.expectedLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(m.actualTop - m.expectedTop)).toBeLessThanOrEqual(1);
+    expect(Math.abs(m.actualWidth - m.expectedWidth)).toBeLessThanOrEqual(1);
+    expect(Math.abs(m.actualHeight - m.expectedHeight)).toBeLessThanOrEqual(1);
+  });
+
+  test("clicking a manifest element shows the breadcrumb with the componentPath", async ({
+    page,
+  }) => {
+    const { targetRow } = await bootEditorWithTuiCanvas(page);
+    const point = await pointForBoundsCentre(page, targetRow.bounds);
+    await page.mouse.click(point.clientX, point.clientY);
+
+    await page.waitForFunction(
+      (expected: string) => {
+        const v = (window as unknown as Record<string, unknown>)
+          .__isonimSelectedComponentPath;
+        return typeof v === "string" && v === expected;
+      },
+      targetRow.componentPath,
+      { timeout: 10_000 },
+    );
+
+    const breadcrumb = page
+      .locator('[data-canvas-selection-breadcrumb="true"]')
+      .first();
+    await expect(breadcrumb).toBeVisible({ timeout: 5_000 });
+    await expect(breadcrumb).toHaveText(targetRow.componentPath);
+  });
+
+  test("switching to Edit mode shows 8 handles; View hides them", async ({
+    page,
+  }) => {
+    const { targetRow } = await bootEditorWithTuiCanvas(page);
+    const point = await pointForBoundsCentre(page, targetRow.bounds);
+    await page.mouse.click(point.clientX, point.clientY);
+
+    await page.waitForFunction(
+      (expected: string) => {
+        const v = (window as unknown as Record<string, unknown>)
+          .__isonimSelectedComponentPath;
+        return typeof v === "string" && v === expected;
+      },
+      targetRow.componentPath,
+      { timeout: 10_000 },
+    );
+
+    // Pick a non-disabled Edit chip from any visible chrome strip. The
+    // canonical chrome bar after M-EVP-6/7 hoists the mode chips into
+    // the preview pane's top toolbar; the legacy right-edge strip stays
+    // as a hidden stub. We accept whichever the active layout exposes.
+    const editChip = page
+      .locator('[data-preview-mode="edit"]:not([data-preview-mode-disabled="true"])')
+      .first();
+    await expect(editChip).toBeVisible({ timeout: 5_000 });
+    await editChip.click();
+
+    const handles = page.locator('[data-canvas-selection-handle="true"]');
+    await expect(handles).toHaveCount(8, { timeout: 5_000 });
+
+    // Sanity-check the 8 handle positions cover the corner+edge set.
+    const positions = await handles.evaluateAll((els) =>
+      els.map((el) => (el as HTMLElement).getAttribute("data-handle-position")),
+    );
+    const expectedPositions = new Set([
+      "nw", "n", "ne", "e", "se", "s", "sw", "w",
+    ]);
+    expect(new Set(positions)).toEqual(expectedPositions);
+
+    // Switch back to View; handles must hide.
+    const viewChip = page
+      .locator('[data-preview-mode="view"]:not([data-preview-mode-disabled="true"])')
+      .first();
+    await expect(viewChip).toBeVisible({ timeout: 5_000 });
+    await viewChip.click();
+
+    // The handle nodes remain in the DOM as a constant-sized group; the
+    // wrapper hides them via `display: none`. Assert none are visible.
+    await expect(handles.first()).toBeHidden({ timeout: 5_000 });
+  });
+});
+
+// --------------------------------------------------------------------------
 // 5. Viewport-strip width changes the preview region
 // --------------------------------------------------------------------------
 
