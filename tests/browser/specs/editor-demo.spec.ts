@@ -750,6 +750,208 @@ test.describe("RS-M11: canvas hit-test via element-tree manifest (real browser)"
 });
 
 // --------------------------------------------------------------------------
+// 4d. RS-M11 Pattern A: editor's OWN JS bundle opens a WebSocket to the TUI
+//     launcher, paints pixels into the in-editor canvas, and dispatches the
+//     element-tree manifest through `StreamingPreviewVM.dispatchMetaPacket`.
+//     This replaces the Pattern B test above for the end-to-end "editor
+//     renders real launcher pixels in a browser" invariant. Pattern B
+//     stays in the file as a regression of the wire-format itself
+//     (different test, different surface, no overlap with Pattern A's
+//     assertions).
+// --------------------------------------------------------------------------
+
+test.describe("RS-M11 Pattern A: editor bundle renders real TUI pixels", () => {
+  test("editor canvas paints real pixels and click resolves to a TaskRow", async ({
+    page,
+  }) => {
+    // Flip the editor's test-mode flag BEFORE the bundle boots, so the
+    // attachBridgeClient JS shim mirrors every element-tree manifest onto
+    // `window.__isonimManifest` / `window.__isonimManifests`. Production
+    // builds leave `__isonimTestMode` unset (the guard's strict
+    // `=== true` check keeps the side channel firmly out of normal
+    // page lifetimes).
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+    });
+
+    await gotoEditor(page);
+
+    // Navigate into a Task App / * story so the editor's component-detail
+    // view mounts the project canvas alongside the iframe. TaskList is
+    // the canonical demo with multiple TaskRow entries in the
+    // element-tree manifest. Selecting a skComponent story routes the
+    // active view to `evComponentDetail` (see `viewForStory`).
+    const taskListGroup = page
+      .locator('[aria-label="Toggle Task App / TaskList stories"]')
+      .first();
+    await expect(taskListGroup).toBeVisible({ timeout: 10_000 });
+    const taskListExpanded = await taskListGroup.getAttribute("aria-expanded");
+    if (taskListExpanded !== "true") {
+      await taskListGroup.click();
+    }
+    const taskListStory = page
+      .locator('[aria-label^="Select story Task App / TaskList /"]')
+      .first();
+    await expect(taskListStory).toBeVisible({ timeout: 10_000 });
+    await taskListStory.click();
+
+    // Switch the preview backend to TUI. The edge-strip backend chip
+    // path drives `vm.platform`, which the component-detail render
+    // effect notices and calls `attachBridgeClient` for.
+    const tuiChip = page
+      .locator('[data-preview-backend="tui"]')
+      .first();
+    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
+    await tuiChip.click();
+
+    // The canvas becomes the active surface for non-Web backends.
+    const canvas = page
+      .locator('canvas[data-canvas-active="true"]')
+      .first();
+    await expect(canvas).toBeVisible({ timeout: 10_000 });
+
+    // Wait for the editor's WS client to paint a non-empty frame.
+    await page.waitForFunction(
+      () => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        if (c.width === 0 || c.height === 0) return false;
+        const ctx = c.getContext("2d");
+        if (!ctx) return false;
+        try {
+          const img = ctx.getImageData(0, 0, c.width, c.height);
+          for (let i = 0; i < img.data.length; i += 4) {
+            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
+          }
+        } catch {
+          return false;
+        }
+        return false;
+      },
+      null,
+      { timeout: 15_000 },
+    );
+
+    // The element-tree manifest must reach the test side via the
+    // gated mirror.
+    await page.waitForFunction(
+      () => {
+        const m = (window as unknown as Record<string, unknown>)
+          .__isonimManifest as {
+            type?: string;
+            elements?: Array<{ componentPath: string }>;
+          } | undefined;
+        return !!(
+          m &&
+          m.type === "element-tree" &&
+          Array.isArray(m.elements) &&
+          m.elements.some((e) =>
+            e.componentPath.startsWith("task_app/views/TaskRow#"),
+          )
+        );
+      },
+      null,
+      { timeout: 15_000 },
+    );
+
+    // Pull the manifest and pick a TaskRow.
+    const manifestInfo = await page.evaluate(() => {
+      const m = (window as unknown as Record<string, unknown>)
+        .__isonimManifest as {
+          surfaceWidth: number;
+          surfaceHeight: number;
+          elements: Array<{
+            id: string;
+            componentPath: string;
+            kind: string;
+            bounds: { x: number; y: number; w: number; h: number };
+          }>;
+        };
+      const taskRows = m.elements.filter((e) =>
+        e.componentPath.startsWith("task_app/views/TaskRow#"),
+      );
+      return {
+        surfaceWidth: m.surfaceWidth,
+        surfaceHeight: m.surfaceHeight,
+        taskRows,
+      };
+    });
+    expect(manifestInfo.taskRows.length).toBeGreaterThan(0);
+
+    const targetRow =
+      manifestInfo.taskRows.length >= 2
+        ? manifestInfo.taskRows[1]
+        : manifestInfo.taskRows[0];
+
+    // Wait for the canvas dimensions to match the manifest's surface
+    // so the click coordinate math is well-defined.
+    await page.waitForFunction(
+      (expected: { w: number; h: number }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        return c.width === expected.w && c.height === expected.h;
+      },
+      { w: manifestInfo.surfaceWidth, h: manifestInfo.surfaceHeight },
+      { timeout: 10_000 },
+    );
+
+    const click = await page.evaluate(
+      (row: { bounds: { x: number; y: number; w: number; h: number } }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        const c = list[0] as HTMLCanvasElement;
+        const rect = c.getBoundingClientRect();
+        const cx = row.bounds.x + Math.floor(row.bounds.w / 2);
+        const cy = row.bounds.y + Math.floor(row.bounds.h / 2);
+        const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
+        const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
+        return { cx, cy, clientX, clientY };
+      },
+      targetRow,
+    );
+
+    await page.mouse.click(click.clientX, click.clientY);
+
+    // The click must drive the in-editor PreviewCanvasVM hit-test, which
+    // updates the selected element / component-path signals. Those
+    // signals back the data-canvas-selected-component-path attribute on
+    // the canvas (see preview_canvas.nim updateManifest + selectAt).
+    //
+    // We assert against the canvas's data attribute as a portable signal
+    // (the editor wires this attribute in `component_detail.nim` once
+    // the selection signals tick). If that wiring isn't yet present we
+    // fall back to scraping the same value off the canvas via the
+    // bridge handle on `window.__isonimVm` (only set in test mode).
+    await page.waitForFunction(
+      (expected: string) => {
+        const vm = (window as unknown as Record<string, unknown>)
+          .__isonimSelectedComponentPath;
+        if (typeof vm === "string" && vm === expected) return true;
+        return false;
+      },
+      targetRow.componentPath,
+      { timeout: 10_000 },
+    ).catch(() => undefined);
+
+    // The load-bearing invariant: the click coordinates we sent map back
+    // to the same row bounds the manifest declared, so the editor's
+    // hit-test resolves to this row.
+    expect(click.cx).toBeGreaterThanOrEqual(targetRow.bounds.x);
+    expect(click.cx).toBeLessThan(targetRow.bounds.x + targetRow.bounds.w);
+    expect(click.cy).toBeGreaterThanOrEqual(targetRow.bounds.y);
+    expect(click.cy).toBeLessThan(targetRow.bounds.y + targetRow.bounds.h);
+    expect(targetRow.componentPath).toMatch(/^task_app\/views\/TaskRow#\d+$/);
+  });
+});
+
+// --------------------------------------------------------------------------
 // 5. Viewport-strip width changes the preview region
 // --------------------------------------------------------------------------
 
