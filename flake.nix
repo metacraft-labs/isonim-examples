@@ -71,6 +71,14 @@
                 # end-to-end M57 chrome + RS-M7 streaming-preview test.
                 python3
                 nodejs_22
+                # EX-M21 / EX-M23c: `adb` is the host-side bridge to the
+                # Android device the launcher (`build/backends/isonim-
+                # examples-android`) talks to via `adb exec-out
+                # screencap`. The launcher hard-fails (no skip) when
+                # adb is missing per the user's real-environment-tests
+                # rule, so the dev shell ships it as a first-class
+                # dep. Works on both Linux and macOS Apple Silicon.
+                android-tools
               ]
               ++ pkgs.lib.optionals isLinux [
                 # EX-M3: the GPUI leaves load `libgpui_nim_shim.so` from
