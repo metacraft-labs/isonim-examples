@@ -35,6 +35,20 @@ type ViewDef = {
   setup: (page: Page) => Promise<void>;
   expectedStory: string;
   expectedBackend: string;
+  // M-EVP-12: views that drive the non-Web canvas via `attachBridgeClient`
+  // need a real TUI launcher running on port 8102. This spec's config
+  // (`playwright.config.screenshot-setup.ts`) only starts the editor
+  // bundle's static server — it does NOT launch the bridge subprocesses
+  // (the `editor-demo` config in `playwright.config.ts` does). Skip
+  // canvas-* views here; their setups are exercised end-to-end by the
+  // `test-editor-visual-gates` Justfile recipe, which spawns the
+  // launcher itself.
+  usesTui?: boolean;
+  // M-EVP-12: views that need `window.__isonimTestMode = true` injected
+  // before the editor bundle boots. The recipe handles this via
+  // `page.addInitScript`; this spec's loop doesn't, so views that
+  // depend on test-mode mirrors should be skipped here too.
+  requiresTestMode?: boolean;
 };
 
 type IframeState = {
@@ -71,9 +85,23 @@ test.describe("editor-screenshot.mjs setup navigates to the declared story", () 
 
   for (const name of viewNames) {
     const view = views[name];
+    // M-EVP-12: canvas-* views need the TUI launcher subprocess that
+    // only `test-editor-visual-gates` spawns. Skip them here so the
+    // setup-spec stays a fast bundle-only smoke test.
+    if (view.usesTui === true) {
+      test.skip(`view "${name}" (skipped: requires TUI launcher; covered by test-editor-visual-gates)`, () => {});
+      continue;
+    }
     test(`view "${name}" lands on expectedStory="${view.expectedStory}" expectedBackend="${view.expectedBackend}"`, async ({
       page,
     }) => {
+      // M-EVP-12: views that depend on test-mode mirrors need
+      // `window.__isonimTestMode = true` set before the bundle boots.
+      if (view.requiresTestMode === true) {
+        await page.addInitScript(() => {
+          (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+        });
+      }
       await gotoEditor(page);
       // Brief settle after the initial mount so the reactive graph
       // has emitted its first frame before setup starts driving it.

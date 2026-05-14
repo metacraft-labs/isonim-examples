@@ -4,6 +4,9 @@ nim-cache/
 build/
 bench-results/
 
+# M-EVP-12 visual-review tool output (`just test-editor-visual-gates`).
+screenshots/
+
 # direnv local state.
 .direnv/
 

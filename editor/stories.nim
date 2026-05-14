@@ -148,13 +148,16 @@ proc buildDemoStoryGroups*(): seq[StoryGroup] =
     items: @[
       StoryItem(name: "Inbox",
                 description: "All tasks (filter=All) with two active rows",
-                kind: skPage, group: "Task App / Pages"),
+                kind: skPage, group: "Task App / Pages",
+                usesVectorSymbols: @["Task Check Icon", "Task Filter Icon"]),
       StoryItem(name: "Today",
                 description: "Active filter with a single in-progress task",
-                kind: skPage, group: "Task App / Pages"),
+                kind: skPage, group: "Task App / Pages",
+                usesVectorSymbols: @["Task Check Icon", "Task Filter Icon"]),
       StoryItem(name: "Completed",
                 description: "Completed filter with cleared affordance",
-                kind: skPage, group: "Task App / Pages"),
+                kind: skPage, group: "Task App / Pages",
+                usesVectorSymbols: @["Task Check Icon"]),
     ])
 
   groups.add StoryGroup(
@@ -206,13 +209,16 @@ proc buildDemoStoryGroups*(): seq[StoryGroup] =
     items: @[
       StoryItem(name: "Empty",
                 description: "No tasks; empty-state copy",
-                kind: skComponent, group: "Task App / TaskList"),
+                kind: skComponent, group: "Task App / TaskList",
+                usesVectorSymbols: @["Task Check Icon"]),
       StoryItem(name: "Two Active",
                 description: "Two unchecked tasks in insertion order",
-                kind: skComponent, group: "Task App / TaskList"),
+                kind: skComponent, group: "Task App / TaskList",
+                usesVectorSymbols: @["Task Check Icon", "Task Sort Icon"]),
       StoryItem(name: "Mixed Completion",
                 description: "One active, one completed",
-                kind: skComponent, group: "Task App / TaskList"),
+                kind: skComponent, group: "Task App / TaskList",
+                usesVectorSymbols: @["Task Check Icon", "Task Sort Icon"]),
     ])
 
   groups.add StoryGroup(
@@ -320,19 +326,45 @@ proc buildDemoStoryGroups*(): seq[StoryGroup] =
     ])
 
   # ---- Vector Symbols (M-EVP-11) ----------------------------------------
-  # The seeded skVectorSymbol entry pairs with the
+  # The seeded skVectorSymbol entry "Task Check Icon" pairs with the
   # ``task_app/views/TaskCheckIcon`` leaf rendered inside every
   # task-app summary bar (TUI / GPUI / Freya / Cocoa / Android). The
   # editor's canvas dblclick handler hits the leaf's manifest entry,
   # extracts the trailing path segment, and uses it to look up this
   # story — opening the vector editor on the matching skVectorSymbol
   # target.
+  #
+  # M-EVP-12: two additional skVectorSymbol stories ("Task Filter
+  # Icon", "Task Sort Icon") + one orphan ("Empty Glyph") give the
+  # vector-editor visual-review briefs deterministic data:
+  #
+  #   - "Task Check Icon" — usesVectorSymbols mentions it in 6 stories
+  #     → carousel variant (>3 usages). Drives the
+  #     ``vector-editor-carousel`` screenshot.
+  #   - "Task Filter Icon" — used in 2 Page stories → split (stacked)
+  #     variant (<=3 usages). Drives the
+  #     ``vector-editor-with-symbol`` screenshot.
+  #   - "Empty Glyph" — no usesVectorSymbols mentions it → empty
+  #     usage-panel state. Drives the ``vector-editor-empty``
+  #     screenshot.
   groups.add StoryGroup(
     name: "Task App / Vector Symbols", kind: skVectorSymbol, expanded: false,
     description: "Reusable vector glyphs annotated for the canvas dblclick hit-test.",
     items: @[
       StoryItem(name: "Task Check Icon",
                 description: "Check-mark glyph beside the task summary count.",
+                kind: skVectorSymbol,
+                group: "Task App / Vector Symbols"),
+      StoryItem(name: "Task Filter Icon",
+                description: "Funnel glyph used in filter-bar affordances.",
+                kind: skVectorSymbol,
+                group: "Task App / Vector Symbols"),
+      StoryItem(name: "Task Sort Icon",
+                description: "Up/down arrows for the task-list sort affordance.",
+                kind: skVectorSymbol,
+                group: "Task App / Vector Symbols"),
+      StoryItem(name: "Empty Glyph",
+                description: "Reserved glyph with no current usages (visual-review baseline).",
                 kind: skVectorSymbol,
                 group: "Task App / Vector Symbols"),
     ])

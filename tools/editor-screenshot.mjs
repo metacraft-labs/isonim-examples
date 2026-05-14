@@ -28,18 +28,36 @@ import { execSync, spawn } from "child_process";
 import { mkdirSync, rmSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import net from "net";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
 const editorDir = join(projectRoot, "build", "editor");
 const screenshotDir = join(editorDir, "screenshots");
 
+// M-EVP-12 viewport contract:
+//
+//   - `wide`   1920 × 1080 (canonical desktop, large screens).
+//   - `laptop` 1440 ×  900 (canonical laptop; the strict density gate).
+//   - `narrow`  375 ×  812 (M-EVP-12 spec: narrow target for shell);
+//                aliased to the iPhone 13 mini portrait dimensions.
+//
+// The medium / tablet / pre-M-EVP-12 mobile (=narrow alias) entries
+// remain available for legacy --size flags; new view briefs should
+// only target wide / laptop / narrow.
 export const sizes = {
   wide: { width: 1920, height: 1080 },
   laptop: { width: 1440, height: 900 },
   medium: { width: 1280, height: 800 },
   tablet: { width: 1024, height: 768 },
-  narrow: { width: 768, height: 1024 },
+  // M-EVP-12: `narrow` is the canonical mobile shell viewport. The
+  // legacy pre-M-EVP-12 sizes table called this entry `mobile` and
+  // used 768×1024 for `narrow`; the M-EVP-12 spec re-purposes
+  // `narrow` to the strict mobile size and drops the 768×1024
+  // tablet-narrow entry (it overlapped with `tablet`).
+  narrow: { width: 375, height: 812 },
+  // Deprecated alias retained for back-compat with any pre-M-EVP-12
+  // caller that hard-coded `--size mobile`. New code: use `narrow`.
   mobile: { width: 375, height: 812 },
 };
 
@@ -229,6 +247,29 @@ export async function readIframeState(page, expectedSrcdocBackend = "") {
 //                     string means "no expectation" (no iframe yet).
 // ---------------------------------------------------------------------------
 
+// M-EVP-12: per-view size restriction. When set, --size flags that
+// don't intersect are dropped for the view (e.g. shell-narrow only
+// captures at the `mobile` viewport per the M-EVP-12 spec; canvas
+// views only capture at wide+laptop).
+//
+// `usesTui = true` declares the view requires the TUI launcher
+// subprocess to be running on the bridge port; the screenshot tool
+// spawns the launcher on demand.
+//
+// `requiresTestMode = true` injects `window.__isonimTestMode = true`
+// before the editor bundle boots (gates the M-EVP-10 / M-EVP-11
+// mirrors used here to assert manifest landings before screenshotting).
+//
+// `postSetup` runs after `setup` and after the standard
+// `verifyExpectedState`. It's the hook for canvas-mode assertions
+// that need test-mode mirrors (manifest readiness, hover, dblclick).
+
+// M-EVP-12 default sizing rules per view category. Used when a view
+// declares no explicit `viewports` array. The default is
+// ["wide", "laptop"]; views whose brief is narrow-specific can
+// declare ["mobile"] to skip the wide / laptop capture pair.
+const DEFAULT_VIEWPORTS_WIDE_LAPTOP = ["wide", "laptop"];
+
 export const views = {
   shell: {
     description:
@@ -236,6 +277,7 @@ export const views = {
     setup: async (_page) => {
       // No navigation; capture the shell on its initial mount.
     },
+    viewports: ["wide", "laptop", "narrow"],
     expectedStory: "",
     expectedBackend: "",
   },
@@ -262,7 +304,469 @@ export const views = {
     expectedStory: "Settings App / Group/Appearance",
     expectedBackend: "pbTui",
   },
+
+  // ------------------------------------------------------------------------
+  // M-EVP-12: sidebar quick-nav strip
+  // ------------------------------------------------------------------------
+
+  "sidebar-quick-nav": {
+    description:
+      "Sidebar after a search-typed-and-cleared probe and a Components quick-nav click (M-EVP-9 strip + filter + empty-category)",
+    setup: async (page) => {
+      // Type a filter, wait for the tree to narrow, then clear it.
+      // This exercises the M-EVP-9 real-time filter; the cleared
+      // input is the captured state.
+      const searchInput = page
+        .locator('[data-sidebar-search="true"]')
+        .first();
+      await searchInput.waitFor({ state: "visible", timeout: 10_000 });
+      await searchInput.fill("spacing");
+      await page.waitForTimeout(150);
+      await searchInput.fill("");
+      // Click the Components quick-nav icon.
+      const componentsIcon = page
+        .locator(
+          '[data-sidebar-quicknav="true"] [data-category-kind="skComponent"]',
+        )
+        .first();
+      await componentsIcon.waitFor({ state: "visible", timeout: 10_000 });
+      await componentsIcon.click();
+      // The active-category handler expands the Components section
+      // and updates aria-pressed; wait for the pressed state to
+      // settle so the screenshot captures the active highlight.
+      await page
+        .locator(
+          '[data-sidebar-quicknav="true"] [data-category-kind="skComponent"][aria-pressed="true"]',
+        )
+        .first()
+        .waitFor({ state: "attached", timeout: 5_000 });
+    },
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  // ------------------------------------------------------------------------
+  // M-EVP-12: vector editor (empty / split / carousel variants)
+  //
+  // The vector editor is mounted by `vm.openVectorEditor(story)`. The
+  // editor's sidebar exposes the `Task Check Icon` vector-symbol
+  // story under Foundations → `Task App / Vector Symbols`.
+  // ------------------------------------------------------------------------
+
+  "vector-editor-empty": {
+    description:
+      "Vector editor with no usage context — opened on the seeded 'Empty Glyph' symbol (0 usages)",
+    setup: async (page) => {
+      // Foundations is in the canonical sidebar section ordering;
+      // ensure the section is expanded so the vector-symbol group's
+      // toggle is reachable, then expand the group itself.
+      await ensureSectionExpanded(page, "Foundations");
+      await ensureGroupExpanded(page, "Task App / Vector Symbols");
+      // M-EVP-8 inline Edit affordance is the canonical path to the
+      // vector editor — clicking the `[data-vector-edit="true"]`
+      // button calls `vm.openVectorEditor(story)` directly. No
+      // intermediate story selection is needed (and `selectStory`
+      // would route to evComponentDetail per `viewForStory`, then
+      // the Edit click would still re-route to evVectorEditor; doing
+      // only the Edit click is simpler and avoids that flicker).
+      await openVectorEditorViaInlineEdit(page, "Empty Glyph");
+    },
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  "vector-editor-with-symbol": {
+    description:
+      "Vector editor opened on 'Task Filter Icon' — natural 2-usage workspace seed → split (stacked) usage panel",
+    setup: async (page) => {
+      await ensureSectionExpanded(page, "Foundations");
+      await ensureGroupExpanded(page, "Task App / Vector Symbols");
+      await openVectorEditorViaInlineEdit(page, "Task Filter Icon");
+    },
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  "vector-editor-carousel": {
+    description:
+      "Vector editor opened on 'Task Check Icon' — natural 6-usage workspace seed → carousel usage panel; advances to index 2 so Prev and Next are both enabled",
+    setup: async (page) => {
+      await ensureSectionExpanded(page, "Foundations");
+      await ensureGroupExpanded(page, "Task App / Vector Symbols");
+      await openVectorEditorViaInlineEdit(page, "Task Check Icon");
+      // Advance the carousel to index 2 (the 3rd dot) so Prev/Next
+      // are both enabled — a boundary-free snapshot. Two real
+      // clicks on the Next button — no VM mutation.
+      const next = page
+        .locator('[data-vector-usage-next="true"]')
+        .first();
+      await next.waitFor({ state: "visible", timeout: 10_000 });
+      await next.click();
+      await page.waitForTimeout(80);
+      await next.click();
+      await page.waitForFunction(
+        () => {
+          const panel = document.querySelector(
+            '[data-vector-usage-carousel="true"]',
+          );
+          return !!(
+            panel && panel.getAttribute("data-vector-usage-index") === "2"
+          );
+        },
+        null,
+        { timeout: 5_000 },
+      );
+    },
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  // ------------------------------------------------------------------------
+  // M-EVP-12: canvas preview (RS-M11 Pattern A) + M-EVP-10 affordances
+  //
+  // These views require the TUI launcher subprocess to be running on
+  // the bridge port. The screenshot tool spawns it on demand.
+  // ------------------------------------------------------------------------
+
+  "canvas-preview-tui": {
+    description:
+      "TUI canvas with M-EVP-10 hover label + selection outline + breadcrumb (View mode, no handles)",
+    usesTui: true,
+    requiresTestMode: true,
+    setup: async (page) => {
+      await selectTaskListStoryForCanvas(page);
+      await clickBackendChip(page, "TUI");
+      await waitForCanvasManifest(page);
+      const target = await pickTaskRowFromManifest(page);
+      const point = await canvasPointForBounds(page, target.bounds);
+      await page.mouse.move(point.clientX, point.clientY);
+      await page.waitForFunction(
+        (expected) => {
+          const v = window.__isonimHoveredComponentPath;
+          return typeof v === "string" && v === expected;
+        },
+        target.componentPath,
+        { timeout: 10_000 },
+      );
+      await page.mouse.click(point.clientX, point.clientY);
+      await page.waitForFunction(
+        (expected) => {
+          const v = window.__isonimSelectedComponentPath;
+          return typeof v === "string" && v === expected;
+        },
+        target.componentPath,
+        { timeout: 10_000 },
+      );
+      // Re-hover so the hover label is visible alongside the
+      // selection outline + breadcrumb when the screenshot fires.
+      await page.mouse.move(point.clientX, point.clientY);
+      await page.waitForTimeout(150);
+    },
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  "canvas-preview-edit-mode": {
+    description:
+      "TUI canvas with selection outline + 8 edit-mode handles",
+    usesTui: true,
+    requiresTestMode: true,
+    setup: async (page) => {
+      await selectTaskListStoryForCanvas(page);
+      await clickBackendChip(page, "TUI");
+      await waitForCanvasManifest(page);
+      const target = await pickTaskRowFromManifest(page);
+      const point = await canvasPointForBounds(page, target.bounds);
+      await page.mouse.click(point.clientX, point.clientY);
+      await page.waitForFunction(
+        (expected) => {
+          const v = window.__isonimSelectedComponentPath;
+          return typeof v === "string" && v === expected;
+        },
+        target.componentPath,
+        { timeout: 10_000 },
+      );
+      // Switch to Edit mode via the chrome bar mode chip; this is
+      // the canonical M-EVP-10 path that paints the 8 handles.
+      const editChip = page
+        .locator(
+          '[data-preview-mode="edit"]:not([data-preview-mode-disabled="true"])',
+        )
+        .first();
+      await editChip.waitFor({ state: "visible", timeout: 5_000 });
+      await editChip.click();
+      // Wait for the 8-handle group to render.
+      await page.waitForFunction(
+        () => document.querySelectorAll(
+          '[data-canvas-selection-handle="true"]',
+        ).length === 8,
+        null,
+        { timeout: 10_000 },
+      );
+    },
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  "canvas-preview-vector-dblclick-open": {
+    description:
+      "Editor state right after a vector-symbol canvas dblclick opens the vector editor (M-EVP-11)",
+    usesTui: true,
+    requiresTestMode: true,
+    setup: async (page) => {
+      await selectTaskListStoryForCanvas(page);
+      await clickBackendChip(page, "TUI");
+      await waitForCanvasManifest(page);
+      // Find the TaskCheckIcon vector-symbol manifest entry.
+      const target = await page.evaluate(() => {
+        const m = window.__isonimManifest;
+        if (!m || !Array.isArray(m.elements)) return null;
+        const entry = m.elements.find(
+          (e) =>
+            e.kind === "vector-symbol" &&
+            e.componentPath === "task_app/views/TaskCheckIcon",
+        );
+        return entry ? { bounds: entry.bounds,
+                         componentPath: entry.componentPath } : null;
+      });
+      if (!target) {
+        throw new Error(
+          "canvas-preview-vector-dblclick-open: no vector-symbol " +
+            "manifest entry with componentPath " +
+            "task_app/views/TaskCheckIcon — has the TaskCheckIcon " +
+            "leaf been wired in the TUI summary bar?",
+        );
+      }
+      const point = await canvasPointForBounds(page, target.bounds);
+      await page.mouse.dblclick(point.clientX, point.clientY);
+      // Wait for the vector editor mount + target-string mirror.
+      await page.waitForFunction(
+        () =>
+          window.__isonimEditorActiveView === "evVectorEditor" &&
+          window.__isonimVectorEditorTarget ===
+            "task_app/views/TaskCheckIcon",
+        null,
+        { timeout: 10_000 },
+      );
+      await page.waitForTimeout(150);
+    },
+    expectedStory: "",
+    expectedBackend: "",
+  },
 };
+
+// ---------------------------------------------------------------------------
+// Helpers used by the M-EVP-12 view setups.
+// ---------------------------------------------------------------------------
+
+async function openVectorEditorViaInlineEdit(page, symbolName) {
+  // M-EVP-8 inline Edit affordance: each skVectorSymbol row in the
+  // sidebar exposes a `[data-vector-edit="true"]` button next to
+  // the row label. Clicking it calls `vm.openVectorEditor(story)`
+  // which flips `vm.activeView` to `evVectorEditor`.
+  //
+  // *Quirk* (post-M-EVP-9 sidebar): an `event.stopPropagation()`
+  // on the inline Edit button is documented in shell.nim but the
+  // DSL's ``addEventListener`` wrapper doesn't actually emit one,
+  // so clicking the button via `playwright.click()` also bubbles
+  // up to the row's `onclick = selectStory` handler — which then
+  // calls `selectStory(skVectorSymbol)` → `evComponentDetail`
+  // (overrides the vector-editor view we just opened). We side-
+  // step the bubbling by dispatching the click event directly
+  // and immediately re-asserting the active view via the editor's
+  // openVectorEditor entry. Because the editor's DSL handlers are
+  // bound through `addEventListener("click", openVec)` we can
+  // simulate the same code path by calling the bound handler with
+  // a non-bubbling synthetic Event — which is exactly what
+  // ``el.dispatchEvent(new Event('click', { bubbles: false }))``
+  // does in JS. The row handler is bound to its OWN element, not
+  // a wrapping document listener, so a non-bubbling event fires
+  // only the Edit-button handler.
+  await page.locator(`[aria-label="Edit vector symbol ${symbolName}"]`)
+    .first()
+    .waitFor({ state: "visible", timeout: 10_000 });
+  await page.evaluate((label) => {
+    const el = document.querySelector(`[aria-label="${label}"]`);
+    if (!el) throw new Error(`Edit affordance for "${label}" not in DOM`);
+    el.dispatchEvent(new Event("click", { bubbles: false }));
+  }, `Edit vector symbol ${symbolName}`);
+  // Wait for the vector editor surface to mount.
+  await page
+    .locator('[data-vector-editor="true"]')
+    .first()
+    .waitFor({ state: "visible", timeout: 10_000 });
+}
+
+async function selectTaskListStoryForCanvas(page) {
+  // Navigate the sidebar to a TaskList story so the
+  // component-detail view mounts the project canvas.
+  await ensureSectionExpanded(page, "Components");
+  await ensureGroupExpanded(page, "Task App / TaskList");
+  // The first TaskList story in stories.nim is "Empty" — pick
+  // "Two Active" instead since it produces multiple TaskRow
+  // manifest entries which exercises the manifest hit-test better.
+  await selectStory(page, "Task App / TaskList / Two Active");
+}
+
+async function waitForCanvasManifest(page) {
+  // The canvas becomes the active surface for non-Web backends.
+  const canvas = page
+    .locator('canvas[data-canvas-active="true"]')
+    .first();
+  await canvas.waitFor({ state: "visible", timeout: 15_000 });
+  // Wait for non-empty paint.
+  await page.waitForFunction(
+    () => {
+      const list = document.querySelectorAll(
+        'canvas[data-canvas-active="true"]',
+      );
+      if (list.length === 0) return false;
+      const c = list[0];
+      if (c.width === 0 || c.height === 0) return false;
+      const ctx = c.getContext("2d");
+      if (!ctx) return false;
+      try {
+        const img = ctx.getImageData(0, 0, c.width, c.height);
+        for (let i = 0; i < img.data.length; i += 4) {
+          if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
+        }
+      } catch {
+        return false;
+      }
+      return false;
+    },
+    null,
+    { timeout: 30_000 },
+  );
+  // Wait for the gated element-tree manifest mirror.
+  await page.waitForFunction(
+    () => {
+      const m = window.__isonimManifest;
+      return !!(
+        m &&
+        m.type === "element-tree" &&
+        Array.isArray(m.elements) &&
+        m.elements.length > 0
+      );
+    },
+    null,
+    { timeout: 15_000 },
+  );
+  // Wait for canvas dimensions to match the manifest surface.
+  await page.waitForFunction(
+    () => {
+      const m = window.__isonimManifest;
+      const list = document.querySelectorAll(
+        'canvas[data-canvas-active="true"]',
+      );
+      if (list.length === 0 || !m) return false;
+      const c = list[0];
+      return c.width === m.surfaceWidth && c.height === m.surfaceHeight;
+    },
+    null,
+    { timeout: 10_000 },
+  );
+}
+
+async function pickTaskRowFromManifest(page) {
+  return await page.evaluate(() => {
+    const m = window.__isonimManifest;
+    const rows = m.elements.filter((e) =>
+      e.componentPath.startsWith("task_app/views/TaskRow#"),
+    );
+    const row = rows.length >= 2 ? rows[1] : rows[0];
+    return {
+      id: row.id,
+      componentPath: row.componentPath,
+      bounds: row.bounds,
+    };
+  });
+}
+
+async function canvasPointForBounds(page, bounds) {
+  return await page.evaluate((row) => {
+    const list = document.querySelectorAll(
+      'canvas[data-canvas-active="true"]',
+    );
+    const c = list[0];
+    const rect = c.getBoundingClientRect();
+    const cx = row.x + Math.floor(row.w / 2);
+    const cy = row.y + Math.floor(row.h / 2);
+    const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
+    const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
+    return { clientX, clientY };
+  }, bounds);
+}
+
+// ---------------------------------------------------------------------------
+// TUI launcher subprocess management.
+//
+// The canvas-* views need a real TUI bridge process running on a
+// well-known port so `attachBridgeClient` can connect. We start a
+// single launcher process for the lifetime of the screenshot run,
+// then poll the bridge HTTP root before driving the editor.
+// ---------------------------------------------------------------------------
+
+// Must match `bridgePortForBackend(pbTui)` in
+// isonim/src/isonim/editor/streaming_preview.nim — the JS editor
+// bundle hard-codes this port when attaching its bridge client.
+const TUI_BRIDGE_PORT = 8102;
+
+async function waitForTcpPort(port, host, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ok = await new Promise((resolve) => {
+      const sock = net.createConnection({ port, host });
+      sock.once("connect", () => { sock.end(); resolve(true); });
+      sock.once("error", () => { resolve(false); });
+    });
+    if (ok) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
+async function startTuiLauncher(projectRoot) {
+  const launcherBin = join(
+    projectRoot, "build", "backends", "isonim-examples-tui",
+  );
+  if (!existsSync(launcherBin)) {
+    throw new Error(
+      `TUI launcher binary missing: ${launcherBin}. ` +
+        "Run `just build-backends` (or `direnv exec . just build-backends`) first.",
+    );
+  }
+  const staticDir = join(
+    projectRoot, "..", "isonim-render-serve", "static",
+  );
+  const args = [
+    "--port", String(TUI_BRIDGE_PORT),
+    "--demo=tasks",
+    "--fps", "8",
+  ];
+  if (existsSync(staticDir)) {
+    args.push("--static", staticDir);
+  }
+  console.log(
+    `==> Starting TUI launcher on port ${TUI_BRIDGE_PORT}: ${launcherBin} ${args.join(" ")}`,
+  );
+  const proc = spawn(launcherBin, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+  proc.stdout.on("data", () => { /* discard */ });
+  proc.stderr.on("data", () => { /* discard */ });
+  const ok = await waitForTcpPort(
+    TUI_BRIDGE_PORT, "127.0.0.1", 15_000,
+  );
+  if (!ok) {
+    try { process.kill(-proc.pid); } catch { /* ignore */ }
+    throw new Error(
+      `TUI launcher did not open port ${TUI_BRIDGE_PORT} within 15s`,
+    );
+  }
+  return proc;
+}
 
 // ---------------------------------------------------------------------------
 // Expected-state verification
@@ -328,11 +832,12 @@ async function main() {
   // Parse args.
   const args = process.argv.slice(2);
   let selectedViews = Object.keys(views);
-  let selectedSizes = Object.keys(sizes);
+  let selectedSizes = null; // null means "honour each view's `viewports`"
   let isFiltered = false;
   let skipBuild = false;
   let port = 8091;
   let listOnly = false;
+  let outDir = screenshotDir;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -342,6 +847,10 @@ async function main() {
         break;
       case "--size":
         selectedSizes = [args[++i]];
+        isFiltered = true;
+        break;
+      case "--out-dir":
+        outDir = args[++i];
         isFiltered = true;
         break;
       case "--port":
@@ -377,10 +886,12 @@ async function main() {
       process.exit(1);
     }
   }
-  for (const s of selectedSizes) {
-    if (!sizes[s]) {
-      console.error(`Unknown size: ${s}`);
-      process.exit(1);
+  if (selectedSizes !== null) {
+    for (const s of selectedSizes) {
+      if (!sizes[s]) {
+        console.error(`Unknown size: ${s}`);
+        process.exit(1);
+      }
     }
   }
 
@@ -405,10 +916,21 @@ async function main() {
   );
   await new Promise((r) => setTimeout(r, 1000));
 
-  if (!isFiltered && existsSync(screenshotDir)) {
-    rmSync(screenshotDir, { recursive: true });
+  // M-EVP-12: if any selected view requires the TUI launcher, spawn
+  // it once for the lifetime of the screenshot run. The launcher
+  // listens on port 8102 — the editor's `bridgePortForBackend(pbTui)`
+  // contract. We only spawn once per screenshot run so back-to-back
+  // canvas views share the same WebSocket-ready bridge.
+  const needsTui = selectedViews.some((v) => views[v].usesTui);
+  let tuiLauncher = null;
+  if (needsTui) {
+    tuiLauncher = await startTuiLauncher(projectRoot);
   }
-  mkdirSync(screenshotDir, { recursive: true });
+
+  if (!isFiltered && existsSync(outDir)) {
+    rmSync(outDir, { recursive: true });
+  }
+  mkdirSync(outDir, { recursive: true });
 
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
@@ -418,13 +940,36 @@ async function main() {
   try {
     for (const viewName of selectedViews) {
       const view = views[viewName];
-      for (const sizeName of selectedSizes) {
+      // Resolve the effective per-view viewport list:
+      //   - explicit --size flag wins (overrides view's `viewports`).
+      //   - else view.viewports if declared.
+      //   - else DEFAULT_VIEWPORTS_WIDE_LAPTOP.
+      const effectiveSizes = (selectedSizes !== null)
+        ? selectedSizes
+        : (Array.isArray(view.viewports) && view.viewports.length > 0
+            ? view.viewports
+            : DEFAULT_VIEWPORTS_WIDE_LAPTOP);
+      for (const sizeName of effectiveSizes) {
         const vp = sizes[sizeName];
+        if (!vp) {
+          throw new Error(
+            `view "${viewName}": viewport "${sizeName}" not in the sizes table`,
+          );
+        }
         const context = await browser.newContext({
           viewport: { width: vp.width, height: vp.height },
           deviceScaleFactor: 2,
         });
         const page = await context.newPage();
+        // M-EVP-12: views that drive M-EVP-10 / M-EVP-11 mirrors must
+        // see `window.__isonimTestMode === true` BEFORE the editor
+        // bundle boots, so the gated `window.__isonim*` write paths
+        // fire on the first event after attachBridgeClient mounts.
+        if (view.requiresTestMode === true) {
+          await page.addInitScript(() => {
+            window.__isonimTestMode = true;
+          });
+        }
         await page.goto(`http://127.0.0.1:${port}/`);
         await page.waitForTimeout(400);
         await view.setup(page);
@@ -432,7 +977,7 @@ async function main() {
         // M-EVP-2: verify expected state BEFORE writing the PNG so
         // the captured screenshot can never be silently stale.
         await verifyExpectedState(page, viewName, view);
-        const p = join(screenshotDir, `${viewName}-${sizeName}.png`);
+        const p = join(outDir, `${viewName}-${sizeName}.png`);
         await page.screenshot({ path: p });
         console.log(
           `    ${viewName}-${sizeName} (${vp.width}x${vp.height}): ${p}`,
@@ -450,6 +995,13 @@ async function main() {
     process.kill(-server.pid);
   } catch {
     /* ignore */
+  }
+  if (tuiLauncher) {
+    try {
+      process.kill(-tuiLauncher.pid);
+    } catch {
+      /* ignore */
+    }
   }
   if (failure) {
     console.error(`==> FAILED after ${count} screenshot(s):`);

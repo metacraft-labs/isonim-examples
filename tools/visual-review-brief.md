@@ -64,26 +64,37 @@ represents; use that to pick the right expected-elements block.
 ### View: `shell-*` (default landing)
 
 The editor's chrome with no story selected (or with the default story
-showing):
+showing). This template covers the **post-M-EVP-6/7/9** state — see
+also `visual-review-briefs/shell-{wide,laptop,narrow}.md` for the
+per-viewport briefs the screenshot tool consumes.
 
 - **NO global top bar.** The shell should sit edge-to-edge at the very
   top of the viewport — no "IsoNim Editor / isonim-examples / v0.1.0"
   strip above the panels.
 - **NO left-edge or right-edge chip columns.** Backend / viewport /
   mode chips have all moved into the preview-pane top toolbar.
-- **Left panel:** a story browser with at least two top-level groups
-  (`Task App` and `Settings App`), each expandable into a tree of
-  categories (`Foundations`, `Components`, `Patterns`, `Pages`,
-  `Flows`) and stories underneath.
-- **Centre preview pane:** a top toolbar that contains, in one row
-  (wrapping to two rows on narrow viewports if needed):
-  1. The view-switcher (Flow / Detail / Page / Foundations / Vector).
-  2. Backend chips (Web / TUI / GPUI / Freya / Cocoa / Droid). Cocoa
-     and Android may appear disabled (greyed) on hosts without those
-     launchers.
-  3. Viewport chips (Desktop / Laptop / Tablet / Phone or TUI cell
-     viewports when TUI is selected).
-  4. Mode chips (View / Comment / Edit).
+- **NO view-switcher** anywhere in the chrome (M-EVP-7 dropped the
+  Flow / Detail / Page / Foundations / Vector switcher; the view is
+  derived from the selected story's kind via `viewForStory`).
+- **Left panel:** a story browser. At the top: a
+  `[data-sidebar-search="true"]` search input, then a
+  `[data-sidebar-quicknav="true"]` strip of **exactly five icons**
+  (Foundations / Components / Pages / User Journeys / Guidelines —
+  M-EVP-9), then five collapsible sections in canonical order (User
+  Journeys, Pages, Components, Foundations, Guidelines). Stories
+  nest underneath; the seed workspace exposes `Task App` and
+  `Settings App` stories.
+- **Centre preview pane:** exactly one
+  `[data-preview-chrome-bar="true"]` toolbar (M-EVP-6: single chrome
+  bar — no per-view inner toolbars). It contains exactly **three**
+  chip clusters in this order:
+  1. `data-toolbar-cluster="backend"` — Web / TUI / GPUI / Freya /
+     Cocoa / Android. Unavailable backends carry
+     `data-preview-backend-available="false"` and appear greyed.
+  2. `data-toolbar-cluster="viewport"` — Desktop / Laptop / Tablet /
+     Phone or TUI cell viewports when TUI is selected.
+  3. `data-toolbar-cluster="mode"` — exactly three chips with
+     `data-preview-mode` ∈ `{ view, comment, edit }`.
   Below the toolbar is the preview canvas — empty-state landing card,
   or a live story render once a story is selected.
 - **Right panel:** the inspector — a properties / styles / AI-chat

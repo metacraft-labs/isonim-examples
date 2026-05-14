@@ -223,3 +223,45 @@ editor-screenshot-view view:
 # Screenshot at a specific size (wide, laptop, ...).
 editor-screenshot-size size:
     node tools/editor-screenshot.mjs --size {{size}}
+
+# --- M-EVP-12: Visual feedback loop coverage ---
+#
+# `test-editor-visual-gates` is the recipe the M-EVP-12 acceptance
+# scenario expects: fan out per-screen captures across the M-EVP-12
+# scope list (shell + sidebar-quick-nav + story-selected + vector
+# editor variants + canvas-preview variants) and write deterministic
+# screenshots into `screenshots/`. The per-screen design briefs live
+# under `tools/visual-review-briefs/<screen>.md`.
+#
+# Prereqs (the recipe checks; build them yourself if missing):
+#   - `just build-backends`           (TUI launcher for canvas views)
+#   - `just build-backends-macos`     (Cocoa launcher; macOS only)
+#   - `just editor-build`             (the JS bundle the screenshot
+#                                      tool serves on port 8091)
+#
+# Output: `screenshots/<screen>-<viewport>.png` at the repo root.
+# Viewports: shell-* captures wide / laptop / narrow; the other
+# screens capture wide + laptop. Canvas screens spawn the TUI
+# launcher subprocess once for the whole run; vector-editor variants
+# use only real interactions (sidebar Edit affordance + Next button)
+# against the seeded `usesVectorSymbols` workspace data in
+# `editor/stories.nim`.
+#
+# The recipe iterates the M-EVP-12 in-scope view list explicitly so
+# pre-existing legacy views (e.g. `story-selected-tui`) do not block
+# the gate — they remain reachable through the standalone
+# `editor-screenshot` recipe.
+test-editor-visual-gates: editor-build
+    @rm -rf screenshots
+    @mkdir -p screenshots
+    @for view in shell story-selected sidebar-quick-nav \
+                 vector-editor-empty vector-editor-with-symbol \
+                 vector-editor-carousel canvas-preview-tui \
+                 canvas-preview-edit-mode \
+                 canvas-preview-vector-dblclick-open; do \
+      echo "[test-editor-visual-gates] $view"; \
+      node tools/editor-screenshot.mjs \
+          --no-build \
+          --view $view \
+          --out-dir screenshots || exit 1; \
+    done
