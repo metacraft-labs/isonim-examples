@@ -207,10 +207,13 @@ editor-build:
     cp editor/index.html build/editor/index.html
     @echo "Built: build/editor/ - open build/editor/index.html"
 
-# Serve the editor at http://localhost:8091.
+# Serve the editor at http://localhost:8091, proxying /bridge/<backend>
+# WebSocket connections to the per-backend launcher ports. Same-origin
+# proxying lets a remote browser reach the launchers through one port
+# without exposing 8102-8106 directly.
 editor-serve: editor-build build-backends
-    @echo "Serving editor on http://localhost:8091"
-    cd build/editor && python3 -m http.server 8091
+    @echo "Serving editor on http://0.0.0.0:8091 (with /bridge/* WS proxy)"
+    node tools/editor-server.mjs
 
 # Screenshot all editor views at all sizes -> build/editor/screenshots/.
 editor-screenshot:
