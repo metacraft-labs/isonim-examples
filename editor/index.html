@@ -21,6 +21,9 @@
     </style>
   </head>
   <body>
-    <script src="editor.js"></script>
+    <!-- Cache-bust based on build time so refreshes pick up the latest editor.js.
+         Python's http.server doesn't send no-cache headers; without the
+         versioned query, browsers serve a stale bundle indefinitely. -->
+    <script>document.write('<script src="editor.js?v=' + Date.now() + '"><\/script>');</script>
   </body>
 </html>
