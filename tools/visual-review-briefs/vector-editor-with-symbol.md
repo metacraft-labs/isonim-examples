@@ -12,8 +12,8 @@ covered by `vector-editor-carousel.md`.)
 The screenshot tool drives the editor to this state by:
 
 1. Opening the editor.
-2. Navigating to the `Task Check Icon` vector symbol (Foundations
-   → `Task App / Vector Symbols` → `Task Check Icon`).
+2. Navigating to the `Task Filter Icon` vector symbol (Foundations
+   → `Task App / Vector Symbols` → `Task Filter Icon`).
 3. Asserting `vm.vectorEditorUsages.val.len` is in `[1, 3]`.
 4. If the demo workspace exposes more than 3 usages, the tool
    manipulates the test-mode hook to force a 2-usage subset (so
