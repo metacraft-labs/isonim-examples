@@ -1254,7 +1254,19 @@ test.describe("M-EVP-10 canvas affordances", () => {
     await expect(editChip).toBeVisible({ timeout: 5_000 });
     await editChip.click();
 
-    const handles = page.locator('[data-canvas-selection-handle="true"]');
+    // M-EVP-13: each view (component detail, page preview, foundations
+    // page) mounts its own canvas + overlay via the shared `canvas_mount`
+    // helper, so the global handle selector now matches 24 elements.
+    // Scope to the component-detail view's canvas wrapper (the one
+    // whose canvas carries `data-component-project-canvas`).
+    const activeWrapper = page
+      .locator(
+        '[data-canvas-wrapper="true"]:has(canvas[data-component-project-canvas="true"])',
+      )
+      .first();
+    const handles = activeWrapper.locator(
+      '[data-canvas-selection-handle="true"]',
+    );
     await expect(handles).toHaveCount(8, { timeout: 5_000 });
     // M-EVP-12 fix-cycle 2: count-only was silent on the regression where
     // the chrome bar's Edit chip swapped vm.activeView from
@@ -1642,5 +1654,244 @@ test.describe("EX-M14: viewport-strip drives the preview region width", () => {
       desktopWidth,
       `desktop viewport must be wider than phone; got desktop=${desktopWidth} phone=${phoneWidth}`,
     ).toBeGreaterThan(phoneWidth);
+  });
+});
+
+// --------------------------------------------------------------------------
+// 6. M-EVP-13 page preview canvas
+//     `views/page_preview.nim` now mounts the same Pattern A canvas +
+//     overlay stack `component_detail.nim` does. When the active
+//     backend is non-Web, the iframe hides and the canvas takes over,
+//     filling the device-frame's interior. CSS Approach A keeps the
+//     canvas at the pane's full height (no more "thin stretched strip"
+//     bug from the previous `width: 100%; min-height: 1px` rule).
+// --------------------------------------------------------------------------
+
+test.describe("M-EVP-13 page preview canvas", () => {
+  async function openInboxPage(page: Page) {
+    const pagesGroup = page
+      .locator('[aria-label="Toggle Task App / Pages stories"]')
+      .first();
+    await expect(pagesGroup).toBeVisible({ timeout: 10_000 });
+    const expanded = await pagesGroup.getAttribute("aria-expanded");
+    if (expanded !== "true") {
+      await pagesGroup.click();
+    }
+    const story = page
+      .locator('[aria-label="Select story Task App / Pages / Inbox"]')
+      .first();
+    await expect(story).toBeVisible({ timeout: 10_000 });
+    await story.click();
+  }
+
+  test("Page + TUI mounts the page-preview canvas and hides the iframe", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+    });
+    await gotoEditor(page);
+    await openInboxPage(page);
+
+    // Switch backend to TUI: the page-preview's canvas should take
+    // over from the iframe.
+    const tuiChip = page.locator('[data-preview-backend="tui"]').first();
+    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
+    await tuiChip.click();
+
+    const canvas = page
+      .locator('canvas[data-page-project-canvas="true"][data-canvas-active="true"]')
+      .first();
+    await expect(canvas).toBeVisible({ timeout: 10_000 });
+
+    // Wait for the editor's WS client to paint a non-empty frame on
+    // the page-preview canvas (real launcher pixels).
+    await page.waitForFunction(
+      () => {
+        const c = document.querySelector(
+          'canvas[data-page-project-canvas="true"][data-canvas-active="true"]',
+        ) as HTMLCanvasElement | null;
+        if (!c) return false;
+        if (c.width === 0 || c.height === 0) return false;
+        const ctx = c.getContext("2d");
+        if (!ctx) return false;
+        try {
+          const img = ctx.getImageData(0, 0, c.width, c.height);
+          for (let i = 0; i < img.data.length; i += 4) {
+            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
+          }
+        } catch {
+          return false;
+        }
+        return false;
+      },
+      null,
+      { timeout: 15_000 },
+    );
+
+    // The iframe must be hidden when the canvas is the active surface.
+    const iframeDisplay = await page.evaluate(() => {
+      const f = document.querySelector(
+        'iframe[data-page-project-frame="true"]',
+      ) as HTMLIFrameElement | null;
+      if (!f) return "missing";
+      return window.getComputedStyle(f).display;
+    });
+    expect(iframeDisplay).toBe("none");
+  });
+
+  test("Page + Web regression: iframe is back, canvas hidden", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+    });
+    await gotoEditor(page);
+    await openInboxPage(page);
+
+    // Round-trip: TUI first, then back to Web.
+    const tuiChip = page.locator('[data-preview-backend="tui"]').first();
+    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
+    await tuiChip.click();
+    await expect(
+      page
+        .locator(
+          'canvas[data-page-project-canvas="true"][data-canvas-active="true"]',
+        )
+        .first(),
+    ).toBeVisible({ timeout: 10_000 });
+
+    const webChip = page.locator('[data-preview-backend="web"]').first();
+    await expect(webChip).toBeVisible({ timeout: 10_000 });
+    await webChip.click();
+
+    // The iframe is back visible; the canvas is hidden (data attribute
+    // flips to "false" and the wrapper's display is "none").
+    await page.waitForFunction(
+      () => {
+        const f = document.querySelector(
+          'iframe[data-page-project-frame="true"]',
+        ) as HTMLIFrameElement | null;
+        if (!f) return false;
+        return window.getComputedStyle(f).display === "block";
+      },
+      null,
+      { timeout: 10_000 },
+    );
+
+    const canvasDisplay = await page.evaluate(() => {
+      const c = document.querySelector(
+        'canvas[data-page-project-canvas="true"]',
+      ) as HTMLCanvasElement | null;
+      if (!c) return "missing";
+      return window.getComputedStyle(c).display;
+    });
+    expect(canvasDisplay).toBe("none");
+  });
+
+  test("Canvas fit-to-pane: rendered height fills most of preview pane", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+    });
+    await gotoEditor(page);
+    await openInboxPage(page);
+
+    const tuiChip = page.locator('[data-preview-backend="tui"]').first();
+    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
+    await tuiChip.click();
+
+    const canvasLoc = page
+      .locator('canvas[data-page-project-canvas="true"][data-canvas-active="true"]')
+      .first();
+    await expect(canvasLoc).toBeVisible({ timeout: 10_000 });
+
+    // Wait for first non-empty frame so layout has settled to the real
+    // surface dimensions.
+    await page.waitForFunction(
+      () => {
+        const c = document.querySelector(
+          'canvas[data-page-project-canvas="true"][data-canvas-active="true"]',
+        ) as HTMLCanvasElement | null;
+        if (!c) return false;
+        if (c.width === 0 || c.height === 0) return false;
+        const ctx = c.getContext("2d");
+        if (!ctx) return false;
+        try {
+          const img = ctx.getImageData(0, 0, c.width, c.height);
+          for (let i = 0; i < img.data.length; i += 4) {
+            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
+          }
+        } catch {
+          return false;
+        }
+        return false;
+      },
+      null,
+      { timeout: 15_000 },
+    );
+
+    // Measure the canvas's rendered box vs the surrounding preview
+    // pane host. M-EVP-13 mounts the canvas in a sibling pane that
+    // bypasses the cell-sized device frame, so the canvas can fill
+    // the available preview area (instead of being squeezed into a
+    // TUI viewport's 80x24 CSS-pixel box — the original tiny-strip
+    // bug). Approach A's `object-fit: contain` preserves the
+    // launcher's surface aspect ratio.
+    const measurements = await page.evaluate(() => {
+      const c = document.querySelector(
+        'canvas[data-page-project-canvas="true"][data-canvas-active="true"]',
+      ) as HTMLCanvasElement | null;
+      const previewHost = document.querySelector(
+        '[data-page-preview="true"]',
+      ) as HTMLElement | null;
+      const canvasPane = document.querySelector(
+        '[data-page-canvas-pane="true"]',
+      ) as HTMLElement | null;
+      if (!c || !previewHost || !canvasPane) {
+        return null;
+      }
+      const cRect = c.getBoundingClientRect();
+      const hRect = previewHost.getBoundingClientRect();
+      const pRect = canvasPane.getBoundingClientRect();
+      return {
+        cw: cRect.width,
+        ch: cRect.height,
+        hw: hRect.width,
+        hh: hRect.height,
+        pw: pRect.width,
+        ph: pRect.height,
+      };
+    });
+    expect(measurements).not.toBeNull();
+    const m = measurements!;
+    // Regression guard against the "tiny stretched strip" pathology
+    // from the prior `width: 100%; min-height: 1px;` rule, which
+    // rendered the canvas at the TUI cell-viewport's 24-CSS-pixel
+    // height. With M-EVP-13's Approach A + dedicated canvas pane,
+    // the canvas's height must occupy a substantial share of the
+    // preview pane: the TUI launcher's wide 640x288 surface aspect
+    // (2.22) combined with `object-fit: contain` puts the canvas at
+    // ~width/2.22 CSS pixels of height. On a ~900px-wide pane that
+    // is ~405 px — far above the prior 24 px strip.
+    expect(
+      m.ch,
+      `canvas height ${m.ch} must exceed 25% of preview-pane height ${m.hh}`,
+    ).toBeGreaterThan(m.hh * 0.25);
+    // The rendered canvas must not exceed the preview pane's width.
+    // Allow a single CSS pixel for sub-pixel rounding.
+    expect(m.cw).toBeLessThanOrEqual(m.hw + 1);
+    // The canvas must occupy effectively the full width of its
+    // dedicated pane (M-EVP-13's canvas-pane sibling, sized via
+    // `flex: 1`) — Approach A's `width: 100%` is the load-bearing
+    // rule.
+    expect(
+      m.cw,
+      `canvas width ${m.cw} must exceed 80% of canvas-pane width ${m.pw}`,
+    ).toBeGreaterThan(m.pw * 0.8);
+    // Hard lower bound on canvas height — must clear the prior
+    // 24-pixel strip pathology by a wide margin.
+    expect(m.ch).toBeGreaterThan(200);
   });
 });
