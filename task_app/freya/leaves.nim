@@ -229,4 +229,15 @@ proc summaryBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
     let active = vm.activeCount
     let total = vm.totalCount
     r.setTextContent(row, $active & " of " & $total & " remaining")
+
+  # M-EVP-11: nested vector-symbol leaf. Mirrors the TUI / GPUI /
+  # Cocoa / Android leaves' minimal check-mark annotation so the
+  # editor's canvas dblclick handler can resolve the click back to
+  # the matching ``skVectorSymbol`` story and open the vector editor.
+  let icon = r.createElement("span")
+  r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
+  r.setAttribute(icon, ElementKindAttr, "vector-symbol")
+  r.setTextContent(icon, "v")
+  r.appendChild(summaryNode, icon)
+
   summaryNode

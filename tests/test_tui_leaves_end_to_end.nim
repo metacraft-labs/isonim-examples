@@ -67,8 +67,10 @@ suite "EX-M2: migrated TUI leaves drive the real-stack pipeline":
     check "[ ]" in row0Text
     check "buy milk" in row0Text
 
-    # Summary shows "3 of 3 remaining".
-    check s.summaryNode.children.len == 1
+    # Summary shows "3 of 3 remaining" in its first child; the second
+    # child is the M-EVP-11 seeded TaskCheckIcon vector-symbol leaf
+    # (annotated with ``ElementKindAttr = "vector-symbol"``).
+    check s.summaryNode.children.len == 2
     let summaryText = s.summaryNode.children[0].children[0].text
     check summaryText == "3 of 3 remaining"
 

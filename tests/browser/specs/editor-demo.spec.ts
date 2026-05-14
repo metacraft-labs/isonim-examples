@@ -1280,6 +1280,321 @@ test.describe("M-EVP-10 canvas affordances", () => {
 });
 
 // --------------------------------------------------------------------------
+// 4f. M-EVP-11: vector-symbol dblclick on the real-launcher canvas.
+//
+//     The seeded ``task_app/views/TaskCheckIcon`` leaf (every renderer
+//     emits one inside the summary bar) carries ``kind = "vector-symbol"``
+//     in the element-tree manifest. Pattern A's JS shim adds a
+//     ``dblclick`` listener that hit-tests the manifest, checks the kind,
+//     and (when it matches) calls into the editor's
+//     ``openVectorEditor`` through a Nim closure injected from
+//     ``component_detail.nim``. The closure mirrors the resulting
+//     ``activeView`` and ``vectorEditorTarget`` onto window under
+//     ``__isonimTestMode === true``.
+// --------------------------------------------------------------------------
+
+test.describe("M-EVP-11 vector-symbol canvas dblclick", () => {
+  test("vector symbol dblclick on canvas opens the vector editor", async ({
+    page,
+  }) => {
+    // Same gated test-mode flag the M-EVP-10 / Pattern A specs use; the
+    // hook writes only fire when this is set to literal ``true``.
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+    });
+    await gotoEditor(page);
+
+    // Navigate into Task App / TaskList / Two Active — the canonical
+    // demo page that brings the summary bar (and its seeded
+    // ``TaskCheckIcon`` vector-symbol leaf) into the launcher's
+    // composition root.
+    const taskListGroup = page
+      .locator('[aria-label="Toggle Task App / TaskList stories"]')
+      .first();
+    await expect(taskListGroup).toBeVisible({ timeout: 10_000 });
+    const taskListExpanded = await taskListGroup.getAttribute("aria-expanded");
+    if (taskListExpanded !== "true") {
+      await taskListGroup.click();
+    }
+    const taskListStory = page
+      .locator('[aria-label^="Select story Task App / TaskList /"]')
+      .first();
+    await expect(taskListStory).toBeVisible({ timeout: 10_000 });
+    await taskListStory.click();
+
+    // Switch the preview backend to TUI so the canvas takes over and
+    // ``attachBridgeClient`` registers the dblclick listener through
+    // the JS shim.
+    const tuiChip = page.locator('[data-preview-backend="tui"]').first();
+    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
+    await tuiChip.click();
+
+    const canvas = page.locator('canvas[data-canvas-active="true"]').first();
+    await expect(canvas).toBeVisible({ timeout: 10_000 });
+
+    // Wait for the canvas to paint a non-empty frame.
+    await page.waitForFunction(
+      () => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        if (c.width === 0 || c.height === 0) return false;
+        const ctx = c.getContext("2d");
+        if (!ctx) return false;
+        try {
+          const img = ctx.getImageData(0, 0, c.width, c.height);
+          for (let i = 0; i < img.data.length; i += 4) {
+            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
+          }
+        } catch {
+          return false;
+        }
+        return false;
+      },
+      null,
+      { timeout: 15_000 },
+    );
+
+    // Wait for an element-tree manifest that includes the seeded
+    // vector-symbol entry.
+    await page.waitForFunction(
+      () => {
+        const m = (window as unknown as Record<string, unknown>)
+          .__isonimManifest as {
+            type?: string;
+            elements?: Array<{ componentPath: string; kind: string }>;
+          } | undefined;
+        return !!(
+          m &&
+          m.type === "element-tree" &&
+          Array.isArray(m.elements) &&
+          m.elements.some(
+            (e) =>
+              e.kind === "vector-symbol" &&
+              e.componentPath === "task_app/views/TaskCheckIcon",
+          )
+        );
+      },
+      null,
+      { timeout: 15_000 },
+    );
+
+    const manifestInfo = await page.evaluate(() => {
+      const m = (window as unknown as Record<string, unknown>)
+        .__isonimManifest as {
+          surfaceWidth: number;
+          surfaceHeight: number;
+          elements: Array<{
+            id: string;
+            componentPath: string;
+            kind: string;
+            bounds: { x: number; y: number; w: number; h: number };
+          }>;
+        };
+      const vectorSymbols = m.elements.filter(
+        (e) => e.kind === "vector-symbol",
+      );
+      return {
+        surfaceWidth: m.surfaceWidth,
+        surfaceHeight: m.surfaceHeight,
+        vectorSymbols,
+      };
+    });
+    expect(manifestInfo.vectorSymbols.length).toBeGreaterThan(0);
+    const targetSymbol = manifestInfo.vectorSymbols.find(
+      (e) => e.componentPath === "task_app/views/TaskCheckIcon",
+    );
+    expect(targetSymbol).toBeDefined();
+
+    // Wait for the canvas pixel dims to match the manifest's surface
+    // so the dblclick coordinate math is well-defined.
+    await page.waitForFunction(
+      (expected: { w: number; h: number }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        return c.width === expected.w && c.height === expected.h;
+      },
+      { w: manifestInfo.surfaceWidth, h: manifestInfo.surfaceHeight },
+      { timeout: 10_000 },
+    );
+
+    const click = await page.evaluate(
+      (sym: { bounds: { x: number; y: number; w: number; h: number } }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        const c = list[0] as HTMLCanvasElement;
+        const rect = c.getBoundingClientRect();
+        const cx = sym.bounds.x + Math.floor(sym.bounds.w / 2);
+        const cy = sym.bounds.y + Math.floor(sym.bounds.h / 2);
+        const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
+        const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
+        return { cx, cy, clientX, clientY };
+      },
+      targetSymbol!,
+    );
+
+    // The seeded leaf's bounds must actually contain the centre point
+    // we computed — otherwise the dblclick is sent into space and the
+    // hit-test returns ``none``. This is a defensive guard for the
+    // bounds math, mirroring the Pattern A invariant.
+    expect(click.cx).toBeGreaterThanOrEqual(targetSymbol!.bounds.x);
+    expect(click.cx).toBeLessThan(targetSymbol!.bounds.x + targetSymbol!.bounds.w);
+    expect(click.cy).toBeGreaterThanOrEqual(targetSymbol!.bounds.y);
+    expect(click.cy).toBeLessThan(targetSymbol!.bounds.y + targetSymbol!.bounds.h);
+
+    await page.mouse.dblclick(click.clientX, click.clientY);
+
+    // The dblclick must drive the JS shim's ``onDblClick`` path, which
+    // calls into ``openVectorEditor`` and writes both test-mode hooks.
+    await page.waitForFunction(
+      () => {
+        const av = (window as unknown as Record<string, unknown>)
+          .__isonimEditorActiveView;
+        return typeof av === "string" && av === "evVectorEditor";
+      },
+      null,
+      { timeout: 10_000 },
+    );
+
+    const editorState = await page.evaluate(() => ({
+      activeView: (window as unknown as Record<string, unknown>)
+        .__isonimEditorActiveView,
+      vectorTarget: (window as unknown as Record<string, unknown>)
+        .__isonimVectorEditorTarget,
+    }));
+    expect(editorState.activeView).toBe("evVectorEditor");
+    expect(editorState.vectorTarget).toBe("task_app/views/TaskCheckIcon");
+  });
+
+  test("dblclick on a non-vector-symbol element does NOT open the vector editor", async ({
+    page,
+  }) => {
+    // Negative: dblclick a TaskRow (kind="row", not "vector-symbol")
+    // and assert the test-mode hook never sets activeView to
+    // evVectorEditor. The Pattern A click → selection path still has
+    // to work so we don't accidentally over-broaden the dblclick.
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+    });
+    await gotoEditor(page);
+
+    const taskListGroup = page
+      .locator('[aria-label="Toggle Task App / TaskList stories"]')
+      .first();
+    await expect(taskListGroup).toBeVisible({ timeout: 10_000 });
+    const taskListExpanded = await taskListGroup.getAttribute("aria-expanded");
+    if (taskListExpanded !== "true") {
+      await taskListGroup.click();
+    }
+    const taskListStory = page
+      .locator('[aria-label^="Select story Task App / TaskList /"]')
+      .first();
+    await expect(taskListStory).toBeVisible({ timeout: 10_000 });
+    await taskListStory.click();
+
+    const tuiChip = page.locator('[data-preview-backend="tui"]').first();
+    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
+    await tuiChip.click();
+
+    const canvas = page.locator('canvas[data-canvas-active="true"]').first();
+    await expect(canvas).toBeVisible({ timeout: 10_000 });
+
+    await page.waitForFunction(
+      () => {
+        const m = (window as unknown as Record<string, unknown>)
+          .__isonimManifest as {
+            type?: string;
+            elements?: Array<{ componentPath: string }>;
+          } | undefined;
+        return !!(
+          m &&
+          m.type === "element-tree" &&
+          Array.isArray(m.elements) &&
+          m.elements.some((e) =>
+            e.componentPath.startsWith("task_app/views/TaskRow#"),
+          )
+        );
+      },
+      null,
+      { timeout: 15_000 },
+    );
+
+    const manifestInfo = await page.evaluate(() => {
+      const m = (window as unknown as Record<string, unknown>)
+        .__isonimManifest as {
+          surfaceWidth: number;
+          surfaceHeight: number;
+          elements: Array<{
+            id: string;
+            componentPath: string;
+            kind: string;
+            bounds: { x: number; y: number; w: number; h: number };
+          }>;
+        };
+      const taskRows = m.elements.filter((e) =>
+        e.componentPath.startsWith("task_app/views/TaskRow#"),
+      );
+      return {
+        surfaceWidth: m.surfaceWidth,
+        surfaceHeight: m.surfaceHeight,
+        taskRows,
+      };
+    });
+    expect(manifestInfo.taskRows.length).toBeGreaterThan(0);
+
+    await page.waitForFunction(
+      (expected: { w: number; h: number }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        return c.width === expected.w && c.height === expected.h;
+      },
+      { w: manifestInfo.surfaceWidth, h: manifestInfo.surfaceHeight },
+      { timeout: 10_000 },
+    );
+
+    const targetRow = manifestInfo.taskRows[0];
+    const click = await page.evaluate(
+      (row: { bounds: { x: number; y: number; w: number; h: number } }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        const c = list[0] as HTMLCanvasElement;
+        const rect = c.getBoundingClientRect();
+        const cx = row.bounds.x + Math.floor(row.bounds.w / 2);
+        const cy = row.bounds.y + Math.floor(row.bounds.h / 2);
+        const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
+        const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
+        return { clientX, clientY };
+      },
+      targetRow,
+    );
+
+    await page.mouse.dblclick(click.clientX, click.clientY);
+
+    // Give the JS shim a moment to process; then assert the test-mode
+    // hook is either unset or NOT ``evVectorEditor``. Polling for 1s
+    // is a generous upper bound — the JS path runs synchronously on
+    // the dblclick event.
+    await page.waitForTimeout(500);
+    const editorState = await page.evaluate(() => ({
+      activeView: (window as unknown as Record<string, unknown>)
+        .__isonimEditorActiveView,
+    }));
+    expect(editorState.activeView === undefined ||
+      editorState.activeView !== "evVectorEditor").toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------
 // 5. Viewport-strip width changes the preview region
 // --------------------------------------------------------------------------
 

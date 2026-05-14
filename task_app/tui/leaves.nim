@@ -227,3 +227,15 @@ proc summaryBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
     let active = vm.activeCount
     let total = vm.totalCount
     r.setTextContent(txtNode, $active & " of " & $total & " remaining")
+
+  # M-EVP-11: nested vector-symbol leaf. The visual is intentionally
+  # minimal — a single stylized check-mark glyph — because what matters
+  # for the milestone is the manifest annotation: the editor's canvas
+  # dblclick handler reads ``kind = "vector-symbol"`` from the
+  # element-tree manifest and opens the vector editor for the matching
+  # ``skVectorSymbol`` story.
+  let icon = r.createElement("span")
+  r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
+  r.setAttribute(icon, ElementKindAttr, "vector-symbol")
+  r.appendChild(icon, r.createTextNode("v"))
+  r.appendChild(summaryRef, icon)

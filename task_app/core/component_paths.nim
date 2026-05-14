@@ -39,6 +39,22 @@ const
   SummaryBarPath* = "task_app/views/SummaryBar"
     ## "N of M remaining" footer. One entry per demo.
 
+  TaskCheckIconPath* = "task_app/views/TaskCheckIcon"
+    ## M-EVP-11: minimal vector-symbol leaf nested inside the summary
+    ## bar. Annotated with ``ElementKindAttr = "vector-symbol"`` so the
+    ## editor's canvas dblclick handler can resolve the click back to
+    ## the ``skVectorSymbol`` story in the demo catalog and call
+    ## ``openVectorEditor``. Every renderer (TUI / GPUI / Freya /
+    ## Cocoa / Android) emits this entry; the cross-renderer parity
+    ## test enforces set-equality of the
+    ## ``(componentPath, kind="vector-symbol")`` pairs.
+
+  TaskCheckIconStoryName* = "Task Check Icon"
+    ## Sidebar story name for the seeded skVectorSymbol catalog entry
+    ## that pairs with ``TaskCheckIconPath``. The editor's
+    ## ``findStoryByComponentPath`` lookup maps the manifest's
+    ## componentPath suffix to this story.
+
 proc taskRowPath*(id: int): string {.inline.} =
   ## Build the per-row path for a task with id ``id``. Centralising
   ## the formatting keeps every renderer's ``#<id>`` suffix in lock-

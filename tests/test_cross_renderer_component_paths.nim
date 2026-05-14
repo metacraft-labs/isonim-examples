@@ -218,6 +218,18 @@ proc pathSet(m: ElementTreeManifest): HashSet[string] =
   for e in m.elements:
     result.incl e.componentPath
 
+proc vectorSymbolPairSet(m: ElementTreeManifest): HashSet[string] =
+  ## M-EVP-11: set of ``componentPath`` strings restricted to entries
+  ## with ``kind == "vector-symbol"``. The seeded ``TaskCheckIcon``
+  ## leaf is the canonical member; every renderer must emit exactly
+  ## the same set so the editor's canvas dblclick path can rely on
+  ## the kind annotation regardless of which backend rasterises the
+  ## demo.
+  result = initHashSet[string]()
+  for e in m.elements:
+    if e.kind == "vector-symbol":
+      result.incl e.componentPath
+
 # ---------------------------------------------------------------------------
 # Suite
 # ---------------------------------------------------------------------------
@@ -292,10 +304,12 @@ suite "EX-M23b / RS-M11b + EX-M23c / RS-M11c: cross-renderer parity":
       # at least 5 distinct paths per renderer.
       var manifests: seq[ElementTreeManifest] = @[]
       var pathSets: seq[HashSet[string]] = @[]
+      var vectorSets: seq[HashSet[string]] = @[]
       for l in launchers:
         let m = fetchFirstManifest(l)
         manifests.add m
         pathSets.add pathSet(m)
+        vectorSets.add vectorSymbolPairSet(m)
         check pathSets[^1].len >= 5
 
       # Cross-renderer set-equality. Surface the diff as a human-
@@ -312,6 +326,30 @@ suite "EX-M23b / RS-M11b + EX-M23c / RS-M11c: cross-renderer parity":
             echo "  ", launchers[i].name, " only: ",
                  pathSets[i] - reference
           check pathSets[i] == reference
+
+      # M-EVP-11: cross-renderer parity of the
+      # ``(componentPath, kind="vector-symbol")`` projection. The set
+      # must be non-empty (the seeded TaskCheckIcon entry is the
+      # canonical member) and identical across every spawned
+      # renderer. The editor's canvas dblclick handler relies on the
+      # kind annotation; a renderer that emits the path but loses the
+      # kind would break the open-vector-editor path silently.
+      for i, vs in vectorSets:
+        if vs.len == 0:
+          echo "vector-symbol parity: ", launchers[i].name,
+               " manifest carries 0 entries with kind=\"vector-symbol\""
+        check vs.len >= 1
+      if vectorSets.len > 1:
+        let reference = vectorSets[0]
+        for i in 1 ..< vectorSets.len:
+          if vectorSets[i] != reference:
+            echo "vector-symbol parity diff (", launchers[0].name,
+                 " vs ", launchers[i].name, "):"
+            echo "  ", launchers[0].name, " only: ",
+                 reference - vectorSets[i]
+            echo "  ", launchers[i].name, " only: ",
+                 vectorSets[i] - reference
+          check vectorSets[i] == reference
 
       # Per-entry RS-M11 syntax check.
       for m in manifests:

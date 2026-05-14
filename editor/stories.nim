@@ -319,6 +319,24 @@ proc buildDemoStoryGroups*(): seq[StoryGroup] =
                 kind: skFoundation, group: "Settings App / Foundations"),
     ])
 
+  # ---- Vector Symbols (M-EVP-11) ----------------------------------------
+  # The seeded skVectorSymbol entry pairs with the
+  # ``task_app/views/TaskCheckIcon`` leaf rendered inside every
+  # task-app summary bar (TUI / GPUI / Freya / Cocoa / Android). The
+  # editor's canvas dblclick handler hits the leaf's manifest entry,
+  # extracts the trailing path segment, and uses it to look up this
+  # story — opening the vector editor on the matching skVectorSymbol
+  # target.
+  groups.add StoryGroup(
+    name: "Task App / Vector Symbols", kind: skVectorSymbol, expanded: false,
+    description: "Reusable vector glyphs annotated for the canvas dblclick hit-test.",
+    items: @[
+      StoryItem(name: "Task Check Icon",
+                description: "Check-mark glyph beside the task summary count.",
+                kind: skVectorSymbol,
+                group: "Task App / Vector Symbols"),
+    ])
+
   # ---- 6. Guidelines -----------------------------------------------------
   groups.add StoryGroup(
     name: "Guidelines", kind: skGuideline, expanded: false,
