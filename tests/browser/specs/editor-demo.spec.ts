@@ -1256,6 +1256,15 @@ test.describe("M-EVP-10 canvas affordances", () => {
 
     const handles = page.locator('[data-canvas-selection-handle="true"]');
     await expect(handles).toHaveCount(8, { timeout: 5_000 });
+    // M-EVP-12 fix-cycle 2: count-only was silent on the regression where
+    // the chrome bar's Edit chip swapped vm.activeView from
+    // evComponentDetail -> evComponentEdit, unmounting the canvas + its
+    // overlay subtree (handles remained in some stale DOM count from a
+    // prior render but were not visible). Assert each of the 8 handles
+    // is actually visible so the test fails loudly on that class of bug.
+    for (let i = 0; i < 8; i++) {
+      await expect(handles.nth(i)).toBeVisible({ timeout: 5_000 });
+    }
 
     // Sanity-check the 8 handle positions cover the corner+edge set.
     const positions = await handles.evaluateAll((els) =>

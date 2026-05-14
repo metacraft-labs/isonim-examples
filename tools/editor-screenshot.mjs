@@ -460,6 +460,29 @@ export const views = {
       // Re-hover so the hover label is visible alongside the
       // selection outline + breadcrumb when the screenshot fires.
       await page.mouse.move(point.clientX, point.clientY);
+      // M-EVP-12 fix-cycle 2: explicit waits for the selection outline
+      // *and* the breadcrumb panel — the createRenderEffect that
+      // positions them runs asynchronously after the click; before it
+      // fires the breadcrumb still has display=none / empty text and
+      // the screenshot would catch a stale "no overlay" frame.
+      await page
+        .locator('[data-canvas-selection-outline="true"]')
+        .first()
+        .waitFor({ state: "visible", timeout: 5_000 });
+      await page
+        .locator('[data-canvas-selection-breadcrumb="true"]')
+        .first()
+        .waitFor({ state: "visible", timeout: 5_000 });
+      await page.waitForFunction(
+        () => {
+          const bc = document.querySelector(
+            '[data-canvas-selection-breadcrumb="true"]',
+          );
+          return !!bc && (bc.textContent ?? "").trim().length > 0;
+        },
+        null,
+        { timeout: 5_000 },
+      );
       await page.waitForTimeout(150);
     },
     expectedStory: "",
@@ -495,11 +518,37 @@ export const views = {
         .first();
       await editChip.waitFor({ state: "visible", timeout: 5_000 });
       await editChip.click();
-      // Wait for the 8-handle group to render.
+      // M-EVP-12 fix-cycle 2: the previous "wait for count === 8"
+      // counted handles in the DOM regardless of display, so the
+      // screenshot could fire before the cascade (editMode flips to
+      // emEdit → createRenderEffect → handlesGroup display:block +
+      // per-handle positioning) actually painted. The proper gate is:
+      //
+      //   1. The chip's reactive binding marks itself aria-pressed
+      //      once vm.editMode == emEdit (cascade step 1 settled).
+      //   2. The 8-handle group has display:block and each handle
+      //      has non-zero bounding-rect (cascade step 3 settled).
+      //
+      // Both must hold before the screenshot can fire.
+      await page
+        .locator(
+          '[data-preview-mode="edit"][aria-pressed="true"]',
+        )
+        .first()
+        .waitFor({ state: "attached", timeout: 5_000 });
       await page.waitForFunction(
-        () => document.querySelectorAll(
-          '[data-canvas-selection-handle="true"]',
-        ).length === 8,
+        () => {
+          const els = Array.from(
+            document.querySelectorAll(
+              '[data-canvas-selection-handle="true"]',
+            ),
+          );
+          if (els.length !== 8) return false;
+          return els.every((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          });
+        },
         null,
         { timeout: 10_000 },
       );
