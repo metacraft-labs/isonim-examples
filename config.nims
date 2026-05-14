@@ -83,3 +83,10 @@ switch("path", "$config/../isonim-android/src")
 # backend identifier per launcher so the editor's left-edge strip
 # can route to the correct one.
 switch("path", "$config/../isonim-render-serve/src")
+
+# RS-M13: the new TUI launcher (`editor/backends/tui_term.nim`)
+# consumes `isonim_tui_serve`'s D/M/P packet codec + the RS-M13
+# element-tree/story-dispatch helpers added in that repo. The
+# sibling-repo path is resolved here so `nim c` finds the
+# `isonim_tui_serve` top-level facade without a nimble install.
+switch("path", "$config/../isonim-tui-serve/src")

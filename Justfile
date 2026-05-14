@@ -150,18 +150,35 @@ clean:
 # demo binaries built natively from this repo. The bundle is served on
 # port 8091 (8090 is the upstream wanderlust editor in `isonim`).
 
-# Build per-backend demo binaries (Linux: web, tui, gpui, freya). Each
-# binary is a single launcher that dispatches to the right demo via
-# the `--demo=<task|settings>` CLI flag; the editor's BackendBinaryRegistry
-# registers one launcher per backend (see editor/workspace.nim).
+# Build per-backend demo binaries. RS-M13: the default fan-out is now
+# `tui_term` (D/M/P xterm.js transport on port 8112) + web + gpui +
+# freya. The legacy pixel TUI launcher (`tui.nim`) is deprecated and
+# only built under `build-backends-dev-pixel-tui` for one release
+# cycle of legacy support.
 build-backends:
     @mkdir -p build/backends
-    @for renderer in tui web gpui freya; do \
+    @echo "[build-backends] isonim-examples-tui-term"
+    nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
+        -o:build/backends/isonim-examples-tui-term \
+        editor/backends/tui_term.nim 2>&1 | tee -a test-logs/build-backends.log
+    @for renderer in web gpui freya; do \
       echo "[build-backends] isonim-examples-$renderer"; \
       nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
           -o:build/backends/isonim-examples-$renderer \
           editor/backends/$renderer.nim 2>&1 | tee -a test-logs/build-backends.log; \
     done
+
+# RS-M13: build the deprecated pixel TUI launcher. The default
+# `build-backends` recipe no longer includes it; this target keeps it
+# producible for one release cycle so consumers of the older bridge
+# port (8102) have a migration window. The `tui_adapter.nim` source
+# carries a `{.deprecated.}` pragma — `nim c` warns on every build.
+build-backends-dev-pixel-tui:
+    @mkdir -p build/backends
+    @echo "[build-backends-dev-pixel-tui] isonim-examples-tui (deprecated)"
+    nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
+        -o:build/backends/isonim-examples-tui \
+        editor/backends/tui.nim 2>&1 | tee -a test-logs/build-backends.log
 
 # Build the macOS-only Cocoa launcher (EX-M19). The launcher
 # `editor/backends/cocoa.nim` is gated `when defined(macosx)`: on
@@ -200,11 +217,23 @@ build-backends-android:
         editor/backends/android.nim 2>&1 | tee -a test-logs/build-backends.log
 
 # Build the editor (Nim → JS).
+#
+# RS-M13: copies the vendored xterm.js bundle into build/editor/
+# alongside editor.js so the editor's TUI preview path can mount an
+# xterm.js Terminal without a runtime CDN fetch. The vendor source-
+# of-truth + SHA pin lives in
+# ../isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt.
 editor-build:
-    @mkdir -p build/editor
+    @mkdir -p build/editor build/editor/vendor/xterm
     nim js --path:. --path:../isonim/src --path:../nim-everywhere/src \
         -o:build/editor/editor.js editor/main.nim
     cp editor/index.html build/editor/index.html
+    cp ../isonim/src/isonim/editor/vendor/xterm/xterm.js \
+        build/editor/vendor/xterm/xterm.js
+    cp ../isonim/src/isonim/editor/vendor/xterm/xterm.css \
+        build/editor/vendor/xterm/xterm.css
+    cp ../isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt \
+        build/editor/vendor/xterm/MANIFEST.txt
     @echo "Built: build/editor/ - open build/editor/index.html"
 
 # Serve the editor at http://localhost:8091, proxying /bridge/<backend>

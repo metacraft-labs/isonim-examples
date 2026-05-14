@@ -32,6 +32,7 @@ const chromiumExecutable =
 const bridgePorts = {
   web: 8101,
   tui: 8102,
+  tuiTerm: 8112,
   gpui: 8103,
   freya: 8104,
   freyaSettings: 8105,
@@ -59,9 +60,15 @@ export default defineConfig({
       : undefined,
   },
   webServer: [
+    // RS-M13: use the Node-based editor-server.mjs (instead of
+    // `python3 -m http.server`) so the same-origin proxy routes
+    // `/bridge/<backend>` AND `/tui-bridge` are available to the
+    // editor bundle. The xterm.js-based TUI preview path requires
+    // the proxy to reach the launcher on port 8112.
     {
-      command: "python3 -m http.server 8091 --bind 127.0.0.1",
+      command: "node ../../tools/editor-server.mjs",
       cwd: "../../build/editor",
+      env: { PORT: "8091" },
       port: 8091,
       reuseExistingServer: true,
       timeout: 30_000,
@@ -75,6 +82,16 @@ export default defineConfig({
     {
       command: `${buildBackendsDir}/isonim-examples-tui --port ${bridgePorts.tui} --demo=tasks --static ${staticDir} --fps 8`,
       url: `http://127.0.0.1:${bridgePorts.tui}/`,
+      reuseExistingServer: true,
+      timeout: 30_000,
+    },
+    // RS-M13: the new D/M/P xterm.js launcher on port 8112 (proxied
+    // by editor-server.mjs as /tui-bridge). The legacy pixel TUI
+    // launcher above stays for one release cycle for any spec that
+    // still hits port 8102 directly.
+    {
+      command: `${buildBackendsDir}/isonim-examples-tui-term --port ${bridgePorts.tuiTerm} --demo=tasks --fps 30`,
+      url: `http://127.0.0.1:${bridgePorts.tuiTerm}/`,
       reuseExistingServer: true,
       timeout: 30_000,
     },

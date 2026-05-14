@@ -37,6 +37,7 @@ import std/[asyncdispatch, asyncnet, base64, json, nativesockets, net,
             os, osproc, random, sets, strutils, times, unittest]
 
 import isonim_render_serve
+import isonim_tui_serve/packet as tui_packet
 
 const ManifestDeadlineMs = 1500
 
@@ -188,10 +189,70 @@ proc stop(l: Launcher) =
     l.process.terminate()
     discard l.process.waitForExit(timeout = 2000)
 
-proc fetchFirstManifest(l: Launcher): ElementTreeManifest =
-  ## Real WS connect to ``l.port``, drain packets until the first
-  ## ``element-tree`` M packet, decode and return.
-  proc flow(): Future[ElementTreeManifest] {.async.} =
+type
+  GenericBounds = object
+    x, y, w, h: int
+  GenericEntry = object
+    id: string
+    componentPath: string
+    kind: string
+    bounds: GenericBounds
+  GenericManifest = object
+    surfaceW, surfaceH: int   ## Surface dims in the launcher's units
+                              ## (pixels for F/M/I, cells for D/M/P).
+    boundsUnit: string        ## "pixels" or "cells".
+    elements: seq[GenericEntry]
+
+proc isTuiTerm(name: string): bool =
+  name == "tui-term"
+
+proc toGeneric(m: ElementTreeManifest): GenericManifest =
+  result = GenericManifest(
+    surfaceW: m.surfaceWidth, surfaceH: m.surfaceHeight,
+    boundsUnit: "pixels", elements: @[])
+  for e in m.elements:
+    result.elements.add GenericEntry(
+      id: e.id, componentPath: e.componentPath, kind: e.kind,
+      bounds: GenericBounds(x: e.bounds.x, y: e.bounds.y,
+                            w: e.bounds.w, h: e.bounds.h))
+
+proc toGeneric(m: tui_packet.TuiElementTreeManifest): GenericManifest =
+  result = GenericManifest(
+    surfaceW: m.surfaceCols, surfaceH: m.surfaceRows,
+    boundsUnit: "cells", elements: @[])
+  for e in m.elements:
+    result.elements.add GenericEntry(
+      id: e.id, componentPath: e.componentPath, kind: e.kind,
+      bounds: GenericBounds(x: e.bounds.x, y: e.bounds.y,
+                            w: e.bounds.w, h: e.bounds.h))
+
+# ---------------------------------------------------------------------------
+# Dual-transport decoders. The legacy F/M/I bridge wraps each M packet
+# in an additional 5-byte header ('M' + u32 LE length). The D/M/P TUI
+# transport uses the same 5-byte header but with big-endian length. We
+# strip whichever header matches the launcher.
+# ---------------------------------------------------------------------------
+
+proc decodeFmiMetaBody(payload: string): string =
+  ## Decode an F/M/I-style M packet payload (LE length).
+  let meta = decodeMeta(stringToBytes(payload))
+  meta.json
+
+proc decodeDmpMetaBody(payload: string): string =
+  ## Decode a D/M/P-style M packet payload (BE length). Implemented
+  ## by feeding the bytes through ``isonim_tui_serve``'s parser.
+  var parser = tui_packet.initPacketParser()
+  parser.feedString(payload)
+  doAssert parser.pendingPackets() == 1,
+    "expected exactly one D/M/P packet in payload"
+  let (ok, kind, body) = parser.pop()
+  doAssert ok
+  doAssert kind == tui_packet.PacketTypeMeta,
+    "expected M packet, got '" & $kind & "'"
+  body
+
+proc fetchFirstManifestFmi(l: Launcher): GenericManifest =
+  proc flow(): Future[GenericManifest] {.async.} =
     let sock = await connectWs(l.port)
     let dec = newDecState()
     let start = epochTime()
@@ -200,10 +261,10 @@ proc fetchFirstManifest(l: Launcher): ElementTreeManifest =
       if payload.len == 0: continue
       case payload[0]
       of 'M':
-        let meta = decodeMeta(stringToBytes(payload))
-        if isElementTreeBody(meta.json):
+        let body = decodeFmiMetaBody(payload)
+        if isonim_render_serve.isElementTreeBody(body):
           sock.close()
-          return decodeElementTreeJson(meta.json)
+          return toGeneric(decodeElementTreeJson(body))
       of 'F':
         doAssert false,
           l.name & ": F packet arrived before the first element-tree manifest"
@@ -213,7 +274,36 @@ proc fetchFirstManifest(l: Launcher): ElementTreeManifest =
       l.name & ": no manifest arrived within deadline")
   waitFor flow()
 
-proc pathSet(m: ElementTreeManifest): HashSet[string] =
+proc fetchFirstManifestDmp(l: Launcher): GenericManifest =
+  proc flow(): Future[GenericManifest] {.async.} =
+    let sock = await connectWs(l.port)
+    let dec = newDecState()
+    let start = epochTime()
+    while epochTime() - start < (ManifestDeadlineMs.float / 1000.0):
+      let payload = await recvOnePacket(sock, dec)
+      if payload.len == 0: continue
+      case payload[0]
+      of 'M':
+        let body = decodeDmpMetaBody(payload)
+        if tui_packet.isElementTreeBody(body):
+          sock.close()
+          return toGeneric(tui_packet.decodeElementTreeBody(body))
+      of 'D':
+        doAssert false,
+          l.name & ": D packet arrived before the first element-tree manifest"
+      else: discard
+    sock.close()
+    raise newException(IOError,
+      l.name & ": no manifest arrived within deadline")
+  waitFor flow()
+
+proc fetchFirstManifest(l: Launcher): GenericManifest =
+  if isTuiTerm(l.name):
+    fetchFirstManifestDmp(l)
+  else:
+    fetchFirstManifestFmi(l)
+
+proc pathSet(m: GenericManifest): HashSet[string] =
   result = initHashSet[string]()
   for e in m.elements:
     result.incl e.componentPath
@@ -236,12 +326,17 @@ proc escapeJsonStr(s: string): string =
   let n = newJString(s)
   $n
 
-proc fetchManifestAfterSelectStory(l: Launcher;
-                                    storyId: string): ElementTreeManifest =
-  ## Connect, drain the boot manifest, send a `select-story` I packet
-  ## with the supplied storyId, return the next `element-tree`
-  ## manifest the launcher emits.
-  proc flow(): Future[ElementTreeManifest] {.async.} =
+proc sendDmpSelectStory(sock: AsyncSocket; body: string) {.async.} =
+  ## Frame a select-story body as a P packet (D/M/P framing) and send
+  ## as a masked WS binary message.
+  let pkt = tui_packet.encodePacket(tui_packet.PacketTypeInput, body)
+  let mask = randMaskKey()
+  let frame = encodeWsClientFrame(wsOpBinary, pkt, mask)
+  await sock.send(frame)
+
+proc fetchManifestAfterSelectStoryFmi(l: Launcher;
+                                       storyId: string): GenericManifest =
+  proc flow(): Future[GenericManifest] {.async.} =
     let sock = await connectWs(l.port)
     let dec = newDecState()
     let bootDeadline = epochTime() + (ManifestDeadlineMs.float / 1000.0)
@@ -249,8 +344,8 @@ proc fetchManifestAfterSelectStory(l: Launcher;
       let payload = await recvOnePacket(sock, dec)
       if payload.len == 0: continue
       if payload[0] == 'M':
-        let meta = decodeMeta(stringToBytes(payload))
-        if isElementTreeBody(meta.json):
+        let body = decodeFmiMetaBody(payload)
+        if isonim_render_serve.isElementTreeBody(body):
           break
     let lastSep = storyId.rfind(" / ")
     doAssert lastSep > 0, "invalid storyId: " & storyId
@@ -265,16 +360,58 @@ proc fetchManifestAfterSelectStory(l: Launcher;
       let payload = await recvOnePacket(sock, dec)
       if payload.len == 0: continue
       if payload[0] == 'M':
-        let meta = decodeMeta(stringToBytes(payload))
-        if isElementTreeBody(meta.json):
+        let body = decodeFmiMetaBody(payload)
+        if isonim_render_serve.isElementTreeBody(body):
           sock.close()
-          return decodeElementTreeJson(meta.json)
+          return toGeneric(decodeElementTreeJson(body))
     sock.close()
     raise newException(IOError,
       l.name & ": no element-tree after select-story " & storyId)
   waitFor flow()
 
-proc vectorSymbolPairSet(m: ElementTreeManifest): HashSet[string] =
+proc fetchManifestAfterSelectStoryDmp(l: Launcher;
+                                       storyId: string): GenericManifest =
+  proc flow(): Future[GenericManifest] {.async.} =
+    let sock = await connectWs(l.port)
+    let dec = newDecState()
+    let bootDeadline = epochTime() + (ManifestDeadlineMs.float / 1000.0)
+    while epochTime() < bootDeadline:
+      let payload = await recvOnePacket(sock, dec)
+      if payload.len == 0: continue
+      if payload[0] == 'M':
+        let body = decodeDmpMetaBody(payload)
+        if tui_packet.isElementTreeBody(body):
+          break
+    let lastSep = storyId.rfind(" / ")
+    doAssert lastSep > 0, "invalid storyId: " & storyId
+    let group = storyId[0 ..< lastSep]
+    let name = storyId[lastSep + 3 .. ^1]
+    let pbody = "{\"type\":\"select-story\",\"group\":" & escapeJsonStr(group) &
+                ",\"name\":" & escapeJsonStr(name) &
+                ",\"kind\":\"skPage\",\"storyId\":" & escapeJsonStr(storyId) & "}"
+    await sendDmpSelectStory(sock, pbody)
+    let selDeadline = epochTime() + 2.5
+    while epochTime() < selDeadline:
+      let payload = await recvOnePacket(sock, dec)
+      if payload.len == 0: continue
+      if payload[0] == 'M':
+        let body = decodeDmpMetaBody(payload)
+        if tui_packet.isElementTreeBody(body):
+          sock.close()
+          return toGeneric(tui_packet.decodeElementTreeBody(body))
+    sock.close()
+    raise newException(IOError,
+      l.name & ": no element-tree after select-story " & storyId)
+  waitFor flow()
+
+proc fetchManifestAfterSelectStory(l: Launcher;
+                                    storyId: string): GenericManifest =
+  if isTuiTerm(l.name):
+    fetchManifestAfterSelectStoryDmp(l, storyId)
+  else:
+    fetchManifestAfterSelectStoryFmi(l, storyId)
+
+proc vectorSymbolPairSet(m: GenericManifest): HashSet[string] =
   ## M-EVP-11: set of ``componentPath`` strings restricted to entries
   ## with ``kind == "vector-symbol"``. The seeded ``TaskCheckIcon``
   ## leaf is the canonical member; every renderer must emit exactly
@@ -316,7 +453,7 @@ suite "EX-M23b / RS-M11b + EX-M23c / RS-M11c: cross-renderer parity":
       defer:
         for l in launchers: l.stop()
 
-      let tui = launch("tui", "ISONIM_EXAMPLES_TUI_BIN")
+      let tui = launch("tui-term", "ISONIM_EXAMPLES_TUI_TERM_BIN")
       launchers.add tui
       let gpui = launch("gpui", "ISONIM_EXAMPLES_GPUI_BIN")
       launchers.add gpui
@@ -358,7 +495,7 @@ suite "EX-M23b / RS-M11b + EX-M23c / RS-M11c: cross-renderer parity":
       # Per-renderer sanity: the seeded task_app demo always seeds
       # the same three tasks plus a FilterBar / SummaryBar; require
       # at least 5 distinct paths per renderer.
-      var manifests: seq[ElementTreeManifest] = @[]
+      var manifests: seq[GenericManifest] = @[]
       var pathSets: seq[HashSet[string]] = @[]
       var vectorSets: seq[HashSet[string]] = @[]
       for l in launchers:
@@ -415,12 +552,15 @@ suite "EX-M23b / RS-M11b + EX-M23c / RS-M11c: cross-renderer parity":
           check isComponentPathLegal(e.componentPath)
 
       # Bounds-inside-surface check, every entry, every renderer.
+      # The dimensions are in the launcher's native units (pixels for
+      # F/M/I launchers, cells for the RS-M13 TUI launcher); the
+      # inside-the-surface check is unit-agnostic so it still holds.
       for m in manifests:
         for e in m.elements:
           check e.bounds.x >= 0
           check e.bounds.y >= 0
-          check e.bounds.x + e.bounds.w <= m.surfaceWidth
-          check e.bounds.y + e.bounds.h <= m.surfaceHeight
+          check e.bounds.x + e.bounds.w <= m.surfaceW
+          check e.bounds.y + e.bounds.h <= m.surfaceH
 
   # ---------------------------------------------------------------------
   # RS-M12. Extended parity matrix: drive each launcher with the same
@@ -438,7 +578,7 @@ suite "EX-M23b / RS-M11b + EX-M23c / RS-M11c: cross-renderer parity":
       defer:
         for l in launchers: l.stop()
 
-      launchers.add launch("tui", "ISONIM_EXAMPLES_TUI_BIN")
+      launchers.add launch("tui-term", "ISONIM_EXAMPLES_TUI_TERM_BIN")
       launchers.add launch("gpui", "ISONIM_EXAMPLES_GPUI_BIN")
       launchers.add launch("freya", "ISONIM_EXAMPLES_FREYA_BIN")
       when defined(macosx):

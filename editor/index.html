@@ -5,6 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>IsoNim Examples Editor</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- RS-M13: vendored xterm.js (pinned via
+         isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt). The
+         editor-build recipe copies the vendor directory into
+         build/editor/vendor/xterm/. The TUI preview path mounts a
+         live xterm.js Terminal inside `<div data-tui-terminal="true">`
+         and feeds the D-packet stream from the
+         `isonim-examples-tui-term` launcher into `term.write(...)`. -->
+    <link rel="stylesheet" href="vendor/xterm/xterm.css" />
+    <script src="vendor/xterm/xterm.js"></script>
     <style>
       *,
       *::before,

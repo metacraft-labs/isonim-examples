@@ -28,8 +28,16 @@ const ROOT = process.env.EDITOR_STATIC_ROOT
 
 // Per-backend launcher port table — must match
 // `bridgePortForBackend` in src/isonim/editor/streaming_preview.nim.
+//
+// RS-M13: the TUI launcher moved to a separate transport (D/M/P via
+// `isonim-tui-serve`) on a new port (8112) and a new proxy route
+// (`/tui-bridge`). The historical `tui: 8102` entry stays here for
+// one release cycle so the deprecated pixel TUI launcher (built via
+// `just build-backends-dev-pixel-tui`) is still proxied if someone
+// boots it; new traffic should target `tui-term`.
 const BRIDGE_PORTS = {
   tui: 8102,
+  'tui-term': 8112,
   gpui: 8103,
   freya: 8104,
   cocoa: 8105,
@@ -97,14 +105,27 @@ const server = createServer(async (req, res) => {
 
 server.on('upgrade', (req, clientSocket, head) => {
   // Path-based bridge routing: /bridge/tui -> 127.0.0.1:8102, etc.
+  //
+  // RS-M13 adds a parallel `/tui-bridge` route (the new D/M/P
+  // terminal transport on port 8112). Same proxy mechanics — the path
+  // is rewritten to `/` before forwarding so the launcher sees a
+  // direct-client request.
   const url = req.url || '';
-  const match = url.match(/^\/bridge\/([a-z]+)(?:\/.*)?$/);
-  if (!match) {
+  let backend = null;
+  const tuiBridgeMatch = url.match(/^\/tui-bridge(?:\/.*)?$/);
+  if (tuiBridgeMatch) {
+    backend = 'tui-term';
+  } else {
+    const bridgeMatch = url.match(/^\/bridge\/([a-z]+)(?:\/.*)?$/);
+    if (bridgeMatch) {
+      backend = bridgeMatch[1];
+    }
+  }
+  if (!backend) {
     clientSocket.write('HTTP/1.1 404 Not Found\r\n\r\n');
     clientSocket.destroy();
     return;
   }
-  const backend = match[1];
   const port = BRIDGE_PORTS[backend];
   if (!port) {
     clientSocket.write('HTTP/1.1 404 Not Found\r\n\r\n');
@@ -151,6 +172,10 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`[editor-server] serving ${ROOT} on http://0.0.0.0:${PORT}`);
   console.log(`[editor-server] bridge routes:`);
   for (const [k, v] of Object.entries(BRIDGE_PORTS)) {
-    console.log(`  /bridge/${k} -> 127.0.0.1:${v}`);
+    if (k === 'tui-term') {
+      console.log(`  /tui-bridge -> 127.0.0.1:${v}  (RS-M13 D/M/P xterm.js)`);
+    } else {
+      console.log(`  /bridge/${k} -> 127.0.0.1:${v}`);
+    }
   }
 });

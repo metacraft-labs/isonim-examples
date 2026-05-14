@@ -1337,18 +1337,24 @@ test.describe("M-EVP-11 vector-symbol canvas dblclick", () => {
     if (taskListExpanded !== "true") {
       await taskListGroup.click();
     }
+    // Pin to "Two Active" — alphabetical-first ("Empty") has no
+    // seeded tasks and therefore no TaskCheckIcon vector symbol in
+    // its manifest, which the positive path needs.
     const taskListStory = page
-      .locator('[aria-label^="Select story Task App / TaskList /"]')
+      .locator('[aria-label="Select story Task App / TaskList / Two Active"]')
       .first();
     await expect(taskListStory).toBeVisible({ timeout: 10_000 });
     await taskListStory.click();
 
-    // Switch the preview backend to TUI so the canvas takes over and
-    // ``attachBridgeClient`` registers the dblclick listener through
-    // the JS shim.
-    const tuiChip = page.locator('[data-preview-backend="tui"]').first();
-    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
-    await tuiChip.click();
+    // Switch the preview backend to GPUI so the canvas takes over
+    // and ``attachBridgeClient`` (F/M/I path) registers the dblclick
+    // listener through the JS shim. (RS-M13 retired TUI's canvas-
+    // paint path in favour of xterm.js; the dblclick listener is
+    // wired only on the F/M/I attach, so this test now exercises a
+    // pixel-canvas backend.)
+    const gpuiChip = page.locator('[data-preview-backend="gpui"]').first();
+    await expect(gpuiChip).toBeVisible({ timeout: 10_000 });
+    await gpuiChip.click();
 
     const canvas = page.locator('canvas[data-canvas-active="true"]').first();
     await expect(canvas).toBeVisible({ timeout: 10_000 });
@@ -1513,15 +1519,25 @@ test.describe("M-EVP-11 vector-symbol canvas dblclick", () => {
     if (taskListExpanded !== "true") {
       await taskListGroup.click();
     }
+    // Select the "Two Active" story explicitly — the first
+    // alphabetical match ("Empty") would have no TaskRow# entries
+    // in the manifest, which is what this negative test needs to
+    // dblclick. Two Active seeds two real TaskRow entries plus a
+    // TaskCheckIcon vector symbol, so we have non-vector targets
+    // available to exercise the negative path.
     const taskListStory = page
-      .locator('[aria-label^="Select story Task App / TaskList /"]')
+      .locator('[aria-label="Select story Task App / TaskList / Two Active"]')
       .first();
     await expect(taskListStory).toBeVisible({ timeout: 10_000 });
     await taskListStory.click();
 
-    const tuiChip = page.locator('[data-preview-backend="tui"]').first();
-    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
-    await tuiChip.click();
+    // GPUI: the dblclick negative path requires the F/M/I canvas
+    // attach (the same JS shim the positive path tests). RS-M13's
+    // TUI no longer wires dblclick handlers because xterm.js owns
+    // the host element.
+    const gpuiChip = page.locator('[data-preview-backend="gpui"]').first();
+    await expect(gpuiChip).toBeVisible({ timeout: 10_000 });
+    await gpuiChip.click();
 
     const canvas = page.locator('canvas[data-canvas-active="true"]').first();
     await expect(canvas).toBeVisible({ timeout: 10_000 });
@@ -1684,52 +1700,70 @@ test.describe("M-EVP-13 page preview canvas", () => {
     await story.click();
   }
 
-  test("Page + TUI mounts the page-preview canvas and hides the iframe", async ({
+  test("Page + TUI mounts the xterm.js host inside the page-preview pane", async ({
     page,
   }) => {
+    // RS-M13 retired the pixel TUI launcher; the TUI backend now
+    // streams D/M/P packets into an xterm.js Terminal mounted as a
+    // sibling of the page-project canvas. The page-preview view's
+    // TUI affordance is therefore the xterm.js host (NOT canvas
+    // pixels) — same architecture as the component-detail view's
+    // TUI mount.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__isonimTestMode = true;
     });
     await gotoEditor(page);
     await openInboxPage(page);
 
-    // Switch backend to TUI: the page-preview's canvas should take
-    // over from the iframe.
+    // window.Terminal must be exposed by the vendored xterm.js UMD
+    // bundle before the TUI chip is usable.
+    await page.waitForFunction(
+      () => typeof (window as unknown as { Terminal?: unknown }).Terminal !==
+        "undefined",
+      null,
+      { timeout: 5_000 },
+    );
+
+    // Switch backend to TUI: the page-preview's xterm.js host takes
+    // over from the iframe; the page-project canvas stays in the
+    // DOM (sized by Approach A) but is hidden via
+    // ``visibility: hidden`` so the terminal renders on top.
     const tuiChip = page.locator('[data-preview-backend="tui"]').first();
     await expect(tuiChip).toBeVisible({ timeout: 10_000 });
     await tuiChip.click();
 
-    const canvas = page
-      .locator('canvas[data-page-project-canvas="true"][data-canvas-active="true"]')
+    // The xterm.js host is mounted inside the page-preview canvas
+    // pane. Scope the locator to the canvas-pane subtree so it
+    // doesn't pick up the component-detail view's xterm host.
+    const pane = page
+      .locator('[data-page-canvas-pane="true"]')
       .first();
-    await expect(canvas).toBeVisible({ timeout: 10_000 });
+    const termHost = pane.locator('[data-tui-terminal="true"]').first();
+    await expect(termHost).toBeVisible({ timeout: 10_000 });
+    await expect(termHost.locator(".xterm-screen")).toBeVisible({
+      timeout: 10_000,
+    });
 
-    // Wait for the editor's WS client to paint a non-empty frame on
-    // the page-preview canvas (real launcher pixels).
-    await page.waitForFunction(
-      () => {
-        const c = document.querySelector(
-          'canvas[data-page-project-canvas="true"][data-canvas-active="true"]',
-        ) as HTMLCanvasElement | null;
-        if (!c) return false;
-        if (c.width === 0 || c.height === 0) return false;
-        const ctx = c.getContext("2d");
-        if (!ctx) return false;
-        try {
-          const img = ctx.getImageData(0, 0, c.width, c.height);
-          for (let i = 0; i < img.data.length; i += 4) {
-            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
-          }
-        } catch {
-          return false;
-        }
-        return false;
+    // Seeded TaskRow text must surface in the terminal's
+    // textContent within a few seconds.
+    await expect.poll(
+      async () => {
+        return await page.evaluate(() => {
+          const pane = document.querySelector(
+            '[data-page-canvas-pane="true"]',
+          );
+          if (!pane) return "";
+          const host = pane.querySelector('[data-tui-terminal="true"]');
+          return host ? host.textContent || "" : "";
+        });
       },
-      null,
-      { timeout: 15_000 },
-    );
+      {
+        timeout: 10_000,
+        message: "expected Page+TUI terminal to render seeded task labels",
+      },
+    ).toContain("groceries");
 
-    // The iframe must be hidden when the canvas is the active surface.
+    // The iframe must be hidden when the TUI surface is active.
     const iframeDisplay = await page.evaluate(() => {
       const f = document.querySelector(
         'iframe[data-page-project-frame="true"]',
@@ -1740,7 +1774,7 @@ test.describe("M-EVP-13 page preview canvas", () => {
     expect(iframeDisplay).toBe("none");
   });
 
-  test("Page + Web regression: iframe is back, canvas hidden", async ({
+  test("Page + Web regression: iframe is back, terminal hidden", async ({
     page,
   }) => {
     await page.addInitScript(() => {
@@ -1753,20 +1787,20 @@ test.describe("M-EVP-13 page preview canvas", () => {
     const tuiChip = page.locator('[data-preview-backend="tui"]').first();
     await expect(tuiChip).toBeVisible({ timeout: 10_000 });
     await tuiChip.click();
+    const pane = page
+      .locator('[data-page-canvas-pane="true"]')
+      .first();
     await expect(
-      page
-        .locator(
-          'canvas[data-page-project-canvas="true"][data-canvas-active="true"]',
-        )
-        .first(),
+      pane.locator('[data-tui-terminal="true"]').first(),
     ).toBeVisible({ timeout: 10_000 });
 
     const webChip = page.locator('[data-preview-backend="web"]').first();
     await expect(webChip).toBeVisible({ timeout: 10_000 });
     await webChip.click();
 
-    // The iframe is back visible; the canvas is hidden (data attribute
-    // flips to "false" and the wrapper's display is "none").
+    // The iframe is back visible; the xterm.js host has been
+    // detached (display: none on the host) and the canvas-pane
+    // wrapper is hidden.
     await page.waitForFunction(
       () => {
         const f = document.querySelector(
@@ -1787,20 +1821,39 @@ test.describe("M-EVP-13 page preview canvas", () => {
       return window.getComputedStyle(c).display;
     });
     expect(canvasDisplay).toBe("none");
+
+    // The xterm.js host (if it exists from the prior TUI step) is
+    // hidden by the canvas-mount helper's detach path.
+    const tuiDisplay = await page.evaluate(() => {
+      const pane = document.querySelector(
+        '[data-page-canvas-pane="true"]',
+      );
+      if (!pane) return "missing";
+      const host = pane.querySelector('[data-tui-terminal="true"]');
+      if (!host) return "absent";
+      return window.getComputedStyle(host as HTMLElement).display;
+    });
+    expect(["none", "absent"]).toContain(tuiDisplay);
   });
 
-  test("Canvas fit-to-pane: rendered height fills most of preview pane", async ({
+  test("Canvas fit-to-pane (GPUI): rendered height fills most of preview pane", async ({
     page,
   }) => {
+    // The fit-to-pane regression guard uses GPUI: a non-Web,
+    // non-TUI backend whose launcher still paints F-packet RGBA
+    // pixels into the canvas. (RS-M13 swapped TUI to xterm.js, so
+    // the canvas-paint path is no longer exercised for TUI; GPUI is
+    // the closest analogue that still drives the Approach A canvas
+    // CSS.)
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__isonimTestMode = true;
     });
     await gotoEditor(page);
     await openInboxPage(page);
 
-    const tuiChip = page.locator('[data-preview-backend="tui"]').first();
-    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
-    await tuiChip.click();
+    const gpuiChip = page.locator('[data-preview-backend="gpui"]').first();
+    await expect(gpuiChip).toBeVisible({ timeout: 10_000 });
+    await gpuiChip.click();
 
     const canvasLoc = page
       .locator('canvas[data-page-project-canvas="true"][data-canvas-active="true"]')
@@ -1835,10 +1888,9 @@ test.describe("M-EVP-13 page preview canvas", () => {
     // Measure the canvas's rendered box vs the surrounding preview
     // pane host. M-EVP-13 mounts the canvas in a sibling pane that
     // bypasses the cell-sized device frame, so the canvas can fill
-    // the available preview area (instead of being squeezed into a
-    // TUI viewport's 80x24 CSS-pixel box — the original tiny-strip
-    // bug). Approach A's `object-fit: contain` preserves the
-    // launcher's surface aspect ratio.
+    // the available preview area. Approach A's
+    // `object-fit: contain` preserves the launcher's surface
+    // aspect ratio.
     const measurements = await page.evaluate(() => {
       const c = document.querySelector(
         'canvas[data-page-project-canvas="true"][data-canvas-active="true"]',
@@ -1867,31 +1919,18 @@ test.describe("M-EVP-13 page preview canvas", () => {
     expect(measurements).not.toBeNull();
     const m = measurements!;
     // Regression guard against the "tiny stretched strip" pathology
-    // from the prior `width: 100%; min-height: 1px;` rule, which
-    // rendered the canvas at the TUI cell-viewport's 24-CSS-pixel
-    // height. With M-EVP-13's Approach A + dedicated canvas pane,
-    // the canvas's height must occupy a substantial share of the
-    // preview pane: the TUI launcher's wide 640x288 surface aspect
-    // (2.22) combined with `object-fit: contain` puts the canvas at
-    // ~width/2.22 CSS pixels of height. On a ~900px-wide pane that
-    // is ~405 px — far above the prior 24 px strip.
+    // from the prior `width: 100%; min-height: 1px;` rule. With
+    // M-EVP-13's Approach A + dedicated canvas pane, the canvas's
+    // height must occupy a substantial share of the preview pane.
     expect(
       m.ch,
       `canvas height ${m.ch} must exceed 25% of preview-pane height ${m.hh}`,
     ).toBeGreaterThan(m.hh * 0.25);
-    // The rendered canvas must not exceed the preview pane's width.
-    // Allow a single CSS pixel for sub-pixel rounding.
     expect(m.cw).toBeLessThanOrEqual(m.hw + 1);
-    // The canvas must occupy effectively the full width of its
-    // dedicated pane (M-EVP-13's canvas-pane sibling, sized via
-    // `flex: 1`) — Approach A's `width: 100%` is the load-bearing
-    // rule.
     expect(
       m.cw,
       `canvas width ${m.cw} must exceed 80% of canvas-pane width ${m.pw}`,
     ).toBeGreaterThan(m.pw * 0.8);
-    // Hard lower bound on canvas height — must clear the prior
-    // 24-pixel strip pathology by a wide margin.
     expect(m.ch).toBeGreaterThan(200);
   });
 });
@@ -2009,5 +2048,134 @@ test.describe("RS-M12 story-driven launcher parity", () => {
     });
     // The Two Active story seeds two tasks.
     expect(taskRowCount).toBeGreaterThanOrEqual(2);
+  });
+});
+
+test.describe("RS-M13 xterm.js terminal mount", () => {
+  test("TUI chip mounts an xterm.js Terminal showing seeded task labels", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+    });
+    await gotoEditor(page);
+
+    // window.Terminal is the UMD global exposed by the vendored
+    // xterm.js bundle. The editor's index.html loads it before
+    // editor.js so it must be defined by the time the page is
+    // ready.
+    await page.waitForFunction(
+      () => typeof (window as unknown as { Terminal?: unknown }).Terminal !==
+        "undefined",
+      null,
+      { timeout: 5_000 },
+    );
+
+    // Open a Component story (e.g. TaskList / Two Active) so the
+    // canvas surface (and the TUI host) take over from the iframe.
+    const taskListGroup = page
+      .locator('[aria-label="Toggle Task App / TaskList stories"]')
+      .first();
+    await expect(taskListGroup).toBeVisible({ timeout: 10_000 });
+    if ((await taskListGroup.getAttribute("aria-expanded")) !== "true") {
+      await taskListGroup.click();
+    }
+    const twoActive = page
+      .locator('[aria-label="Select story Task App / TaskList / Two Active"]')
+      .first();
+    await expect(twoActive).toBeVisible({ timeout: 10_000 });
+    await twoActive.click();
+
+    // Click the TUI chip; RS-M13 mounts the xterm.js Terminal inside a
+    // <div data-tui-terminal="true"> host instead of the canvas.
+    const tuiChip = page
+      .locator('[data-preview-backend="tui"]')
+      .first();
+    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
+    await tuiChip.click();
+
+    // Wait for the data-tui-terminal host + its .xterm-screen child.
+    const termHost = page.locator('[data-tui-terminal="true"]');
+    await expect(termHost).toBeVisible({ timeout: 10_000 });
+    await expect(termHost.locator(".xterm-screen")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // The terminal's textContent should contain the seeded task
+    // labels within 5 s (the Two Active story seeds "Pick up
+    // groceries" and "Reply to design feedback"). xterm.js writes
+    // each character cell into its DOM; the textContent is a
+    // best-effort serialisation across rows.
+    await expect.poll(
+      async () => {
+        return await page.evaluate(() => {
+          const host = document.querySelector('[data-tui-terminal="true"]');
+          if (!host) return "";
+          return host.textContent || "";
+        });
+      },
+      {
+        timeout: 5_000,
+        message: "expected terminal to render seeded task labels",
+      },
+    ).toContain("groceries");
+
+    // The element-tree M packet's boundsUnit must be "cells".
+    const boundsUnit = await page.evaluate(() => {
+      const m = (window as unknown as Record<string, unknown>)
+        .__isonimManifest as { boundsUnit?: string } | undefined;
+      return m?.boundsUnit ?? null;
+    });
+    expect(boundsUnit).toBe("cells");
+
+    // Hit-test: pick a known TaskRow entry from the manifest, click
+    // its cell-centre on the terminal host, and assert
+    // __isonimSelectedComponentPath flips to that path.
+    const targetPath = await page.evaluate(() => {
+      const m = (window as unknown as Record<string, unknown>)
+        .__isonimManifest as {
+          elements?: Array<{
+            componentPath: string;
+            bounds: { x: number; y: number; w: number; h: number };
+          }>;
+          surfaceCols?: number;
+          surfaceRows?: number;
+        } | undefined;
+      if (!m || !Array.isArray(m.elements)) return null;
+      const row = m.elements.find((e) =>
+        e.componentPath.startsWith("task_app/views/TaskRow#"),
+      );
+      if (!row) return null;
+      const host = document.querySelector(
+        '[data-tui-terminal="true"]',
+      ) as HTMLElement | null;
+      if (!host) return null;
+      const rect = host.getBoundingClientRect();
+      const cellW = rect.width / (m.surfaceCols ?? 80);
+      const cellH = rect.height / (m.surfaceRows ?? 24);
+      const cx = rect.left + (row.bounds.x + row.bounds.w / 2) * cellW;
+      const cy = rect.top + (row.bounds.y + row.bounds.h / 2) * cellH;
+      // Stash for the click below.
+      (window as unknown as Record<string, unknown>).__isonimTestClick =
+        { x: cx, y: cy, path: row.componentPath };
+      return row.componentPath;
+    });
+    expect(targetPath).toBeTruthy();
+
+    const clickPos = await page.evaluate(() => {
+      return (window as unknown as Record<string, unknown>)
+        .__isonimTestClick as { x: number; y: number; path: string };
+    });
+    await page.mouse.click(clickPos.x, clickPos.y);
+
+    await expect.poll(
+      async () =>
+        await page.evaluate(
+          () =>
+            (window as unknown as Record<string, unknown>)
+              .__isonimSelectedComponentPath as string | undefined,
+        ),
+      { timeout: 5_000 },
+    ).toBe(targetPath);
   });
 });
