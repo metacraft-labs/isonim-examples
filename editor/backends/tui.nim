@@ -10,15 +10,17 @@
 ## group/item labels from `settings_app/core/demo_catalog` (when
 ## `--demo=settings`).
 ##
-## EX-M23 (TUI slice). The launcher additionally wires an
-## `ElementTreeProvider` into the bridge so the editor's
-## preview-canvas can hit-test pointer events back to component
-## paths. The provider walks the harness's compositor on every
-## bridge tick and emits a manifest via `tui_adapter.buildTui-
-## ElementTreeManifest`; the bridge handles cadence (emit on
-## change, never on idle frames). The Layer-1 leaves under
-## `task_app/tui/leaves.nim` and `settings_app/tui/leaves.nim`
-## annotate every visible node with `data-component-path`.
+## EX-M23 (TUI slice). The launcher wires an `ElementTreeProvider`
+## into the bridge so the editor's preview-canvas can hit-test
+## pointer events back to component paths.
+##
+## RS-M12. The launcher wires a `StoryDispatchSink` on top of the
+## existing resize sink so the editor's `select-story` /
+## `apply-mutation` I packets reconfigure the live VM. The same
+## composition root stays mounted across selects — re-seeding the VM
+## drives the reactive graph to repaint the harness automatically.
+
+import std/json
 
 import isonim_tui
 import isonim/core/owner
@@ -33,6 +35,7 @@ import settings_app/core/demo_catalog
 import settings_app/main_tui as settings_tui
 
 import ./common
+import ./story_dispatch_demo
 
 const
   DefaultCols = 80
@@ -54,19 +57,17 @@ proc runTuiDemo(cfg: LauncherConfig) =
 
   createRoot proc(dispose: proc()) =
     let harness = newTerminalTestHarness(cols, rows)
+    var taskAppVm: TaskAppVM
+    var settingsAppVm: SettingsVM
     case cfg.demo
     of "settings":
       let catalog = buildDemoSettingsCatalog()
-      let vm = newSettingsVM(catalog)
-      discard settings_tui.runSettingsApp(harness, vm)
+      settingsAppVm = newSettingsVM(catalog)
+      discard settings_tui.runSettingsApp(harness, settingsAppVm)
     else:
-      # Task app: seed a few sample tasks so the rasterized frame
-      # actually shows demo strings.
-      let vm = newTaskAppVM()
-      vm.addTask("Buy groceries")
-      vm.addTask("Walk the dog")
-      vm.addTask("Ship EX-M14")
-      discard task_tui.runTaskApp(harness, vm)
+      taskAppVm = newTaskAppVM()
+      seedTaskInboxDefaults(taskAppVm)
+      discard task_tui.runTaskApp(harness, taskAppVm)
     harness.flush()
 
     let capturedHarness = harness
@@ -75,10 +76,6 @@ proc runTuiDemo(cfg: LauncherConfig) =
     let src = newTuiFrameSource(bufferGetter, cols, rows,
                                 DefaultCellW, DefaultCellH)
 
-    # EX-M23: the manifest provider. The closure captures `harness`
-    # by reference; on every call we flush the compositor (cheap when
-    # nothing has changed — the harness's flush is idempotent against
-    # the reactive graph's fixpoint) and read the latest layout.
     var dynamicCols = cols
     var dynamicRows = rows
     let provider = ElementTreeProvider(
@@ -88,12 +85,6 @@ proc runTuiDemo(cfg: LauncherConfig) =
           buildTuiElementTreeManifest(capturedHarness,
             dynamicCols, dynamicRows, DefaultCellW, DefaultCellH))
 
-    # EX-M23: minimal real input dispatch — resize events from the
-    # editor surface flow through to the harness so a resize-driven
-    # state change actually mutates the manifest. (Click / key
-    # dispatch follows the same shape but isn't required to land
-    # this milestone; the editor's hit-test path uses the manifest
-    # to decide what to select before any click I packets fly.)
     let resizingSink = newAnyInputSink(
       proc(event: InputEvent) {.gcsafe.} =
         if event.kind != iekResize: return
@@ -105,7 +96,29 @@ proc runTuiDemo(cfg: LauncherConfig) =
           dynamicCols = newCols
           dynamicRows = newRows
           capturedHarness.flush())
-    runDemoBridgeWith(cfg, src.toAny(), provider, resizingSink)
+
+    let captTaskVm = taskAppVm
+    let captSettingsVm = settingsAppVm
+    let demoIsSettings = cfg.demo == "settings"
+    let mountFn = proc(storyId: string; properties: JsonNode)
+                  {.closure, gcsafe.} =
+      {.cast(gcsafe).}:
+        if demoIsSettings:
+          applySettingsStory(captSettingsVm, storyId)
+        else:
+          applyTaskStory(captTaskVm, storyId)
+        capturedHarness.flush()
+    let applyFn = proc(target, key: string; value: JsonNode;
+                       scope: MutationScope) {.closure, gcsafe.} =
+      {.cast(gcsafe).}:
+        if demoIsSettings:
+          applySettingsMutation(captSettingsVm, target, key, value, scope)
+        else:
+          applyTaskMutation(captTaskVm, target, key, value, scope)
+        capturedHarness.flush()
+    let storySink = newStoryDispatchSink(mountFn, applyFn,
+                                         inner = resizingSink)
+    runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink())
     dispose()
 
 proc runDemoBridge*(backend: string) =

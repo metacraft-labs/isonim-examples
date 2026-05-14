@@ -1,24 +1,15 @@
 ## editor/backends/freya.nim — Freya-backend launcher for the demo editor.
 ##
 ## Constructs a real `TaskAppVM` or `SettingsVM`, builds the headless
-## Freya tree via the demo's Layer-4 composition root, and streams the
-## resulting element tree to the bridge through
-## `isonim_render_serve/adapters/freya_adapter`. The frame source
-## rasterises the tree as colored rectangles whose tag / text content
-## comes from the real demo VM, so each emitted frame is visibly
-## distinct from the other backends' renders.
+## Freya tree via the demo's Layer-4 composition root, and streams via
+## `isonim_render_serve/adapters/freya_adapter`.
 ##
-## EX-M15: the `--demo=settings` branch now drives the real Freya
-## settings composition (`settings_app/main_freya.buildSettingsApp`)
-## rather than falling back to `task_app`. This matches the GPUI
-## launcher's pre-existing dispatch shape (`editor/backends/gpui.nim`).
+## EX-M23b: wires an `ElementTreeProvider` into the bridge.
 ##
-## EX-M23b. The launcher additionally wires an
-## ``ElementTreeProvider`` into the bridge so the editor's preview
-## canvas can hit-test pointer events back to component paths. Mirror
-## of the GPUI launcher; the manifest builder is
-## ``freya_adapter.buildFreyaElementTreeManifest`` against the
-## Freya tree.
+## RS-M12. Wires a `StoryDispatchSink` so the editor's `select-story` /
+## `apply-mutation` I packets reconfigure the live VM.
+
+import std/json
 
 import isonim_freya/renderer as freya_renderer
 import isonim_freya/bindings as freya_bindings
@@ -34,6 +25,7 @@ import settings_app/core/demo_catalog
 import settings_app/main_freya as settings_freya
 
 import ./common
+import ./story_dispatch_demo
 
 const
   DefaultWidth = 800
@@ -46,21 +38,21 @@ proc runFreyaDemo(cfg: LauncherConfig) =
   createRoot proc(dispose: proc()) =
     let r = FreyaRenderer()
     var root: FreyaElement
+    var taskAppVm: TaskAppVM
+    var settingsAppVm: SettingsVM
     case cfg.demo
     of "settings":
       freya_bindings.freya_reset_tree()
       freya_renderer.resetCallbacks()
       let catalog = buildDemoSettingsCatalog()
-      let vm = newSettingsVM(catalog)
-      root = settings_freya.buildSettingsApp(r, vm)
+      settingsAppVm = newSettingsVM(catalog)
+      root = settings_freya.buildSettingsApp(r, settingsAppVm)
     else:
       freya_bindings.freya_reset_tree()
       freya_renderer.resetCallbacks()
-      let vm = newTaskAppVM()
-      vm.addTask("Buy groceries")
-      vm.addTask("Walk the dog")
-      vm.addTask("Ship EX-M14")
-      root = task_freya.buildTaskApp(r, vm)
+      taskAppVm = newTaskAppVM()
+      seedTaskInboxDefaults(taskAppVm)
+      root = task_freya.buildTaskApp(r, taskAppVm)
 
     var dynamicW = w
     var dynamicH = h
@@ -85,7 +77,26 @@ proc runFreyaDemo(cfg: LauncherConfig) =
           src.width = dynamicW
           src.height = dynamicH)
 
-    runDemoBridgeWith(cfg, src.toAny(), provider, resizingSink)
+    let captTaskVm = taskAppVm
+    let captSettingsVm = settingsAppVm
+    let demoIsSettings = cfg.demo == "settings"
+    let mountFn = proc(storyId: string; properties: JsonNode)
+                  {.closure, gcsafe.} =
+      {.cast(gcsafe).}:
+        if demoIsSettings:
+          applySettingsStory(captSettingsVm, storyId)
+        else:
+          applyTaskStory(captTaskVm, storyId)
+    let applyFn = proc(target, key: string; value: JsonNode;
+                       scope: MutationScope) {.closure, gcsafe.} =
+      {.cast(gcsafe).}:
+        if demoIsSettings:
+          applySettingsMutation(captSettingsVm, target, key, value, scope)
+        else:
+          applyTaskMutation(captTaskVm, target, key, value, scope)
+    let storySink = newStoryDispatchSink(mountFn, applyFn,
+                                         inner = resizingSink)
+    runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink())
     dispose()
 
 proc runDemoBridge*(backend: string) =

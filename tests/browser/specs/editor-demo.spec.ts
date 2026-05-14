@@ -1895,3 +1895,119 @@ test.describe("M-EVP-13 page preview canvas", () => {
     expect(m.ch).toBeGreaterThan(200);
   });
 });
+
+// --------------------------------------------------------------------------
+// 4z. RS-M12: story-driven launcher composition + property mutation.
+//     The editor sends a `select-story` I packet to the active non-Web
+//     launcher whenever the sidebar story selection changes. The
+//     launcher reconfigures its live VM, the bridge re-emits the
+//     element-tree manifest with the new componentPath set, and the
+//     editor's test-mode mirror surfaces the manifest on
+//     `window.__isonimManifest`.
+//
+//     The test below selects two different stories with the TUI
+//     backend active, captures each post-select manifest, and asserts
+//     the manifest changed and contains the page-specific
+//     componentPaths. Web iframe srcdoc path is unaffected.
+// --------------------------------------------------------------------------
+
+test.describe("RS-M12 story-driven launcher parity", () => {
+  test("selecting a Page story drives the TUI launcher manifest to refresh", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
+    });
+    await gotoEditor(page);
+
+    // Switch to TUI backend first so the canvas is the active surface.
+    const tuiChip = page
+      .locator('[data-preview-backend="tui"]')
+      .first();
+    await expect(tuiChip).toBeVisible({ timeout: 10_000 });
+    await tuiChip.click();
+
+    // Story 1: Task App / Pages / Inbox.
+    const pagesGroup = page
+      .locator('[aria-label="Toggle Task App / Pages stories"]')
+      .first();
+    await expect(pagesGroup).toBeVisible({ timeout: 10_000 });
+    const pagesExpanded = await pagesGroup.getAttribute("aria-expanded");
+    if (pagesExpanded !== "true") {
+      await pagesGroup.click();
+    }
+    const inboxStory = page
+      .locator('[aria-label="Select story Task App / Pages / Inbox"]')
+      .first();
+    await expect(inboxStory).toBeVisible({ timeout: 10_000 });
+    await inboxStory.click();
+
+    // Wait for a manifest to land. The launcher's element-tree
+    // emission goes through the gated `window.__isonimManifest`
+    // mirror after the bridge attaches.
+    await page.waitForFunction(
+      () => {
+        const m = (window as unknown as Record<string, unknown>)
+          .__isonimManifest as {
+            type?: string;
+            elements?: Array<{ componentPath: string }>;
+          } | undefined;
+        return !!(
+          m &&
+          m.type === "element-tree" &&
+          Array.isArray(m.elements) &&
+          m.elements.some((e) => e.componentPath === "task_app/views/TaskApp")
+        );
+      },
+      null,
+      { timeout: 20_000 },
+    );
+
+    // Story 2: switch to Task App / TaskList / Two Active. RS-M12
+    // sends a fresh select-story; the launcher re-seeds; the
+    // manifest is re-emitted with a different TaskRow set.
+    const taskListGroup = page
+      .locator('[aria-label="Toggle Task App / TaskList stories"]')
+      .first();
+    await expect(taskListGroup).toBeVisible({ timeout: 10_000 });
+    const taskListExpanded = await taskListGroup.getAttribute("aria-expanded");
+    if (taskListExpanded !== "true") {
+      await taskListGroup.click();
+    }
+    const twoActive = page
+      .locator('[aria-label="Select story Task App / TaskList / Two Active"]')
+      .first();
+    await expect(twoActive).toBeVisible({ timeout: 10_000 });
+    await twoActive.click();
+
+    // The post-second-select manifest must contain task_app/views/TaskRow
+    // entries (the Two Active story plants two tasks). We wait until the
+    // most-recent manifest reflects that.
+    await page.waitForFunction(
+      () => {
+        const m = (window as unknown as Record<string, unknown>)
+          .__isonimManifest as {
+            elements?: Array<{ componentPath: string }>;
+          } | undefined;
+        if (!m || !Array.isArray(m.elements)) return false;
+        return m.elements.some((e) =>
+          e.componentPath.startsWith("task_app/views/TaskRow#"),
+        );
+      },
+      null,
+      { timeout: 20_000 },
+    );
+
+    const taskRowCount = await page.evaluate(() => {
+      const m = (window as unknown as Record<string, unknown>)
+        .__isonimManifest as {
+          elements: Array<{ componentPath: string }>;
+        };
+      return m.elements.filter((e) =>
+        e.componentPath.startsWith("task_app/views/TaskRow#"),
+      ).length;
+    });
+    // The Two Active story seeds two tasks.
+    expect(taskRowCount).toBeGreaterThanOrEqual(2);
+  });
+});

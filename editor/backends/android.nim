@@ -1,74 +1,34 @@
 ## editor/backends/android.nim — Android-backend launcher for the demo
 ## editor.
 ##
-## EX-M21. The Android launcher is a *host-side* binary (macOS or Linux)
-## that talks to a connected Android device via `adb`. The on-device
-## counterpart is the existing `nimexamples` flavor in `isonim-android`
-## (the `MainActivity` plus `libtask_app.so` shipped by EX-M6 + EX-M22):
-## the launcher's responsibility is to drive `adb` so the right Activity
-## is showing, then capture frames from the device's framebuffer with
-## `adb exec-out screencap` (RS-M6's documented `acmScreencap` fallback,
-## promoted here to the primary host-side path because the alternative
-## — `View.draw(Canvas)` via the RS-M6 `acmHeadless` recipe — requires
-## the Nim code to be running *inside* the device's process, which the
-## launcher is not).
+## EX-M21. Host-side binary that talks to a connected Android device
+## via `adb`. The on-device counterpart is `isonim-android`'s
+## `nimexamples` flavor.
 ##
-## On macOS and Linux the launcher:
-##   1. Parses the standard launcher CLI (`--port`, `--demo`, `--width`,
-##      `--height`, `--fps`, `--static`) via the shared
-##      `editor/backends/common.nim` helper.
-##   2. Invokes `adb` to launch the `nimexamples` Activity with the
-##      requested `--demo` (an intent extra dispatches between task_app
-##      and settings_app — see `MainActivity.kt`).
-##   3. Wraps a `AdbScreencapFrameSource` (this module — invokes `adb
-##      exec-out screencap` per frame, parses the 16-byte header
-##      `<u32 width, u32 height, u32 format, u32 colorspace>`, and
-##      scales the raw RGBA8888 framebuffer down to the configured
-##      `cfg.width x cfg.height` via nearest-neighbour sampling) and
-##      hands the `AnyFrameSource` to `runDemoBridgeWith`.
+## EX-M23c. Wires an `ElementTreeProvider` into the bridge when built
+## with `-d:mockJni`.
+##
+## RS-M12. Wires a `StoryDispatchSink` so the editor's `select-story` /
+## `apply-mutation` I packets reconfigure the live VM. With
+## `-d:mockJni` enabled, the parallel in-process Android renderer
+## tree's VM is the dispatch target. Without `-d:mockJni`, the
+## dispatch sink is still wired so the bridge can advertise the
+## packets are accepted; the device's VM is unaffected (the on-
+## device runtime owns its own VM lifecycle, and the launcher has
+## no FFI / IPC channel to it today — this is the same constraint
+## as EX-M21's pre-RS-M12 design).
 ##
 ## Gated `when defined(macosx) or defined(linux):` because `adb` is
-## available on both POSIX host toolchains. On other hosts the file
-## compiles as an empty shell.
-##
-## EX-M23c. The launcher additionally wires an
-## ``ElementTreeProvider`` into the bridge so the editor's preview
-## canvas can hit-test pointer events back to component paths. Pixels
-## continue to flow from `adb exec-out screencap` against the
-## device's framebuffer; the manifest tree is sourced from a
-## *parallel* in-process `AndroidRenderer` built under `-d:mockJni`
-## via the same `task_app/main_android` / `settings_app/main_android`
-## composition root the device's runtime uses. The two trees are
-## structurally identical because they share the Nim composition
-## root, so `componentPath` identity is byte-stable across the host's
-## mock tree and the device's real tree.
-##
-## EX-M23c follow-up. The task_app Android leaves were refactored to
-## a `createRenderEffect + forEachKeyed` reactive pattern (matching
-## the GPUI / Freya / Cocoa leaves) so the leaves track VM signal
-## changes on their own. The launcher no longer needs a reactive
-## bridge that calls `rerender(vm)` after the seed tasks land.
-##
-## Test policy. The launcher subprocess test (RS-M11c /
-## `tests/test_android_launcher_element_tree.nim`) FAILS — never
-## skips — when no Android device is reachable via `adb`. Per the
-## user's standing instruction, a missing adb device is a real test
-## environment defect, not a skip-worthy condition.
+## available on both POSIX host toolchains.
 
 when defined(macosx) or defined(linux):
-  import std/[osproc, streams, strutils]
+  import std/[json, osproc, streams, strutils]
 
   import isonim_render_serve
   import isonim_render_serve/adapters/android_adapter
 
   import editor/backends/common
 
-  # EX-M23c: the launcher additionally hosts an in-process Android
-  # renderer tree (under -d:mockJni) which feeds the element-tree
-  # manifest builder. Pixels still come from `adb exec-out screencap`
-  # against the connected device; the mock tree is invisible to
-  # users and exists solely to materialise the `componentPath` set
-  # the manifest carries.
   when defined(mockJni):
     import isonim/core/owner
 
@@ -78,24 +38,17 @@ when defined(macosx) or defined(linux):
     import settings_app/core/demo_catalog
     import settings_app/main_android as settings_android
 
+    import editor/backends/story_dispatch_demo
+
   const
     DefaultWidth = 800
     DefaultHeight = 600
     AdbBin = "adb"
-      ## Resolved against `PATH`. The dev-shell flake provides the
-      ## Android platform-tools so this works out of the box; CI / non-
-      ## dev-shell environments should ensure `adb` is on the path.
 
   type
     AdbScreencapFrameSource* = ref object
-      ## Host-side frame source that drives the device's framebuffer.
-      ## Mirrors the shape of `CocoaFrameSource` / `FreyaFrameSource` /
-      ## `GpuiFrameSource` so the bridge consumes it identically.
       width*, height*: int
       deviceSerial*: string
-        ## Optional `-s <serial>` selector for multi-device hosts.
-        ## Empty string means "use adb's default device" (single device
-        ## attached, or `ANDROID_SERIAL` env var).
 
   proc newAdbScreencapFrameSource*(width = DefaultWidth;
                                    height = DefaultHeight;
@@ -104,9 +57,6 @@ when defined(macosx) or defined(linux):
                             deviceSerial: deviceSerial)
 
   proc runAdb(args: openArray[string]; stdoutBin = true): tuple[output: string, code: int] =
-    ## Spawn adb with the given args, capture stdout. `stdoutBin = true`
-    ## reads stdout byte-for-byte (used for `exec-out screencap`); for
-    ## non-binary use cases the return is the textual output.
     var argv = newSeq[string]()
     for a in args: argv.add(a)
     let p = startProcess(AdbBin, args = argv,
@@ -129,19 +79,6 @@ when defined(macosx) or defined(linux):
       (uint32(s[offset + 3].byte) shl 24)
 
   proc captureFrame*(src: AdbScreencapFrameSource): Frame =
-    ## Invoke `adb exec-out screencap` against the connected device,
-    ## parse the binary framebuffer, and scale it down to
-    ## `src.width x src.height` via nearest-neighbour sampling.
-    ##
-    ## Header format (Android L+; 16 bytes):
-    ##   u32 width (LE)
-    ##   u32 height (LE)
-    ##   u32 pixel-format (LE)  — typically 1 (HAL_PIXEL_FORMAT_RGBA_8888)
-    ##   u32 colorspace (LE)    — typically 1 (sRGB)
-    ##
-    ## Older devices may emit a 12-byte header (no colorspace). We
-    ## detect by checking the length: 12-byte header => total =
-    ## 12 + w*h*4; 16-byte header => total = 16 + w*h*4.
     var args: seq[string] = @[]
     if src.deviceSerial.len > 0:
       args.add "-s"
@@ -165,15 +102,11 @@ when defined(macosx) or defined(linux):
         $raw.len & " bytes; expected " & $(headerLen + w0 * h0 * 4) &
         " for " & $w0 & "x" & $h0 & " header).")
     if format != 1:
-      # 1 = HAL_PIXEL_FORMAT_RGBA_8888. Other formats would need a
-      # per-format swizzle; surface a clear error rather than emit
-      # corrupt RGBA bytes.
       raise newException(IOError,
         "EX-M21: unexpected pixel format " & $format & " from screencap " &
         "(expected 1 = RGBA_8888). The device may not be returning RGBA " &
         "frames; check `adb shell getprop ro.build.version.sdk` and the " &
         "device's display config.")
-    # Nearest-neighbour downscale from (w0,h0) to (src.width, src.height).
     let outW = src.width
     let outH = src.height
     var pixels = newSeq[byte](outW * outH * 4)
@@ -199,10 +132,6 @@ when defined(macosx) or defined(linux):
       closeImpl = proc() {.gcsafe.} = discard)
 
   proc launchActivity(demo: string) =
-    ## Bring the on-device `nimexamples` Activity to the foreground via
-    ## `adb shell am start`, passing `--es demo <demo>` so the
-    ## Activity's `onCreate` dispatches to the right Nim bridge.
-    ## See `MainActivity.kt` for the receiver side.
     let pkg = "com.metacraft.isonim.android.nimexamples"
     let activity = "com.metacraft.isonim.examples.MainActivity"
     let (output, code) = runAdb(@[
@@ -219,35 +148,20 @@ when defined(macosx) or defined(linux):
     let h = if cfg.height > 0: cfg.height else: DefaultHeight
     launchActivity(cfg.demo)
     when defined(mockJni):
-      ## EX-M23c: build a *parallel* in-process Android renderer tree
-      ## via the same Layer-4 composition root the device uses. The
-      ## tree never produces pixels (pixels still come from `adb
-      ## exec-out screencap` below); it only feeds the manifest
-      ## builder so the bridge can advertise
-      ## `capabilities.elementTree = true` and emit an `element-tree`
-      ## sub-kind packet under the existing RS-M11 cadence rules.
-      ## Structural parity with the on-device tree is by-construction
-      ## (both compile the same Nim composition root).
       createRoot proc(dispose: proc()) =
         let mockR = AndroidRenderer()
         var mockRoot: AndroidElement
+        var taskAppVm: TaskAppVM
+        var settingsAppVm: SettingsVM
         case cfg.demo
         of "settings":
           let catalog = buildDemoSettingsCatalog()
-          let vm = newSettingsVM(catalog)
-          mockRoot = settings_android.buildSettingsApp(mockR, vm)
+          settingsAppVm = newSettingsVM(catalog)
+          mockRoot = settings_android.buildSettingsApp(mockR, settingsAppVm)
         else:
-          let vm = newTaskAppVM()
-          vm.addTask("Buy groceries")
-          vm.addTask("Walk the dog")
-          vm.addTask("Ship EX-M23c")
-          # EX-M23c follow-up: the Android task_app leaves are now
-          # reactive (`createRenderEffect + forEachKeyed`), matching
-          # the GPUI / Freya / Cocoa pattern. The leaves' own effects
-          # pick up the seeded tasks as they settle on
-          # `vm.tasks.data`; no launcher-side `rerender(vm)` bridge
-          # is needed.
-          mockRoot = task_android.buildTaskApp(mockR, vm)
+          taskAppVm = newTaskAppVM()
+          seedTaskInboxDefaults(taskAppVm)
+          mockRoot = task_android.buildTaskApp(mockR, taskAppVm)
 
         var dynamicW = w
         var dynamicH = h
@@ -272,7 +186,27 @@ when defined(macosx) or defined(linux):
               src.width = dynamicW
               src.height = dynamicH)
 
-        runDemoBridgeWith(cfg, src.toAny(), provider, resizingSink)
+        let captTaskVm = taskAppVm
+        let captSettingsVm = settingsAppVm
+        let demoIsSettings = cfg.demo == "settings"
+        let mountFn = proc(storyId: string; properties: JsonNode)
+                      {.closure, gcsafe.} =
+          {.cast(gcsafe).}:
+            if demoIsSettings:
+              applySettingsStory(captSettingsVm, storyId)
+            else:
+              applyTaskStory(captTaskVm, storyId)
+        let applyFn = proc(target, key: string; value: JsonNode;
+                           scope: MutationScope) {.closure, gcsafe.} =
+          {.cast(gcsafe).}:
+            if demoIsSettings:
+              applySettingsMutation(captSettingsVm, target, key, value, scope)
+            else:
+              applyTaskMutation(captTaskVm, target, key, value, scope)
+        let storySink = newStoryDispatchSink(mountFn, applyFn,
+                                             inner = resizingSink)
+        runDemoBridgeWith(cfg, src.toAny(), provider,
+                          storySink.toAnyInputSink())
         dispose()
     else:
       let src = newAdbScreencapFrameSource(width = w, height = h)

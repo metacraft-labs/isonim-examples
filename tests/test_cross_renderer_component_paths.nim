@@ -34,7 +34,7 @@
 ## to the launcher, NOT a test fixture.
 
 import std/[asyncdispatch, asyncnet, base64, json, nativesockets, net,
-            os, osproc, sets, strutils, times, unittest]
+            os, osproc, random, sets, strutils, times, unittest]
 
 import isonim_render_serve
 
@@ -218,6 +218,62 @@ proc pathSet(m: ElementTreeManifest): HashSet[string] =
   for e in m.elements:
     result.incl e.componentPath
 
+# ---------------------------------------------------------------------------
+# RS-M12 helpers — send a `select-story` I packet and decode the next
+# `element-tree` manifest.
+# ---------------------------------------------------------------------------
+
+proc randMaskKey(): array[4, byte] =
+  for i in 0 ..< 4: result[i] = byte(rand(0 .. 255))
+
+proc sendInputPacket(sock: AsyncSocket; ipkt: InputPacket) {.async.} =
+  let payload = bytesToString(encodeInput(ipkt))
+  let mask = randMaskKey()
+  let frame = encodeWsClientFrame(wsOpBinary, payload, mask)
+  await sock.send(frame)
+
+proc escapeJsonStr(s: string): string =
+  let n = newJString(s)
+  $n
+
+proc fetchManifestAfterSelectStory(l: Launcher;
+                                    storyId: string): ElementTreeManifest =
+  ## Connect, drain the boot manifest, send a `select-story` I packet
+  ## with the supplied storyId, return the next `element-tree`
+  ## manifest the launcher emits.
+  proc flow(): Future[ElementTreeManifest] {.async.} =
+    let sock = await connectWs(l.port)
+    let dec = newDecState()
+    let bootDeadline = epochTime() + (ManifestDeadlineMs.float / 1000.0)
+    while epochTime() < bootDeadline:
+      let payload = await recvOnePacket(sock, dec)
+      if payload.len == 0: continue
+      if payload[0] == 'M':
+        let meta = decodeMeta(stringToBytes(payload))
+        if isElementTreeBody(meta.json):
+          break
+    let lastSep = storyId.rfind(" / ")
+    doAssert lastSep > 0, "invalid storyId: " & storyId
+    let group = storyId[0 ..< lastSep]
+    let name = storyId[lastSep + 3 .. ^1]
+    let body = "{\"type\":\"select-story\",\"group\":" & escapeJsonStr(group) &
+               ",\"name\":" & escapeJsonStr(name) &
+               ",\"kind\":\"skPage\",\"storyId\":" & escapeJsonStr(storyId) & "}"
+    await sendInputPacket(sock, InputPacket(json: body))
+    let selDeadline = epochTime() + 2.5
+    while epochTime() < selDeadline:
+      let payload = await recvOnePacket(sock, dec)
+      if payload.len == 0: continue
+      if payload[0] == 'M':
+        let meta = decodeMeta(stringToBytes(payload))
+        if isElementTreeBody(meta.json):
+          sock.close()
+          return decodeElementTreeJson(meta.json)
+    sock.close()
+    raise newException(IOError,
+      l.name & ": no element-tree after select-story " & storyId)
+  waitFor flow()
+
 proc vectorSymbolPairSet(m: ElementTreeManifest): HashSet[string] =
   ## M-EVP-11: set of ``componentPath`` strings restricted to entries
   ## with ``kind == "vector-symbol"``. The seeded ``TaskCheckIcon``
@@ -365,3 +421,53 @@ suite "EX-M23b / RS-M11b + EX-M23c / RS-M11c: cross-renderer parity":
           check e.bounds.y >= 0
           check e.bounds.x + e.bounds.w <= m.surfaceWidth
           check e.bounds.y + e.bounds.h <= m.surfaceHeight
+
+  # ---------------------------------------------------------------------
+  # RS-M12. Extended parity matrix: drive each launcher with the same
+  # ``select-story`` packets and assert componentPath identity per
+  # storyId. This is the load-bearing invariant the milestone closes —
+  # different launchers receiving the same storyId produce the same
+  # logical surface, with the SAME componentPath taxonomy.
+  # ---------------------------------------------------------------------
+
+  test "RS-M12 select-story parity: same storyId → same componentPath set across renderers":
+    when defined(windows):
+      skip()
+    else:
+      var launchers: seq[Launcher] = @[]
+      defer:
+        for l in launchers: l.stop()
+
+      launchers.add launch("tui", "ISONIM_EXAMPLES_TUI_BIN")
+      launchers.add launch("gpui", "ISONIM_EXAMPLES_GPUI_BIN")
+      launchers.add launch("freya", "ISONIM_EXAMPLES_FREYA_BIN")
+      when defined(macosx):
+        launchers.add launch("cocoa", "ISONIM_EXAMPLES_COCOA_BIN")
+
+      # Subset of the canonical storyId taxonomy. The launchers'
+      # ``applyTaskStory`` reseeds the VM differently for each id so
+      # the manifests below are produced by genuinely different VM
+      # states.
+      const StoryIds = @[
+        "Task App / Pages / Inbox",
+        "Task App / TaskList / Two Active",
+      ]
+
+      for storyId in StoryIds:
+        var pathSetsForStory: seq[HashSet[string]] = @[]
+        for l in launchers:
+          let m = fetchManifestAfterSelectStory(l, storyId)
+          pathSetsForStory.add pathSet(m)
+          check pathSetsForStory[^1].len >= 5
+
+        if pathSetsForStory.len > 1:
+          let reference = pathSetsForStory[0]
+          for i in 1 ..< pathSetsForStory.len:
+            if pathSetsForStory[i] != reference:
+              echo "RS-M12 parity diff for storyId \"", storyId, "\" (",
+                   launchers[0].name, " vs ", launchers[i].name, "):"
+              echo "  ", launchers[0].name, " only: ",
+                   reference - pathSetsForStory[i]
+              echo "  ", launchers[i].name, " only: ",
+                   pathSetsForStory[i] - reference
+            check pathSetsForStory[i] == reference
