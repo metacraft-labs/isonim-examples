@@ -163,7 +163,12 @@ build-backends:
         editor/backends/tui_term.nim 2>&1 | tee -a test-logs/build-backends.log
     @for renderer in web gpui freya; do \
       echo "[build-backends] isonim-examples-$renderer"; \
+      extra_flags=""; \
+      if [ "$renderer" = "freya" ]; then \
+        extra_flags="-d:useFreyaHeadless"; \
+      fi; \
       nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
+          $extra_flags \
           -o:build/backends/isonim-examples-$renderer \
           editor/backends/$renderer.nim 2>&1 | tee -a test-logs/build-backends.log; \
     done
