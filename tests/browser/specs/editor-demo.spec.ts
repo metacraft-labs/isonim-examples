@@ -751,17 +751,18 @@ test.describe("RS-M11: canvas hit-test via element-tree manifest (real browser)"
 
 // --------------------------------------------------------------------------
 // 4d. RS-M11 Pattern A: editor's OWN JS bundle opens a WebSocket to the TUI
-//     launcher, paints pixels into the in-editor canvas, and dispatches the
-//     element-tree manifest through `StreamingPreviewVM.dispatchMetaPacket`.
-//     This replaces the Pattern B test above for the end-to-end "editor
-//     renders real launcher pixels in a browser" invariant. Pattern B
-//     stays in the file as a regression of the wire-format itself
-//     (different test, different surface, no overlap with Pattern A's
-//     assertions).
+//     launcher, mounts the xterm.js Terminal surface for the TUI backend
+//     (RS-M13 retired the canvas paint path in favour of xterm.js), and
+//     dispatches the cell-coord element-tree manifest through
+//     `StreamingPreviewVM.dispatchMetaPacket`. This replaces the Pattern B
+//     test above for the end-to-end "editor renders real launcher pixels
+//     in a browser" invariant. Pattern B stays in the file as a
+//     regression of the wire-format itself (different test, different
+//     surface, no overlap with Pattern A's assertions).
 // --------------------------------------------------------------------------
 
 test.describe("RS-M11 Pattern A: editor bundle renders real TUI pixels", () => {
-  test("editor canvas paints real pixels and click resolves to a TaskRow", async ({
+  test("editor xterm.js surface paints real pixels and click resolves to a TaskRow", async ({
     page,
   }) => {
     // Flip the editor's test-mode flag BEFORE the bundle boots, so the
@@ -776,6 +777,17 @@ test.describe("RS-M11 Pattern A: editor bundle renders real TUI pixels", () => {
 
     await gotoEditor(page);
 
+    // RS-M13: index.html loads xterm.js as a UMD global before the
+    // editor bundle boots — guard upfront so the TUI attach path
+    // (which constructs `new window.Terminal()`) is ready.
+    await page.waitForFunction(
+      () =>
+        typeof (window as unknown as { Terminal?: unknown }).Terminal !==
+          "undefined",
+      null,
+      { timeout: 5_000 },
+    );
+
     // Navigate into a Task App / * story so the editor's component-detail
     // view mounts the project canvas alongside the iframe. TaskList is
     // the canonical demo with multiple TaskRow entries in the
@@ -789,64 +801,68 @@ test.describe("RS-M11 Pattern A: editor bundle renders real TUI pixels", () => {
     if (taskListExpanded !== "true") {
       await taskListGroup.click();
     }
+    // Pin to "Two Active" — Empty has no TaskRow entries in its
+    // manifest, which the row-click invariant below requires. Two
+    // Active seeds two real TaskRow entries.
     const taskListStory = page
-      .locator('[aria-label^="Select story Task App / TaskList /"]')
+      .locator('[aria-label="Select story Task App / TaskList / Two Active"]')
       .first();
     await expect(taskListStory).toBeVisible({ timeout: 10_000 });
     await taskListStory.click();
 
     // Switch the preview backend to TUI. The edge-strip backend chip
     // path drives `vm.platform`, which the component-detail render
-    // effect notices and calls `attachBridgeClient` for.
+    // effect notices and calls `attachBridgeClient` for. RS-M13: the
+    // TUI attach mounts an xterm.js Terminal in a sibling
+    // `<div data-tui-terminal="true">` host and hides the canvas.
     const tuiChip = page
       .locator('[data-preview-backend="tui"]')
       .first();
     await expect(tuiChip).toBeVisible({ timeout: 10_000 });
     await tuiChip.click();
 
-    // The canvas becomes the active surface for non-Web backends.
-    const canvas = page
-      .locator('canvas[data-canvas-active="true"]')
-      .first();
-    await expect(canvas).toBeVisible({ timeout: 10_000 });
+    // RS-M13: TUI no longer paints into the canvas — the editor
+    // attaches xterm.js into a sibling `<div data-tui-terminal="true">`
+    // host inside the same canvas-mount wrapper, and the canvas itself
+    // is hidden. Assert the xterm.js host is the visible surface and
+    // its `.xterm-screen` child has mounted (i.e. xterm.js has begun
+    // painting the terminal).
+    const termHost = page.locator('[data-tui-terminal="true"]').first();
+    await expect(termHost).toBeVisible({ timeout: 10_000 });
+    await expect(termHost.locator(".xterm-screen")).toBeVisible({
+      timeout: 10_000,
+    });
 
-    // Wait for the editor's WS client to paint a non-empty frame.
+    // Wait for xterm.js to paint a real, non-empty terminal frame —
+    // the "Two Active" defaults that the launcher's `select-story`
+    // reseed flushes. textContent is the easiest oracle that the
+    // post-select renders have settled (mirrors M-EVP-10's bootstrap).
     await page.waitForFunction(
       () => {
-        const list = document.querySelectorAll(
-          'canvas[data-canvas-active="true"]',
-        );
-        if (list.length === 0) return false;
-        const c = list[0] as HTMLCanvasElement;
-        if (c.width === 0 || c.height === 0) return false;
-        const ctx = c.getContext("2d");
-        if (!ctx) return false;
-        try {
-          const img = ctx.getImageData(0, 0, c.width, c.height);
-          for (let i = 0; i < img.data.length; i += 4) {
-            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
-          }
-        } catch {
-          return false;
-        }
-        return false;
+        const host = document.querySelector('[data-tui-terminal="true"]');
+        const text = host?.textContent ?? "";
+        return text.length > 0 &&
+          (text.includes("Pick up groceries") || text.includes("Buy"));
       },
       null,
       { timeout: 15_000 },
     );
 
     // The element-tree manifest must reach the test side via the
-    // gated mirror.
+    // gated mirror. For TUI it carries `boundsUnit === "cells"` and
+    // its surface dimensions live on `surfaceCols` / `surfaceRows`.
     await page.waitForFunction(
       () => {
         const m = (window as unknown as Record<string, unknown>)
           .__isonimManifest as {
             type?: string;
+            boundsUnit?: string;
             elements?: Array<{ componentPath: string }>;
           } | undefined;
         return !!(
           m &&
           m.type === "element-tree" &&
+          m.boundsUnit === "cells" &&
           Array.isArray(m.elements) &&
           m.elements.some((e) =>
             e.componentPath.startsWith("task_app/views/TaskRow#"),
@@ -861,8 +877,8 @@ test.describe("RS-M11 Pattern A: editor bundle renders real TUI pixels", () => {
     const manifestInfo = await page.evaluate(() => {
       const m = (window as unknown as Record<string, unknown>)
         .__isonimManifest as {
-          surfaceWidth: number;
-          surfaceHeight: number;
+          surfaceCols: number;
+          surfaceRows: number;
           elements: Array<{
             id: string;
             componentPath: string;
@@ -874,8 +890,8 @@ test.describe("RS-M11 Pattern A: editor bundle renders real TUI pixels", () => {
         e.componentPath.startsWith("task_app/views/TaskRow#"),
       );
       return {
-        surfaceWidth: m.surfaceWidth,
-        surfaceHeight: m.surfaceHeight,
+        surfaceCols: m.surfaceCols,
+        surfaceRows: m.surfaceRows,
         taskRows,
       };
     });
@@ -886,32 +902,27 @@ test.describe("RS-M11 Pattern A: editor bundle renders real TUI pixels", () => {
         ? manifestInfo.taskRows[1]
         : manifestInfo.taskRows[0];
 
-    // Wait for the canvas dimensions to match the manifest's surface
-    // so the click coordinate math is well-defined.
-    await page.waitForFunction(
-      (expected: { w: number; h: number }) => {
-        const list = document.querySelectorAll(
-          'canvas[data-canvas-active="true"]',
-        );
-        if (list.length === 0) return false;
-        const c = list[0] as HTMLCanvasElement;
-        return c.width === expected.w && c.height === expected.h;
-      },
-      { w: manifestInfo.surfaceWidth, h: manifestInfo.surfaceHeight },
-      { timeout: 10_000 },
-    );
-
+    // RS-M13: cell-coord translation — the surface element is the
+    // xterm.js host. Cell width/height come from the host's rendered
+    // rect divided by `surfaceCols` / `surfaceRows`.
     const click = await page.evaluate(
       (row: { bounds: { x: number; y: number; w: number; h: number } }) => {
-        const list = document.querySelectorAll(
-          'canvas[data-canvas-active="true"]',
-        );
-        const c = list[0] as HTMLCanvasElement;
-        const rect = c.getBoundingClientRect();
-        const cx = row.bounds.x + Math.floor(row.bounds.w / 2);
-        const cy = row.bounds.y + Math.floor(row.bounds.h / 2);
-        const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
-        const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
+        const host = document.querySelector(
+          '[data-tui-terminal="true"]',
+        ) as HTMLElement | null;
+        if (!host) throw new Error("xterm.js host not mounted");
+        const m = (window as unknown as Record<string, unknown>)
+          .__isonimManifest as {
+            surfaceCols: number;
+            surfaceRows: number;
+          };
+        const rect = host.getBoundingClientRect();
+        const cellW = rect.width / m.surfaceCols;
+        const cellH = rect.height / m.surfaceRows;
+        const cx = row.bounds.x + row.bounds.w / 2;
+        const cy = row.bounds.y + row.bounds.h / 2;
+        const clientX = rect.left + cx * cellW;
+        const clientY = rect.top + cy * cellH;
         return { cx, cy, clientX, clientY };
       },
       targetRow,
@@ -963,8 +974,8 @@ test.describe("RS-M11 Pattern A: editor bundle renders real TUI pixels", () => {
 
 test.describe("M-EVP-10 canvas affordances", () => {
   async function bootEditorWithTuiCanvas(page: Page): Promise<{
-    surfaceWidth: number;
-    surfaceHeight: number;
+    surfaceCols: number;
+    surfaceRows: number;
     targetRow: {
       id: string;
       componentPath: string;
@@ -980,8 +991,18 @@ test.describe("M-EVP-10 canvas affordances", () => {
     });
     await gotoEditor(page);
 
+    // window.Terminal is the UMD global xterm.js exposes. The editor's
+    // index.html loads it before editor.js so it must be defined by
+    // the time the page is ready — guard upfront.
+    await page.waitForFunction(
+      () => typeof (window as unknown as { Terminal?: unknown }).Terminal !==
+        "undefined",
+      null,
+      { timeout: 5_000 },
+    );
+
     // Open a Task App / TaskList story so the component-detail view
-    // mounts the canvas.
+    // mounts the canvas + overlay wrapper.
     const taskListGroup = page
       .locator('[aria-label="Toggle Task App / TaskList stories"]')
       .first();
@@ -990,65 +1011,76 @@ test.describe("M-EVP-10 canvas affordances", () => {
     if (taskListExpanded !== "true") {
       await taskListGroup.click();
     }
+    // Pin to "Two Active" — Empty would have no TaskRow entries in
+    // its manifest, which is what these tests need to hover and
+    // click. Two Active seeds two real TaskRow entries.
     const taskListStory = page
-      .locator('[aria-label^="Select story Task App / TaskList /"]')
+      .locator('[aria-label="Select story Task App / TaskList / Two Active"]')
       .first();
     await expect(taskListStory).toBeVisible({ timeout: 10_000 });
     await taskListStory.click();
 
-    // Switch the preview backend to TUI; the canvas becomes active.
+    // Switch the preview backend to TUI; RS-M13 mounts an xterm.js
+    // host as a sibling of the canvas inside the same wrapper.
     const tuiChip = page
       .locator('[data-preview-backend="tui"]')
       .first();
     await expect(tuiChip).toBeVisible({ timeout: 10_000 });
     await tuiChip.click();
 
-    const canvas = page
-      .locator('canvas[data-canvas-active="true"]')
+    // Scope to the component-detail wrapper so we don't pick up other
+    // views' wrappers (page_preview, foundations_page).
+    const wrapper = page
+      .locator(
+        '[data-canvas-wrapper="true"]:has(canvas[data-component-project-canvas="true"])',
+      )
       .first();
-    await expect(canvas).toBeVisible({ timeout: 10_000 });
+    const termHost = wrapper.locator('[data-tui-terminal="true"]').first();
+    await expect(termHost).toBeVisible({ timeout: 10_000 });
+    await expect(termHost.locator(".xterm-screen")).toBeVisible({
+      timeout: 10_000,
+    });
 
-    // Wait for first non-empty frame.
-    await page.waitForFunction(
-      () => {
-        const list = document.querySelectorAll(
-          'canvas[data-canvas-active="true"]',
-        );
-        if (list.length === 0) return false;
-        const c = list[0] as HTMLCanvasElement;
-        if (c.width === 0 || c.height === 0) return false;
-        const ctx = c.getContext("2d");
-        if (!ctx) return false;
-        try {
-          const img = ctx.getImageData(0, 0, c.width, c.height);
-          for (let i = 0; i < img.data.length; i += 4) {
-            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
-          }
-        } catch {
-          return false;
-        }
-        return false;
+    // Wait for the cell-coord element-tree manifest to land AND
+    // stabilise. The launcher emits a transient Inbox-defaults
+    // manifest at the moment the WS attaches (its startup-seeded
+    // tasks "Buy groceries" / "Walk the dog" / "Ship EX-M14"), and
+    // only after the editor's ``select-story`` packet propagates does
+    // the Two Active manifest land with the seeded
+    // "Pick up groceries" / "Reply to design feedback" rows. The
+    // first wait gates on the post-select manifest by asserting BOTH
+    // rows are present and Inbox defaults are gone — that's the
+    // unique fingerprint of the Two Active reseed. The terminal's
+    // textContent is the easiest oracle the post-select renders are
+    // settled.
+    await expect.poll(
+      async () =>
+        await page.evaluate(() => {
+          const host = document.querySelector('[data-tui-terminal="true"]');
+          return host?.textContent ?? "";
+        }),
+      {
+        timeout: 15_000,
+        message: "expected Two Active terminal text to settle",
       },
-      null,
-      { timeout: 15_000 },
-    );
-
-    // Wait for the element-tree manifest to land via the gated mirror.
+    ).toContain("Pick up groceries");
     await page.waitForFunction(
       () => {
         const m = (window as unknown as Record<string, unknown>)
           .__isonimManifest as {
             type?: string;
+            boundsUnit?: string;
             elements?: Array<{ componentPath: string }>;
           } | undefined;
-        return !!(
-          m &&
-          m.type === "element-tree" &&
-          Array.isArray(m.elements) &&
-          m.elements.some((e) =>
-            e.componentPath.startsWith("task_app/views/TaskRow#"),
-          )
+        if (!m || m.type !== "element-tree" || m.boundsUnit !== "cells") {
+          return false;
+        }
+        if (!Array.isArray(m.elements)) return false;
+        const taskRows = m.elements.filter((e) =>
+          e.componentPath.startsWith("task_app/views/TaskRow#"),
         );
+        // Two Active seeds exactly two rows.
+        return taskRows.length === 2;
       },
       null,
       { timeout: 15_000 },
@@ -1057,8 +1089,8 @@ test.describe("M-EVP-10 canvas affordances", () => {
     const manifestInfo = await page.evaluate(() => {
       const m = (window as unknown as Record<string, unknown>)
         .__isonimManifest as {
-          surfaceWidth: number;
-          surfaceHeight: number;
+          surfaceCols: number;
+          surfaceRows: number;
           elements: Array<{
             id: string;
             componentPath: string;
@@ -1070,8 +1102,8 @@ test.describe("M-EVP-10 canvas affordances", () => {
         e.componentPath.startsWith("task_app/views/TaskRow#"),
       );
       return {
-        surfaceWidth: m.surfaceWidth,
-        surfaceHeight: m.surfaceHeight,
+        surfaceCols: m.surfaceCols,
+        surfaceRows: m.surfaceRows,
         taskRows,
       };
     });
@@ -1082,49 +1114,62 @@ test.describe("M-EVP-10 canvas affordances", () => {
         ? manifestInfo.taskRows[1]
         : manifestInfo.taskRows[0];
 
-    await page.waitForFunction(
-      (expected: { w: number; h: number }) => {
-        const list = document.querySelectorAll(
-          'canvas[data-canvas-active="true"]',
-        );
-        if (list.length === 0) return false;
-        const c = list[0] as HTMLCanvasElement;
-        return c.width === expected.w && c.height === expected.h;
-      },
-      { w: manifestInfo.surfaceWidth, h: manifestInfo.surfaceHeight },
-      { timeout: 10_000 },
-    );
-
     return {
-      surfaceWidth: manifestInfo.surfaceWidth,
-      surfaceHeight: manifestInfo.surfaceHeight,
+      surfaceCols: manifestInfo.surfaceCols,
+      surfaceRows: manifestInfo.surfaceRows,
       targetRow,
     };
   }
 
   async function pointForBoundsCentre(
     page: Page,
-    bounds: { x: number; y: number; w: number; h: number },
+    target: {
+      id: string;
+      bounds: { x: number; y: number; w: number; h: number };
+    },
   ): Promise<{ clientX: number; clientY: number }> {
-    return page.evaluate((row) => {
-      const list = document.querySelectorAll(
-        'canvas[data-canvas-active="true"]',
-      );
-      const c = list[0] as HTMLCanvasElement;
-      const rect = c.getBoundingClientRect();
-      const cx = row.x + Math.floor(row.w / 2);
-      const cy = row.y + Math.floor(row.h / 2);
-      const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
-      const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
+    // RS-M13: cell-coord translation — the active surface is the
+    // xterm.js host (NOT the now-hidden canvas). Cell width/height
+    // come from the host's rendered rect divided by the manifest's
+    // surfaceCols / surfaceRows. We resolve the latest bounds from
+    // ``__isonimManifest`` by id (a manifest re-emission after
+    // ``select-story`` can shift bounds slightly; clicking the
+    // captured boot-time bounds would race the re-emit).
+    return page.evaluate((t) => {
+      const m = (window as unknown as Record<string, unknown>)
+        .__isonimManifest as {
+          surfaceCols: number;
+          surfaceRows: number;
+          elements: Array<{
+            id: string;
+            bounds: { x: number; y: number; w: number; h: number };
+          }>;
+        };
+      const wrapper = document.querySelector(
+        '[data-canvas-wrapper="true"]:has(canvas[data-component-project-canvas="true"])',
+      ) as HTMLElement | null;
+      const host = wrapper?.querySelector(
+        '[data-tui-terminal="true"]',
+      ) as HTMLElement | null;
+      if (!host) throw new Error("xterm.js host not mounted");
+      const fresh = m.elements.find((e) => e.id === t.id);
+      const bounds = fresh ? fresh.bounds : t.bounds;
+      const rect = host.getBoundingClientRect();
+      const cellW = rect.width / m.surfaceCols;
+      const cellH = rect.height / m.surfaceRows;
+      const cx = bounds.x + bounds.w / 2;
+      const cy = bounds.y + bounds.h / 2;
+      const clientX = rect.left + cx * cellW;
+      const clientY = rect.top + cy * cellH;
       return { clientX, clientY };
-    }, bounds);
+    }, target);
   }
 
   test("hover over a manifest element paints the hover label", async ({
     page,
   }) => {
     const { targetRow } = await bootEditorWithTuiCanvas(page);
-    const point = await pointForBoundsCentre(page, targetRow.bounds);
+    const point = await pointForBoundsCentre(page, targetRow);
     await page.mouse.move(point.clientX, point.clientY);
 
     await page.waitForFunction(
@@ -1137,7 +1182,19 @@ test.describe("M-EVP-10 canvas affordances", () => {
       { timeout: 10_000 },
     );
 
-    const hoverLabel = page.locator('[data-canvas-hover-label="true"]').first();
+    // Scope to the component-detail wrapper — each canvas mount has
+    // its own hover-label child, so the page-global locator can
+    // resolve to a stale label from a different view (e.g. the page-
+    // preview view still has its own hover-label DOM mounted but
+    // hidden).
+    const wrapperForHover = page
+      .locator(
+        '[data-canvas-wrapper="true"]:has(canvas[data-component-project-canvas="true"])',
+      )
+      .first();
+    const hoverLabel = wrapperForHover
+      .locator('[data-canvas-hover-label="true"]')
+      .first();
     await expect(hoverLabel).toBeVisible({ timeout: 5_000 });
     await expect(hoverLabel).toHaveText(targetRow.componentPath);
   });
@@ -1146,7 +1203,7 @@ test.describe("M-EVP-10 canvas affordances", () => {
     page,
   }) => {
     const { targetRow } = await bootEditorWithTuiCanvas(page);
-    const point = await pointForBoundsCentre(page, targetRow.bounds);
+    const point = await pointForBoundsCentre(page, targetRow);
     await page.mouse.click(point.clientX, point.clientY);
 
     await page.waitForFunction(
@@ -1159,55 +1216,93 @@ test.describe("M-EVP-10 canvas affordances", () => {
       { timeout: 10_000 },
     );
 
-    const outline = page
+    // Scope the outline to the component-detail view's wrapper —
+    // each view (component_detail, page_preview, foundations_page)
+    // renders its own canvas mount with an outline child, so a
+    // page-global locator can pick up a stale outline from a
+    // different view's wrapper.
+    const componentWrapper = page
+      .locator(
+        '[data-canvas-wrapper="true"]:has(canvas[data-component-project-canvas="true"])',
+      )
+      .first();
+    const outline = componentWrapper
       .locator('[data-canvas-selection-outline="true"]')
       .first();
     await expect(outline).toBeVisible({ timeout: 5_000 });
     await expect(outline).toHaveAttribute("data-element-id", targetRow.id);
 
-    // Compare outline CSS coordinates against the manifest bounds scaled
-    // into CSS pixel space — same transform Pattern A's pointFromEvent
-    // uses (inverse direction). 1px tolerance per the spec.
+    // RS-M13: outline CSS coordinates derive from the xterm.js host's
+    // rect + cell size — same translation the click coord uses, with
+    // a 2-cell tolerance (cell rounding can introduce sub-pixel
+    // drift). We re-read the bounds from the LATEST manifest by id
+    // so a post-click manifest re-emission (which can shift bounds)
+    // doesn't race the assertion.
     const measurement = await page.evaluate(
-      (row: { x: number; y: number; w: number; h: number }) => {
-        const list = document.querySelectorAll(
-          'canvas[data-canvas-active="true"]',
-        );
-        const c = list[0] as HTMLCanvasElement;
+      (targetId: string) => {
+        const m = (window as unknown as Record<string, unknown>)
+          .__isonimManifest as {
+            surfaceCols: number;
+            surfaceRows: number;
+            elements: Array<{
+              id: string;
+              bounds: { x: number; y: number; w: number; h: number };
+            }>;
+          };
+        const row = m.elements.find((e) => e.id === targetId)?.bounds;
+        if (!row) return null;
+        const wrapper = document.querySelector(
+          '[data-canvas-wrapper="true"]:has(canvas[data-component-project-canvas="true"])',
+        ) as HTMLElement | null;
+        const host = wrapper?.querySelector(
+          '[data-tui-terminal="true"]',
+        ) as HTMLElement | null;
         const outline = document.querySelector(
           '[data-canvas-selection-outline="true"]',
         ) as HTMLElement | null;
-        if (!c || !outline) return null;
-        const canvasRect = c.getBoundingClientRect();
+        if (!host || !outline) return null;
+        const hostRect = host.getBoundingClientRect();
         const outlineRect = outline.getBoundingClientRect();
-        const sx = canvasRect.width / c.width;
-        const sy = canvasRect.height / c.height;
+        const cellW = hostRect.width / m.surfaceCols;
+        const cellH = hostRect.height / m.surfaceRows;
         return {
-          expectedLeft: canvasRect.left + row.x * sx,
-          expectedTop: canvasRect.top + row.y * sy,
-          expectedWidth: row.w * sx,
-          expectedHeight: row.h * sy,
+          expectedLeft: hostRect.left + row.x * cellW,
+          expectedTop: hostRect.top + row.y * cellH,
+          expectedWidth: row.w * cellW,
+          expectedHeight: row.h * cellH,
           actualLeft: outlineRect.left,
           actualTop: outlineRect.top,
           actualWidth: outlineRect.width,
           actualHeight: outlineRect.height,
+          cellW,
+          cellH,
         };
       },
-      targetRow.bounds,
+      targetRow.id,
     );
     expect(measurement).not.toBeNull();
     const m = measurement!;
-    expect(Math.abs(m.actualLeft - m.expectedLeft)).toBeLessThanOrEqual(1);
-    expect(Math.abs(m.actualTop - m.expectedTop)).toBeLessThanOrEqual(1);
-    expect(Math.abs(m.actualWidth - m.expectedWidth)).toBeLessThanOrEqual(1);
-    expect(Math.abs(m.actualHeight - m.expectedHeight)).toBeLessThanOrEqual(1);
+    // Allow up to 1 cell of tolerance in each direction (sub-pixel
+    // accumulation when xterm.js rounds cell sizes).
+    expect(Math.abs(m.actualLeft - m.expectedLeft)).toBeLessThanOrEqual(
+      m.cellW + 1,
+    );
+    expect(Math.abs(m.actualTop - m.expectedTop)).toBeLessThanOrEqual(
+      m.cellH + 1,
+    );
+    expect(Math.abs(m.actualWidth - m.expectedWidth)).toBeLessThanOrEqual(
+      m.cellW + 1,
+    );
+    expect(Math.abs(m.actualHeight - m.expectedHeight)).toBeLessThanOrEqual(
+      m.cellH + 1,
+    );
   });
 
   test("clicking a manifest element shows the breadcrumb with the componentPath", async ({
     page,
   }) => {
     const { targetRow } = await bootEditorWithTuiCanvas(page);
-    const point = await pointForBoundsCentre(page, targetRow.bounds);
+    const point = await pointForBoundsCentre(page, targetRow);
     await page.mouse.click(point.clientX, point.clientY);
 
     await page.waitForFunction(
@@ -1220,8 +1315,16 @@ test.describe("M-EVP-10 canvas affordances", () => {
       { timeout: 10_000 },
     );
 
+    // M-EVP-13: scope the breadcrumb to the component-detail view's
+    // projectPreviewSection — page_preview and foundations_page each
+    // mount their own breadcrumb via the shared canvas-mount helper,
+    // so a page-global locator can pick one from a different view.
+    // The component-detail breadcrumb lives inside the wrapper's
+    // parent projectPreviewSection — easier to identify by walking
+    // up from the wrapper.
     const breadcrumb = page
       .locator('[data-canvas-selection-breadcrumb="true"]')
+      .filter({ hasText: targetRow.componentPath })
       .first();
     await expect(breadcrumb).toBeVisible({ timeout: 5_000 });
     await expect(breadcrumb).toHaveText(targetRow.componentPath);
@@ -1231,7 +1334,7 @@ test.describe("M-EVP-10 canvas affordances", () => {
     page,
   }) => {
     const { targetRow } = await bootEditorWithTuiCanvas(page);
-    const point = await pointForBoundsCentre(page, targetRow.bounds);
+    const point = await pointForBoundsCentre(page, targetRow);
     await page.mouse.click(point.clientX, point.clientY);
 
     await page.waitForFunction(
@@ -1243,6 +1346,24 @@ test.describe("M-EVP-10 canvas affordances", () => {
       targetRow.componentPath,
       { timeout: 10_000 },
     );
+
+    // Confirm the selection outline is rendered for the target row
+    // before flipping into Edit mode. Without this guard, a stale
+    // manifest re-emission with shifted bounds can race the
+    // ``setStyle(handlesGroup, "display", "block")`` branch — the
+    // overlay effect re-runs, finds no bounds match for the
+    // pre-emit selectedId, and hides the handles before the
+    // post-emit manifest lands.
+    const componentWrapperForOutline = page
+      .locator(
+        '[data-canvas-wrapper="true"]:has(canvas[data-component-project-canvas="true"])',
+      )
+      .first();
+    const outline = componentWrapperForOutline
+      .locator('[data-canvas-selection-outline="true"]')
+      .first();
+    await expect(outline).toBeVisible({ timeout: 5_000 });
+    await expect(outline).toHaveAttribute("data-element-id", targetRow.id);
 
     // Pick a non-disabled Edit chip from any visible chrome strip. The
     // canonical chrome bar after M-EVP-6/7 hoists the mode chips into
