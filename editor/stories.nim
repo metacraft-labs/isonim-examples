@@ -648,6 +648,12 @@ body { padding: 32px; overflow-y: auto; }
   padding: 6px 12px;
   border-radius: 6px;
 }
+.task-input-submit {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+  margin-left: auto;
+}
 .task-list { display: flex; flex-direction: column; gap: 2px; }
 .task {
   display: flex;
@@ -845,11 +851,30 @@ func renderSettingsEditorHtml(): string =
 </section>
 """
 
+func formatPollIntervalDisplay(valueMs: int): string =
+  ## Humanise the stepper readout: sub-second values keep the raw
+  ## `ms` suffix so the user can tell they're below one second, while
+  ## anything from 1000 ms upwards collapses to integer seconds (or
+  ## one decimal for non-multiples) for readability. Catalog value
+  ## stays in milliseconds — only the rendered string changes.
+  if valueMs < 1000:
+    $valueMs & " ms"
+  elif valueMs mod 1000 == 0:
+    $(valueMs div 1000) & " s"
+  else:
+    let whole = valueMs div 1000
+    let tenths = (valueMs mod 1000) div 100
+    $whole & "." & $tenths & " s"
+
 func renderSettingsNotificationsHtml(): string =
   ## Catalog parity: `notifications.poll_interval_ms` default = 5000,
   ## suffix `ms`. Rendered through the same `[-] N suffix [+]` stepper
   ## convention used by the Appearance / Editor groups so the readout
-  ## is unambiguous.
+  ## is unambiguous. The display is humanised via
+  ## `formatPollIntervalDisplay` so the user reads `5 s` instead of
+  ## `5000 ms`; the catalog value itself stays in milliseconds.
+  let pollMs = 5000
+  let pollDisplay = formatPollIntervalDisplay(pollMs)
   """
 <section class="card">
   <div class="group-title">Notifications</div>
@@ -874,7 +899,7 @@ func renderSettingsNotificationsHtml(): string =
     </div>
     <div class="stepper">
       <span class="stepper-button">&minus;</span>
-      <span class="stepper-value">5000 ms</span>
+      <span class="stepper-value">""" & pollDisplay & """</span>
       <span class="stepper-button">+</span>
     </div>
   </div>
@@ -893,7 +918,7 @@ func renderTaskInboxHtml(): string =
 <div class="task-input">
   <span class="task-input-glyph">+</span>
   <span class="task-input-text">New task… (press Enter to add)</span>
-  <span class="task-input-cta">Add Task</span>
+  <button type="button" class="task-input-cta task-input-submit">Add Task</button>
 </div>
 <div class="filter-bar">
   <span class="pill active">All</span>

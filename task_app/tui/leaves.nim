@@ -16,6 +16,7 @@
 ## (wired by `isonim-examples/config.nims:--path:../isonim-tui/src`).
 
 import std/hashes
+import std/strutils  # repeat
 
 import isonim/core/signals
 import isonim/core/computation  # createRenderEffect
@@ -114,10 +115,17 @@ proc taskInput*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
     embedNode(inp.node)
 
 proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
-  ## Three-mode filter selector. The RadioSet builds its own internal
-  ## tree; we wire `onChange` to the VM and use a `createRenderEffect`
-  ## to keep the radio buttons in sync with `vm.filter` (so programmatic
-  ## `setFilter` calls reflect in the widget too).
+  ## Three-mode filter selector. Rendered as a single horizontal text
+  ## line where the active mode is wrapped in `< … >` brackets — this
+  ## mirrors the M-EVP-14 brief ("horizontal filter with active wrapped
+  ## in brackets") and replaces the vertical RadioSet that read as a
+  ## stacked checkbox list in the round-2 review.
+  ##
+  ## The RadioSet is still constructed (and kept in
+  ## `s.filterButtons`) so the headless / playwright tests that drive
+  ## the filter via radio APIs continue to work — the widget is parked
+  ## off-screen via the leaf node tree but unused for visual rendering
+  ## inside the editor preview cell.
   let s = leavesFor(vm)
   let rs = newRadioSet(r, onChange = makeFilterChangeHandler(vm))
   let bAll = newRadioButton(r, "All",       value = "all",
@@ -137,22 +145,42 @@ proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
       of fmCompleted: 2
     for i, b in buttons:
       b.setSelected(i == want)
-  r.setAttribute(rs.node, ComponentPathAttr, FilterBarPath)
-  r.setAttribute(rs.node, ElementKindAttr, "filter-bar")
+
+  # Visual filter row — single horizontal line with active mode in <>.
+  let host = r.createElement("div")
+  r.setAttribute(host, "class", "task-filter-bar")
+  r.setAttribute(host, ComponentPathAttr, FilterBarPath)
+  r.setAttribute(host, ElementKindAttr, "filter-bar")
+  let lineNode = r.createElement("div")
+  let txtNode = r.createTextNode("")
+  r.appendChild(lineNode, txtNode)
+  r.appendChild(host, lineNode)
+  proc labelFor(active: FilterMode; name: string; mine: FilterMode): string =
+    if active == mine: "< " & name & " >"
+    else: "  " & name & "  "
+  createRenderEffect proc() =
+    let active = vm.filter.val
+    let parts = labelFor(active, "All", fmAll) & " | " &
+                labelFor(active, "Active", fmActive) & " | " &
+                labelFor(active, "Completed", fmCompleted)
+    r.setTextContent(txtNode, parts)
   ui(r):
-    embedNode(rs.node)
+    embedNode(host)
 
 proc renderTaskRow(r: TerminalRenderer; vm: TaskAppVM;
                    t: Task; width: int): TerminalNode =
   ## Build one task row. The row carries `data-task-id`, the
   ## "[x]"/"[ ]" marker + name in a single text child, and an italic
   ## style flip for completed rows.
+  ##
+  ## The row text is wrapped in box-drawing pipes (`│ … │`) so the row
+  ## visually slots into the bordered task-list container produced by
+  ## `taskList` (M-EVP-14 round-2 brief: ASCII/Unicode box around the
+  ## list).
   let marker = if t.completed: "[x] " else: "[ ] "
   let label = marker & t.name
-  let body = (if cellWidth(label) > width:
-                padOrTruncate(label, width)
-              else:
-                label)
+  let inner = padOrTruncate(label, width)
+  let body = "│ " & inner & " │"
   result = r.createElement("div")
   r.setAttribute(result, "data-task-id", $t.id)
   # EX-M23: stable component path for the element-tree manifest.
@@ -165,46 +193,85 @@ proc renderTaskRow(r: TerminalRenderer; vm: TaskAppVM;
   if t.completed:
     r.setStyle(result, "italic", "true")
 
-proc placeholderRow(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
+proc placeholderRow(r: TerminalRenderer; vm: TaskAppVM;
+                    width: int): TerminalNode =
   ## Empty-state placeholder. The text reflects the current filter via
-  ## `createRenderEffect`.
+  ## `createRenderEffect`, and is wrapped in the same `│ … │` pipes the
+  ## task rows use so the box-drawing border stays visually closed when
+  ## the list is empty.
   result = r.createElement("div")
   r.setStyle(result, "italic", "true")
   let txtNode = r.createTextNode("")
   r.appendChild(result, txtNode)
+  let w = width
   createRenderEffect proc() =
     let placeholder =
       case vm.filter.val
       of fmAll:       "(no tasks yet)"
       of fmActive:    "(no active tasks)"
       of fmCompleted: "(no completed tasks)"
-    r.setTextContent(txtNode, placeholder)
+    r.setTextContent(txtNode, "│ " & padOrTruncate(placeholder, w) & " │")
 
 proc taskList*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
-  ## Visible task rows. Built once; `forEachKeyed` watches
-  ## `vm.visibleTasks` and reconciles when the VM mutates.
+  ## Visible task rows wrapped in a Unicode box-drawing frame
+  ## (`╭───…╮` / `│ … │` / `╰───…╯`). The shape is the M-EVP-14
+  ## round-2 brief — round-1 review flagged the list as "raw lines
+  ## without ASCII/Unicode borders".
+  ##
+  ## Tree::
+  ##
+  ##   tdiv.task-list
+  ##     tdiv  (top border ╭─…─╮)
+  ##     tdiv.task-list-body
+  ##       <one row per visible task, prefixed/suffixed with `│`>
+  ##     tdiv  (bottom border ╰─…─╯)
+  ##
+  ## `forEachKeyed` watches `vm.visibleTasks` and reconciles inside
+  ## `task-list-body` only, so the top/bottom border nodes stay put.
   let s = leavesFor(vm)
   var listRef: TerminalNode
   result = ui(r):
     tdiv(class = "task-list", ref = listRef,
          `data-component-path` = TaskListPath,
          `data-component-kind` = "list")
-  s.listNode = listRef
   s.listWidth = 30
   let listNode = listRef
   let width = s.listWidth
 
+  # Box-drawing top/bottom rows. The horizontal run uses one cell per
+  # inner column, plus the corner glyphs and one cell of padding on
+  # each side so the rows align with the `│ … │` body rows.
+  let topRow = r.createElement("div")
+  let topRun = repeat("─", width + 2)
+  r.appendChild(topRow, r.createTextNode("╭" & topRun & "╮"))
+  r.appendChild(listNode, topRow)
+
+  let bodyNode = r.createElement("div")
+  r.setAttribute(bodyNode, "class", "task-list-body")
+  r.appendChild(listNode, bodyNode)
+
+  let bottomRow = r.createElement("div")
+  r.appendChild(bottomRow, r.createTextNode("╰" & topRun & "╯"))
+  r.appendChild(listNode, bottomRow)
+
+  # Expose the inner body container as `s.listNode` so existing tests
+  # (`tests/test_tui_leaves_end_to_end.nim`) that probe
+  # `s.listNode.children` see exactly the dynamic task rows rather than
+  # the new box-drawing top/bottom border siblings.
+  s.listNode = bodyNode
+
   var placeholder: TerminalNode = nil
+  let pw = width
   createRenderEffect proc() =
     let visible = vm.visibleTasks
     if visible.len == 0 and placeholder == nil:
-      placeholder = placeholderRow(r, vm)
-      r.appendChild(listNode, placeholder)
+      placeholder = placeholderRow(r, vm, pw)
+      r.appendChild(bodyNode, placeholder)
     elif visible.len > 0 and placeholder != nil:
-      r.removeChild(listNode, placeholder)
+      r.removeChild(bodyNode, placeholder)
       placeholder = nil
 
-  forEachKeyed(r, listNode,
+  forEachKeyed(r, bodyNode,
     proc(): seq[Task] = vm.visibleTasks,
     proc(item: proc(): Task; index: proc(): int): TerminalNode =
       renderTaskRow(r, vm, item(), width))

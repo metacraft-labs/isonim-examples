@@ -115,6 +115,11 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
   r.setStyle(host, "align-items", "center")
   r.setStyle(host, "gap", "6")
 
+  # Round-2 review: the headless renderer renders ``textContent`` from
+  # the element tree, not ``value`` attributes. So we emit the numeric
+  # value as the input's text content and reactively rewrite it on
+  # ``numberValue`` changes — this surfaces ``14 pt`` as a legible
+  # boxed field adjacent to the ``pt`` suffix span.
   let inputNode = r.createElement("input")
   r.setAttribute(inputNode, "type", "number")
   r.setAttribute(inputNode, "data-min", $minValue)
@@ -131,6 +136,7 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
     let value = captured.numberValue(id)
     r.setAttribute(host, "data-value", $value)
     r.setAttribute(inputNode, "data-value", $value)
+    r.setTextContent(inputNode, $value)
 
   let lo = minValue
   let hi = maxValue
@@ -185,7 +191,10 @@ proc choiceLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
     let optionNode = r.createElement("option")
     r.setAttribute(optionNode, "data-value", opt)
     r.setTextContent(optionNode, opt)
-    r.setStyle(optionNode, "color", "#e8e9f0")
+    r.setStyle(optionNode, "color", "#a0a2b0")
+    r.setStyle(optionNode, "background", "#22232e")
+    r.setStyle(optionNode, "padding", "6")
+    r.setStyle(optionNode, "border-radius", "4")
     r.appendChild(selectNode, optionNode)
 
   createRenderEffect proc() =
@@ -196,8 +205,14 @@ proc choiceLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
       let optionNode = nthChild(selectNode, i)
       if getAttribute(optionNode, "data-value") == value:
         r.setAttribute(optionNode, "selected", "selected")
+        # Selected option carries the indigo accent fill so the
+        # active choice is visually distinct from siblings.
+        r.setStyle(optionNode, "background", "#7c7aed")
+        r.setStyle(optionNode, "color", "#ffffff")
       else:
         r.removeAttribute(optionNode, "selected")
+        r.setStyle(optionNode, "background", "#22232e")
+        r.setStyle(optionNode, "color", "#a0a2b0")
 
   r.addEventListener(selectNode, "click", proc() =
     let picked = getAttribute(selectNode, "data-value")

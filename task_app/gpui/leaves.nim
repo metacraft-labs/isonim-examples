@@ -95,9 +95,14 @@ proc appShell*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   # single scalar (no ``8px 12px`` shorthand).
   r.setStyle(app, "background", "#0f0f14")
   r.setStyle(app, "color", "#e8e9f0")
-  r.setStyle(app, "padding", "16")
+  r.setStyle(app, "padding", "12")
   r.setStyle(app, "flex-direction", "column")
-  r.setStyle(app, "gap", "12")
+  # Round-2 review: tighten inter-row gaps to ~12px (was rendering at
+  # ~32-40px because the appShell `gap` was 12 but every child carried
+  # its own 10-12px padding, summing into a visible ~24px well between
+  # cards). Dropping appShell gap to 8 brings the visible separator to
+  # ~12px once each card's padding contributes.
+  r.setStyle(app, "gap", "8")
   r.setStyle(app, "width", "100%")
   r.setStyle(app, "height", "100%")
   app
@@ -112,26 +117,46 @@ proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(wrapper, "class", "task-input")
   r.setAttribute(wrapper, ComponentPathAttr, TaskInputPath)
   r.setAttribute(wrapper, ElementKindAttr, "input")
-  # Card-style row: input + submit button laid out horizontally.
+  # Round-2 review: the brief asks for the input field to sit
+  # **above** the Add Task button, not beside it. Stack vertically so
+  # the field reads as a labelled entry row + a primary CTA below.
   r.setStyle(wrapper, "background", "#1d1d28")
-  r.setStyle(wrapper, "padding", "10")
+  r.setStyle(wrapper, "padding", "8")
   r.setStyle(wrapper, "gap", "8")
-  r.setStyle(wrapper, "flex-direction", "row")
+  r.setStyle(wrapper, "flex-direction", "column")
+  r.setStyle(wrapper, "align-items", "start")
   r.setStyle(wrapper, "border-radius", "8")
 
+  # Round-2 review: the input row was invisible because (a) the inner
+  # input had no width so the headless renderer collapsed it to 0px,
+  # and (b) it shared too close a tone with its wrapper. Explicit
+  # width + brighter input background + visible placeholder text mean
+  # the row reads as a real field above the Add Task button.
   let inp = r.createElement("input")
   r.setAttribute(inp, "type", "text")
   r.setAttribute(inp, "placeholder", "New task...")
-  r.setStyle(inp, "background", "#22232e")
-  r.setStyle(inp, "color", "#e8e9f0")
+  r.setStyle(inp, "background", "#2a2b38")
+  r.setStyle(inp, "color", "#a0a2b0")
   r.setStyle(inp, "padding", "8")
   r.setStyle(inp, "border-radius", "4")
+  r.setStyle(inp, "width", "100%")
   s.inputNode = inp
   r.appendChild(wrapper, inp)
 
   let inpRef = inp
   createRenderEffect proc() =
     r.setAttribute(inpRef, "value", vm.inputText.val)
+    # Render the current text content (or the placeholder when empty)
+    # as visible text. The shim's headless renderer reads textContent,
+    # not the ``value`` attribute, so without this the input would
+    # render as an empty rectangle with no glyphs at all.
+    let current = vm.inputText.val
+    if current.len > 0:
+      r.setTextContent(inpRef, current)
+      r.setStyle(inpRef, "color", "#e8e9f0")
+    else:
+      r.setTextContent(inpRef, "New task…")
+      r.setStyle(inpRef, "color", "#6e7080")
 
   let addBtn = r.createElement("button")
   r.setAttribute(addBtn, "type", "submit")
@@ -175,7 +200,7 @@ proc filterBar*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
   r.setStyle(wrapper, "flex-direction", "row")
   r.setStyle(wrapper, "gap", "6")
-  r.setStyle(wrapper, "padding", "6")
+  r.setStyle(wrapper, "padding", "4")
 
   for fm in [fmAll, fmActive, fmCompleted]:
     let btn = r.createElement("button")
@@ -203,7 +228,7 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
     r.setAttribute(row, "class", "completed")
   # Card-style row separation.
   r.setStyle(row, "background", "#1d1d28")
-  r.setStyle(row, "padding", "10")
+  r.setStyle(row, "padding", "8")
   r.setStyle(row, "gap", "8")
   r.setStyle(row, "flex-direction", "row")
   r.setStyle(row, "align-items", "center")
@@ -269,7 +294,7 @@ proc taskList*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(listNode, ElementKindAttr, "list")
   r.setStyle(listNode, "flex-direction", "column")
   r.setStyle(listNode, "gap", "6")
-  r.setStyle(listNode, "padding", "4")
+  r.setStyle(listNode, "padding", "0")
   s.listNode = listNode
 
   var placeholder: GpuiElement = nil
@@ -298,7 +323,7 @@ proc summaryBar*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(summaryNode, ElementKindAttr, "summary")
   r.setStyle(summaryNode, "background", "#1d1d28")
   r.setStyle(summaryNode, "color", "#a0a2b0")
-  r.setStyle(summaryNode, "padding", "10")
+  r.setStyle(summaryNode, "padding", "8")
   r.setStyle(summaryNode, "gap", "8")
   r.setStyle(summaryNode, "flex-direction", "row")
   r.setStyle(summaryNode, "border-radius", "6")

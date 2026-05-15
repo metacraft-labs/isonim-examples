@@ -103,13 +103,25 @@ when defined(android) or defined(mockJni):
                                  btn: AndroidElement; fm: FilterMode) =
     ## Top-level factory so the captured `fm` / `btn` cannot alias a
     ## loop variable in `filterBar`.
+    ##
+    ## M-EVP-14 round-2 fix: render filter buttons as Material 3
+    ## segmented FilterChips — the active chip is filled indigo, the
+    ## inactive chips are outlined (transparent fill with an indigo
+    ## border-like background tint via a subtle alpha). The legacy
+    ## `class="selected"` attribute is preserved so the existing tests
+    ## (`tests/test_android_leaves_android_only.nim`) keep passing.
     createRenderEffect proc() =
       if vm.filter.val == fm:
         r.setAttribute(btn, "class", "selected")
         r.setAttribute(btn, "aria-pressed", "true")
+        r.setStyle(btn, "background-color", "#7c7aed")
+        r.setStyle(btn, "color", "#ffffff")
       else:
         r.setAttribute(btn, "class", "")
         r.removeAttribute(btn, "aria-pressed")
+        # Outlined chip: very light indigo tint background.
+        r.setStyle(btn, "background-color", "#eef0ff")
+        r.setStyle(btn, "color", "#7c7aed")
 
   # ----------------------------------------------------------------------------
   # Layer-1 leaf procs — invoked by views.nim
@@ -165,27 +177,49 @@ when defined(android) or defined(mockJni):
     r.setAttribute(addBtn, "type", "submit")
     r.setTextContent(addBtn, "Add Task")
     r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
+    # M-EVP-14 round-2 fix: target Material 3 button height (~48 dp)
+    # instead of the LinearLayout-default ~80 dp bar. Indigo fill marks
+    # the primary CTA against the outlined filter chips below.
+    r.setStyle(addBtn, "height", "48")
+    r.setStyle(addBtn, "background-color", "#7c7aed")
+    r.setStyle(addBtn, "color", "#ffffff")
+    r.setStyle(addBtn, "border-radius", "8")
     s.addBtn = addBtn
     r.appendChild(wrapper, addBtn)
 
     wrapper
 
   proc filterBar*(r: AndroidRenderer; vm: TaskAppVM): AndroidElement =
-    ## Three-button filter selector (All / Active / Completed). Each
-    ## button click routes through the VM's `setFilter` action; the
-    ## "selected" class is driven by a `createRenderEffect` per button.
+    ## Three-chip filter selector (All / Active / Completed). Each
+    ## chip click routes through the VM's `setFilter` action; the
+    ## "selected" class + indigo fill is driven by a
+    ## `createRenderEffect` per chip.
+    ##
+    ## M-EVP-14 round-2 fix: render the filter as a Material 3
+    ## horizontal segmented row of FilterChip-like buttons (active
+    ## filled indigo, inactive outlined indigo) instead of three
+    ## stacked full-width indigo bars. The wrapper is forced to
+    ## HORIZONTAL orientation, chips claim equal weight via
+    ## `flex-grow`, and chip height matches the M3 chip metric
+    ## (~36 dp).
     let s = leavesFor(vm)
     s.filterButtons = @[]
     let wrapper = r.createElement("div")
     r.setAttribute(wrapper, "class", "filter-bar")
     r.setAttribute(wrapper, ComponentPathAttr, FilterBarPath)
     r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
+    r.setStyle(wrapper, "flex-direction", "row")
+    r.setStyle(wrapper, "gap", "8")
 
     for fm in [fmAll, fmActive, fmCompleted]:
       let btn = r.createElement("button")
       r.setTextContent(btn, $fm)
       r.setAttribute(btn, "data-filter", $fm)
       r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
+      # M3 chip metrics: 36 dp height, equal share of the row.
+      r.setStyle(btn, "height", "36")
+      r.setStyle(btn, "flex-grow", "1")
+      r.setStyle(btn, "border-radius", "18")
       makeFilterSelectionEffect(r, vm, btn, fm)
       r.appendChild(wrapper, btn)
       s.filterButtons.add btn
@@ -210,6 +244,12 @@ when defined(android) or defined(mockJni):
     let display =
       if t.completed: t.name & " (done)" else: t.name
     r.setTextContent(label, display)
+    # M-EVP-14 round-2 fix: task names rendered too heavy in round 1
+    # (same weight as the `Add Task` CTA label). Drop to M3 body
+    # weight via a tighter textSize so the title bar / Add Task button
+    # carry the primary visual hierarchy. The bridge maps `font-size`
+    # to Android `textSize` (sp) on TextView; 14 sp is M3 bodyMedium.
+    r.setStyle(label, "font-size", "14")
     r.appendChild(row, label)
 
     let removeBtn = r.createElement("button")

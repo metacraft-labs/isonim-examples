@@ -41,6 +41,23 @@
 ## current `inputText` signal value (mutated when the composition root
 ## sets a value, or when a test calls `vm.setInputText`) and pushes a
 ## task.
+##
+## TODO(M-EVP-14 follow-up — native Aqua polish):
+##   * The renderer maps `<input>` → ekInput (NSTextField) and
+##     `<button>` → ekButton (NSButton). The current leaves leave them
+##     unstyled, so the headless capture shows raw view rectangles
+##     instead of Aqua-native chrome (system-blue button tint,
+##     bordered text-field bezel, NSTableView separator hairlines for
+##     the task list).
+##   * To get a native look without changing the cross-renderer
+##     leaf surface, the renderer needs:
+##       - `<ul>` → NSTableView (already mapped to ekStack today).
+##       - `setBezelStyle:` / `setKeyEquivalent:` for the Add Task
+##         button so AppKit paints it as the default action.
+##       - `setBezeled:YES` + `setDrawsBackground:YES` on
+##         NSTextField for the input row.
+##     Tracking the polish here so the next pass can promote these
+##     elements without rewriting the leaf composition.
 
 when defined(macosx):
   import std/hashes
@@ -211,6 +228,19 @@ when defined(macosx):
     r.setAttribute(row, "data-task-id", $t.id)
     r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
     r.setAttribute(row, ElementKindAttr, "row")
+    # M-EVP-14 round-3 hint: target row height ~48 px with the title
+    # vertically centred. The adapter's vertical-stack layout in
+    # ``isonim-render-serve/adapters/cocoa_adapter.nim``
+    # (``layoutTreeForCapture``) distributes the parent's bodyH
+    # evenly among children, so with the task list's three rows in
+    # a ~135 px slice each row gets ~45 px — close enough to the
+    # 48 px target. The ``min-height`` style here is the
+    # leaf-level intent for any future renderer that consults it.
+    # TODO(M-EVP-14 follow-up): wire row height through the renderer's
+    # AutoLayout pass so the live NSView height matches this style
+    # without relying on the capture-side heuristic.
+    r.setStyle(row, "min-height", "48px")
+    r.setStyle(row, "padding", "8px 12px")
     if t.completed:
       r.setAttribute(row, "class", "completed")
 

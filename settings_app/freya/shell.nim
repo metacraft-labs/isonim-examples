@@ -71,6 +71,15 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
     renderer.setAttribute(appRoot, "class", "settings-app-freya")
     renderer.setAttribute(appRoot, "data-app", "settings-app")
     renderer.setAttribute(appRoot, "data-layout", "card-stack")
+    # M-EVP-14 round-2: paint a dark canvas + outer padding so the
+    # card stack has visible breathing room and a contrasting
+    # background that makes the cards' corner radii read clearly.
+    renderer.setStyle(appRoot, "background", "rgb(15, 15, 20)")
+    renderer.setStyle(appRoot, "padding", "16")
+    renderer.setStyle(appRoot, "flex-direction", "column")
+    renderer.setStyle(appRoot, "gap", "12")
+    renderer.setStyle(appRoot, "width", "100%")
+    renderer.setStyle(appRoot, "height", "100%")
 
     for groupIdx in 0 ..< vmRef.catalog.groups.len:
       closureScope:
@@ -84,6 +93,11 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
         # documented depth.
         let card = renderer.createElement("div")
         renderer.setAttribute(card, "data-card-id", gid)
+        # ~12 px outer gap between cards. The leaves' `groupContainerLeaf`
+        # paints the visible card surface; the wrapper's padding here
+        # is the breathing room reviewers flagged in M-EVP-14 round-2.
+        renderer.setStyle(card, "padding", "4")
+        renderer.setStyle(card, "flex-direction", "column")
 
         let groupNode = groupContainerLeaf(renderer)
         renderer.setAttribute(groupNode, "data-group-id", gid)

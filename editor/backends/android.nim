@@ -134,6 +134,19 @@ when defined(macosx) or defined(linux):
   proc launchActivity(demo: string) =
     let pkg = "com.metacraft.isonim.android.nimexamples"
     let activity = "com.metacraft.isonim.examples.MainActivity"
+    # M-EVP-14 round-2 fix: when the activity is already running from a
+    # prior launch (e.g. `--demo=task` followed by `--demo=settings` in
+    # the screenshot tool's sweep), Android's intent system does not
+    # re-route the new intent extra to the existing instance. The
+    # activity keeps rendering whatever demo it was initialised with.
+    # Force-stop the package first so the next `am start` creates a
+    # fresh process that picks up the new `--es demo` extra at onCreate.
+    let (stopOutput, stopCode) = runAdb(@[
+      "shell", "am", "force-stop", pkg,
+    ], stdoutBin = false)
+    if stopCode != 0:
+      echo "Warning: `adb shell am force-stop` exited ", stopCode, " — output:"
+      echo stopOutput
     let (output, code) = runAdb(@[
       "shell", "am", "start",
       "-n", pkg & "/" & activity,

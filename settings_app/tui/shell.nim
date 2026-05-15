@@ -91,6 +91,11 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
           let shouldExpand = vmRef.activeGroupId.val == gid
           renderer.setAttribute(groupNode, "data-expanded",
                                 (if shouldExpand: "true" else: "false"))
+          # M-EVP-14 round-2: keep the header's accordion chevron in
+          # sync with the expanded state (`▼` expanded / `▶` collapsed).
+          # The leaf builds the header pre-populated with `▶`; this
+          # effect retargets the chevron glyph reactively.
+          setGroupHeaderExpanded(renderer, header, shouldExpand)
           if shouldExpand == isExpandedNow:
             return
           if shouldExpand:

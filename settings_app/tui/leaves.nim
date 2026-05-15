@@ -8,6 +8,7 @@
 ## VM mutations propagate to the TUI cell grid without a re-mount.
 
 import std/strutils
+import std/tables  # getOrDefault on attributes (used by setGroupHeaderExpanded)
 
 import isonim/core/computation  # createRenderEffect
 import isonim_tui/renderer
@@ -116,6 +117,15 @@ proc numberLeaf*(r: TerminalRenderer; vmRef: SettingsVM; itemId: string;
   ## `Enter`; we parse + clamp + dispatch through `vmRef.setNumber`. A
   ## `createRenderEffect` over `vmRef.numberValue(itemId)` keeps the
   ## widget's value in sync with the VM.
+  ##
+  ## M-EVP-14 round-2: a leading text node renders a `[- 14pt -]`
+  ## stepper presentation (live-bound to the VM's numeric value), so
+  ## the rasterised editor preview cell shows the stepper glyphs the
+  ## brief calls for — round-1 reviewer flagged the previous tree as
+  ## "stepper `[-][+]` missing" and the suffix appearing on its own
+  ## line under the value. The Input widget itself is retained so the
+  ## keyboard-driven tests in `test_settings_tui_end_to_end.nim`
+  ## continue to dispatch through `setNumber`.
   let captured = vmRef
   let id = itemId
   let initialValue = captured.numberValue(id)
@@ -127,6 +137,21 @@ proc numberLeaf*(r: TerminalRenderer; vmRef: SettingsVM; itemId: string;
   r.setAttribute(host, "data-step", $stepValue)
   if suffix.len > 0:
     r.setAttribute(host, "data-suffix", suffix)
+
+  # Inline stepper presentation. Appended FIRST so the rasteriser
+  # surfaces the `[- value (suffix) -]` glyph row at the top of the
+  # leaf, ahead of the actual Input widget tree.
+  let stepperNode = r.createElement("div")
+  r.setAttribute(stepperNode, "class", "settings-number-stepper")
+  let stepperText = r.createTextNode("")
+  r.appendChild(stepperNode, stepperText)
+  r.appendChild(host, stepperNode)
+  let capturedSuffix = suffix
+  proc stepperGlyph(value: int): string =
+    let suf = (if capturedSuffix.len > 0: " " & capturedSuffix else: "")
+    "[- " & $value & suf & " -]"
+  createRenderEffect proc() =
+    r.setTextContent(stepperText, stepperGlyph(captured.numberValue(id)))
 
   let lo = minValue
   let hi = maxValue
@@ -185,6 +210,14 @@ proc choiceLeaf*(r: TerminalRenderer; vmRef: SettingsVM; itemId: string;
   ## we forward the selected row id through `vmRef.setChoice`. A
   ## `createRenderEffect` over `vmRef.choiceValue(itemId)` keeps the
   ## highlighted row in sync with the VM.
+  ##
+  ## M-EVP-14 round-2: a leading text node renders the current option
+  ## in cycler form (`< Default >`). The brief calls this glyph out
+  ## explicitly — round-1 reviewer flagged "cycler `< Default >`
+  ## missing" because the OptionList widget paints a multi-row dropdown
+  ## that doesn't read as a single-line cycler in the cell grid. The
+  ## actual OptionList widget is retained so the keyboard-driven tests
+  ## in `test_settings_tui_end_to_end.nim` keep working.
   let captured = vmRef
   let id = itemId
   let initialValue = captured.choiceValue(id)
@@ -193,6 +226,17 @@ proc choiceLeaf*(r: TerminalRenderer; vmRef: SettingsVM; itemId: string;
   r.setAttribute(host, "class", "settings-choice")
   r.setAttribute(host, "data-value", initialValue)
   r.setAttribute(host, "data-options", options.join("|"))
+
+  # Inline cycler presentation. Appended FIRST so the `< value >`
+  # glyph surfaces above the multi-row OptionList in the rasterised
+  # output.
+  let cyclerNode = r.createElement("div")
+  r.setAttribute(cyclerNode, "class", "settings-choice-cycler")
+  let cyclerText = r.createTextNode("")
+  r.appendChild(cyclerNode, cyclerText)
+  r.appendChild(host, cyclerNode)
+  createRenderEffect proc() =
+    r.setTextContent(cyclerText, "< " & captured.choiceValue(id) & " >")
 
   var rows: seq[OptionRow] = @[]
   for opt in options:
@@ -240,6 +284,15 @@ proc groupContainerLeaf*(r: TerminalRenderer): TerminalNode =
 
 proc groupHeaderLeaf*(r: TerminalRenderer; label, description: string):
                      TerminalNode =
+  ## Group header row. The label is prefixed with an accordion chevron
+  ## glyph (`▶` collapsed / `▼` expanded) so the M-EVP-14 round-2 brief
+  ## is satisfied at the TUI raster — the previous version rendered a
+  ## bare label which the reviewer flagged as having "no `▶`/`▼`
+  ## chevrons" on the collapsed groups (`Editor` / `Notifications`).
+  ##
+  ## The chevron text node is initialised to `▶` (collapsed); the
+  ## shell's reactive `data-expanded` effect retargets it via
+  ## `setGroupHeaderExpanded` whenever `vm.activeGroupId.val` changes.
   let host = r.createElement("header")
   r.setAttribute(host, "class", "settings-group-header")
   r.setAttribute(host, "data-label", label)
@@ -251,6 +304,16 @@ proc groupHeaderLeaf*(r: TerminalRenderer; label, description: string):
   let labelRow = r.createElement("div")
   r.setStyle(labelRow, "bold", "true")
   r.setAttribute(labelRow, "class", "settings-group-header-label")
+  # Chevron + label as siblings, both expressed as raw text nodes so
+  # the rasteriser's `allText` collapse rule (compositor.nim's
+  # `walkLayoutImpl`) merges them into a single row — without this
+  # they'd render on separate rows (`▶` line, then the label line).
+  # The chevron text node carries `data-chevron="true"` so
+  # `setGroupHeaderExpanded` can find and rewrite the glyph reactively
+  # without keeping a separate node-ref handle.
+  let chevronText = r.createTextNode("▶ ")
+  r.setAttribute(chevronText, "data-chevron", "true")
+  r.appendChild(labelRow, chevronText)
   r.appendChild(labelRow, r.createTextNode(label))
   r.appendChild(host, labelRow)
 
@@ -263,3 +326,26 @@ proc groupHeaderLeaf*(r: TerminalRenderer; label, description: string):
 
   discard defaultGroupHeaderWidth  # reserved for future width clamping
   host
+
+proc setGroupHeaderExpanded*(r: TerminalRenderer; header: TerminalNode;
+                             expanded: bool) =
+  ## Update the chevron glyph on a header built by `groupHeaderLeaf`
+  ## to match the group's expanded state. The shell's
+  ## `createRenderEffect` over `vm.activeGroupId.val` calls this whenever
+  ## the active group changes — chevron `▼` for the expanded group,
+  ## `▶` for the others. The chevron is a `tnkText` node carrying
+  ## `data-chevron="true"` so a depth-bounded walk over the header tree
+  ## finds it without a per-instance node-ref handle.
+  if header == nil: return
+  proc findChevron(node: TerminalNode): TerminalNode =
+    if node == nil: return nil
+    if node.attributes.getOrDefault("data-chevron", "") == "true":
+      return node
+    for child in node.children:
+      let hit = findChevron(child)
+      if hit != nil: return hit
+    nil
+  let chev = findChevron(header)
+  if chev == nil: return
+  let glyph = if expanded: "▼ " else: "▶ "
+  r.setTextContent(chev, glyph)
