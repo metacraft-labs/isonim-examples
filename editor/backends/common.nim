@@ -74,6 +74,23 @@ proc parseLauncherArgs*(backendOverride: string;
         discard
     inc i
 
+proc newNoopFrameSource*(width, height: int): AnyFrameSource =
+  ## RS-M13b: render-tree launchers don't emit F packets but the
+  ## bridge config still requires a frame source so it can read
+  ## `(width, height)` for the hello packet. This helper returns an
+  ## `AnyFrameSource` whose `renderFrameImpl` returns an empty 1×1
+  ## RGBA frame; with `rendererSurface == "tree"` the bridge never
+  ## calls it, so the empty frame is unreachable on the wire.
+  let w = max(1, width)
+  let h = max(1, height)
+  newAnyFrameSource(w, h,
+    renderFrameImpl = proc(): Frame {.gcsafe.} =
+      {.cast(gcsafe).}:
+        Frame(kind: fkFull,
+              flags: FrameFlags(isDiff: false, isVideo: false),
+              width: 1, height: 1, pixels: @[0u8, 0, 0, 0xFF]),
+    closeImpl = proc() {.gcsafe.} = discard)
+
 proc resolveStaticDir*(cfgStatic: string): string =
   ## Pick a usable directory to serve the canvas client. Prefer the
   ## launcher's `--static` flag, otherwise fall back to the
@@ -88,7 +105,9 @@ proc resolveStaticDir*(cfgStatic: string): string =
 
 proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
                        elementTree: ElementTreeProvider = nil;
-                       inputSink: AnyInputSink = nil) =
+                       inputSink: AnyInputSink = nil;
+                       renderTree: RenderTreeProvider = nil;
+                       rendererSurface: string = "") =
   ## Boot the WebSocket bridge against an already-constructed frame
   ## source. Launchers call this after they've assembled a real demo
   ## frame source (TUI rasterizer / GPUI adapter / Freya adapter / web
@@ -100,6 +119,13 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
   ## that need to react to inbound I packets pass a non-nil
   ## `inputSink` (e.g. the TUI launcher's resize-aware sink that
   ## forwards `iekResize` events to the harness).
+  ##
+  ## RS-M13b: launchers that ship a `RenderTreeProvider` pass it as
+  ## the `renderTree` argument and set `rendererSurface = "tree"` so
+  ## the bridge advertises both capability flags in `hello` and skips
+  ## the F-packet stream entirely. The `source` arg still supplies
+  ## the surface dimensions reported in `hello.initialSize` — the
+  ## GPUI / Freya launchers wrap a no-op `AnyFrameSource` for that.
   let sink =
     if inputSink != nil: inputSink
     else: newBufferedInputSink().toAny()
@@ -111,9 +137,15 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
     maxFrames: 0,
     inputSink: sink,
     frameSource: source,
-    elementTree: elementTree)
+    elementTree: elementTree,
+    renderTree: renderTree,
+    rendererSurface: rendererSurface)
   let s = newServer(bridgeCfg)
+  let surfaceLabel =
+    if rendererSurface == "tree": "render-tree DOM"
+    else: "pixels"
   echo "isonim-examples-", cfg.backend, " demo=", cfg.demo,
     " listening on http://127.0.0.1:", cfg.port,
-    " (", source.width, "x", source.height, " @ ", cfg.fps, " fps)"
+    " (", source.width, "x", source.height, " @ ", cfg.fps, " fps, ",
+    surfaceLabel, ")"
   waitFor s.serve()

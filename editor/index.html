@@ -14,6 +14,14 @@
          `isonim-examples-tui-term` launcher into `term.write(...)`. -->
     <link rel="stylesheet" href="vendor/xterm/xterm.css" />
     <script src="vendor/xterm/xterm.js"></script>
+    <!-- RS-M13b: render-tree CSS bundles. The GPUI bundle scopes its
+         selectors to `.render-tree-host--gpui`; the Freya bundle does
+         the same with `.render-tree-host--freya`. The editor-build
+         recipe copies these from
+         isonim/src/isonim/editor/render_styles/ into
+         build/editor/render_styles/. -->
+    <link rel="stylesheet" href="render_styles/gpui.css" />
+    <link rel="stylesheet" href="render_styles/freya.css" />
     <style>
       *,
       *::before,
