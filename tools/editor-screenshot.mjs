@@ -748,18 +748,73 @@ async function canvasPointForBounds(page, bounds) {
 }
 
 // ---------------------------------------------------------------------------
-// TUI launcher subprocess management.
+// Backend-launcher subprocess management.
 //
-// The canvas-* views need a real TUI bridge process running on a
-// well-known port so `attachBridgeClient` can connect. We start a
-// single launcher process for the lifetime of the screenshot run,
-// then poll the bridge HTTP root before driving the editor.
+// The canvas-* + render-category views need a real per-backend bridge
+// process running on a well-known port so `attachBridgeClient` can
+// connect. We start one launcher process per backend for the lifetime
+// of the screenshot run, then poll the bridge TCP port before driving
+// the editor.
+//
+// Per-backend port table — mirrors `bridgePortForBackend` in
+// isonim/src/isonim/editor/streaming_preview.nim and `BRIDGE_PORTS` in
+// tools/editor-server.mjs.
+//
+// Note: the deprecated pixel TUI launcher (`isonim-examples-tui`) used
+// port 8102 (route `/bridge/tui`). Post-RS-M13 the canonical TUI bridge
+// is `tui-term` on 8112 (route `/tui-bridge`). The render category
+// always uses tui-term; the legacy `tui` slot is captured under that
+// binary but filed under the canonical `tui` filename.
 // ---------------------------------------------------------------------------
 
-// Must match `bridgePortForBackend(pbTui)` in
-// isonim/src/isonim/editor/streaming_preview.nim — the JS editor
-// bundle hard-codes this port when attaching its bridge client.
-const TUI_BRIDGE_PORT = 8102;
+const TUI_BRIDGE_PORT = 8102; // legacy pixel TUI (kept for the canvas-*
+                              // views that still spawn the old `tui`
+                              // binary).
+
+const BACKEND_LAUNCHERS = {
+  // Slot name → { bin, port, requireMacos, requireEnv, requireAdb,
+  //               extraArgs, displayName, chipLabel }
+  web: {
+    bin: "isonim-examples-web", port: 8101, chipLabel: "Web",
+  },
+  // `tui` is the canonical render-category slot; we always boot
+  // `isonim-examples-tui-term` (the post-RS-M13 D/M/P xterm.js
+  // launcher) on its 8112 bridge port. The deprecated pixel TUI
+  // (`isonim-examples-tui` on 8102) is used only by the legacy
+  // `canvas-preview-*` views.
+  tui: {
+    bin: "isonim-examples-tui-term", port: 8112, chipLabel: "TUI",
+  },
+  "tui-term": {
+    bin: "isonim-examples-tui-term", port: 8112, chipLabel: "TUI",
+  },
+  gpui: {
+    bin: "isonim-examples-gpui", port: 8103, chipLabel: "GPUI",
+  },
+  freya: {
+    bin: "isonim-examples-freya", port: 8104, chipLabel: "Freya",
+  },
+  cocoa: {
+    bin: "isonim-examples-cocoa", port: 8105, chipLabel: "Cocoa",
+    requireMacos: true,
+  },
+  // The Android launcher requires `adb` on PATH and a connected
+  // device; without one it refuses to start. The screenshot tool
+  // detects an unreachable launcher and falls back to a placeholder.
+  android: {
+    bin: "isonim-examples-android", port: 8106, chipLabel: "Android",
+    requireAdb: true,
+  },
+  // The iOS launcher needs the iPhone's Stream-app listener address
+  // in `ISONIM_IOS_DEVICE_ENDPOINT=<host>:<port>`. The known dev
+  // device today is `192.168.100.156:8200`; users can override.
+  ios: {
+    bin: "isonim-examples-ios", port: 8107, chipLabel: "iOS",
+    requireMacos: true,
+    requireEnv: "ISONIM_IOS_DEVICE_ENDPOINT",
+    envDefault: "192.168.100.156:8200",
+  },
+};
 
 async function waitForTcpPort(port, host, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -775,6 +830,109 @@ async function waitForTcpPort(port, host, timeoutMs) {
   return false;
 }
 
+function hasAdbDevice() {
+  try {
+    const out = execSync("adb devices", {
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString();
+    // `adb devices` always echoes a header line; real devices appear on
+    // subsequent lines with a tab-separated state of `device`.
+    return out.split("\n")
+      .slice(1)
+      .some((l) => /\tdevice\s*$/.test(l.trim() + "\t"));
+  } catch {
+    return false;
+  }
+}
+
+// Generic launcher boot. Returns:
+//   { ok: true,  proc, port }
+// or
+//   { ok: false, reason: "<human reason>" }
+async function startLauncher(backend, projectRoot, opts = {}) {
+  const spec = BACKEND_LAUNCHERS[backend];
+  if (!spec) {
+    return { ok: false, reason: `unknown backend "${backend}"` };
+  }
+  if (spec.requireMacos && process.platform !== "darwin") {
+    return {
+      ok: false,
+      reason: `${backend} launcher requires macOS host`,
+    };
+  }
+  if (spec.requireAdb && !hasAdbDevice()) {
+    return {
+      ok: false,
+      reason:
+        `${backend} launcher requires \`adb\` on PATH and a connected device`,
+    };
+  }
+  const envExtra = {};
+  if (spec.requireEnv) {
+    const value = process.env[spec.requireEnv] ?? spec.envDefault;
+    if (!value) {
+      return {
+        ok: false,
+        reason: `${backend} launcher requires env var ${spec.requireEnv}`,
+      };
+    }
+    envExtra[spec.requireEnv] = value;
+  }
+  const launcherBin = join(
+    projectRoot, "build", "backends", spec.bin,
+  );
+  if (!existsSync(launcherBin)) {
+    return {
+      ok: false,
+      reason: `launcher binary missing: ${launcherBin}`,
+    };
+  }
+  // The web backend doesn't have a bridge in practice (the editor
+  // renders Web in an iframe via demoPreviewHook), but the launcher
+  // binary still exists and accepts a port. We just boot it for
+  // matrix uniformity; the render-category capture for Web reads the
+  // iframe, not the WebSocket.
+  const demo = opts.demo ?? "task";
+  const args = [
+    "--port", String(spec.port),
+    "--demo=" + demo,
+    "--fps", "8",
+  ];
+  const staticDir = join(projectRoot, "..", "isonim-render-serve", "static");
+  if (existsSync(staticDir)) {
+    args.push("--static", staticDir);
+  }
+  console.log(
+    `==> Starting ${backend} launcher on port ${spec.port}: ${spec.bin} ${args.join(" ")}`,
+  );
+  const proc = spawn(launcherBin, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+    env: { ...process.env, ...envExtra },
+  });
+  let stderrTail = "";
+  proc.stdout.on("data", () => { /* discard */ });
+  proc.stderr.on("data", (b) => {
+    stderrTail = (stderrTail + b.toString()).slice(-512);
+  });
+  const ok = await waitForTcpPort(spec.port, "127.0.0.1", 15_000);
+  if (!ok) {
+    try { process.kill(-proc.pid); } catch { /* ignore */ }
+    return {
+      ok: false,
+      reason:
+        `${backend} launcher did not open port ${spec.port} within 15s` +
+        (stderrTail ? ` (stderr tail: ${stderrTail.trim()})` : ""),
+    };
+  }
+  return { ok: true, proc, port: spec.port, chipLabel: spec.chipLabel };
+}
+
+// Backwards-compat shim: callers still invoke startTuiLauncher() for
+// the legacy pixel-TUI canvas views. We boot the deprecated `tui`
+// binary on port 8102 — NOT the post-RS-M13 `tui-term` launcher —
+// because the canvas-preview-* views poll for the legacy F/M/I
+// bridge contract.
 async function startTuiLauncher(projectRoot) {
   const launcherBin = join(
     projectRoot, "build", "backends", "isonim-examples-tui",
@@ -782,7 +940,7 @@ async function startTuiLauncher(projectRoot) {
   if (!existsSync(launcherBin)) {
     throw new Error(
       `TUI launcher binary missing: ${launcherBin}. ` +
-        "Run `just build-backends` (or `direnv exec . just build-backends`) first.",
+        "Run `just build-backends-dev-pixel-tui` first.",
     );
   }
   const staticDir = join(
@@ -797,7 +955,7 @@ async function startTuiLauncher(projectRoot) {
     args.push("--static", staticDir);
   }
   console.log(
-    `==> Starting TUI launcher on port ${TUI_BRIDGE_PORT}: ${launcherBin} ${args.join(" ")}`,
+    `==> Starting (legacy) TUI launcher on port ${TUI_BRIDGE_PORT}: ${launcherBin} ${args.join(" ")}`,
   );
   const proc = spawn(launcherBin, args, {
     stdio: ["ignore", "pipe", "pipe"],
@@ -815,6 +973,253 @@ async function startTuiLauncher(projectRoot) {
     );
   }
   return proc;
+}
+
+// ---------------------------------------------------------------------------
+// Render-category matrix (M-EVP-14)
+//
+// One PNG per (component × backend) cell: every cell captures the
+// preview-pane rectangle (`[data-preview-canvas="true"]`) after the
+// editor has been navigated to the component's story and the chrome
+// bar's backend chip has been clicked for the target backend. The
+// per-backend launcher binaries stream real demo frames through the
+// editor-server.mjs WebSocket proxy.
+//
+// Output: `<outDir>/<component>-<backend>.png` (default outDir for
+// `--view render` is `screenshots/render/` at the repo root).
+// ---------------------------------------------------------------------------
+
+// M-EVP-14: each render component navigates to its top-level "full
+// app" Pages story so the editor mounts the demo's Layer-4
+// composition with the same default seed the per-backend launchers
+// produce when invoked with `--demo=<slug>`:
+//
+//   - Task App → "Task App / Pages / Inbox" pairs with
+//     `seedTaskInboxDefaults` ("Buy groceries", "Walk the dog",
+//     "Ship EX-M14"). The brief in tools/visual-review-briefs/render/
+//     task-app.md references exactly these three tasks.
+//   - Settings App → "Settings App / Pages / Preferences" pairs with
+//     `buildDemoSettingsCatalog()` (Appearance, Editor, Notifications
+//     each with three items).
+//
+// Both top-level Pages groups have `expanded: true` in stories.nim so
+// no group toggle is required, but we still call ensureSection/
+// GroupExpanded as a guard against future default changes.
+//
+// `demoSlug` is passed through to the per-backend launcher's `--demo=`
+// CLI flag so the streamed canvas frames carry the matching demo. The
+// editor-side sidebar selection (set up via `setup`) and the
+// launcher-side `--demo` must agree, otherwise the canvas backends
+// render one demo while the iframe / editor chrome show another.
+export const renderComponents = {
+  "task-app": {
+    description:
+      "Task App — full-app Pages/Inbox (3 seeded tasks: Buy groceries / Walk the dog / Ship EX-M14)",
+    demoSlug: "task",
+    setup: async (page) => {
+      await ensureSectionExpanded(page, "Pages");
+      await ensureGroupExpanded(page, "Task App / Pages");
+      await selectStory(page, "Task App / Pages / Inbox");
+    },
+  },
+  "settings-app": {
+    description:
+      "Settings App — full-app Pages/Preferences (Appearance / Editor / Notifications, three items each)",
+    demoSlug: "settings",
+    setup: async (page) => {
+      await ensureSectionExpanded(page, "Pages");
+      await ensureGroupExpanded(page, "Settings App / Pages");
+      await selectStory(page, "Settings App / Pages / Preferences");
+    },
+  },
+};
+
+// The render-category backend list. `tui` always boots the post-RS-M13
+// tui-term binary on port 8112; we still record the cell under the
+// canonical `tui` filename so consumers don't have to special-case the
+// legacy F/M/I slot.
+export const renderBackends = [
+  "web", "tui", "gpui", "freya", "cocoa", "android", "ios",
+];
+
+export function renderCells() {
+  const out = [];
+  for (const c of Object.keys(renderComponents)) {
+    for (const b of renderBackends) {
+      out.push({ component: c, backend: b });
+    }
+  }
+  return out;
+}
+
+// Wait until the in-editor preview surface for `backend` has painted a
+// real frame from the launcher. Per-backend signals:
+//   - web        — iframe body[data-backend="pbWeb"] with non-empty
+//                  children (covered by verifyExpectedState).
+//   - tui        — `[data-tui-terminal="true"]` host with a
+//                  non-empty `.xterm-screen` descendant.
+//   - canvas backends (gpui/freya/cocoa/android/ios) — the existing
+//                  `waitForCanvasManifest` helper (gates on non-zero
+//                  pixel diversity + a populated __isonimManifest).
+async function waitForFramePainted(page, backend) {
+  if (backend === "web") {
+    await page.waitForFunction(() => {
+      const iframes = Array.from(document.querySelectorAll("iframe"));
+      for (const f of iframes) {
+        try {
+          const b = f.contentDocument?.body;
+          if (!b) continue;
+          if (b.dataset.backend !== "pbWeb") continue;
+          if (b.children && b.children.length > 0) return true;
+        } catch { /* cross-origin guard; try srcdoc */ }
+        const srcdoc = f.getAttribute("srcdoc") ?? "";
+        if (/<body data-backend="pbWeb"/.test(srcdoc) &&
+            /<main class="app"[^>]*>[\s\S]*<\/main>/.test(srcdoc)) {
+          return true;
+        }
+      }
+      return false;
+    }, null, { timeout: 20_000 });
+    return;
+  }
+  if (backend === "tui" || backend === "tui-term") {
+    await page.waitForFunction(() => {
+      const host = document.querySelector('[data-tui-terminal="true"]');
+      if (!host) return false;
+      const screen = host.querySelector(".xterm-screen, .xterm-rows");
+      if (!screen) return false;
+      const t = (screen.textContent ?? "").trim();
+      return t.length > 0;
+    }, null, { timeout: 25_000 });
+    return;
+  }
+  // Canvas backends.
+  await waitForCanvasManifest(page);
+}
+
+// Click the chrome-bar backend chip for `backend`. The chrome bar's
+// backend strip is a compact-choice column with `visibleLimit = 6`, so
+// the 7th option (iOS today) lives inside a `<details>` overflow
+// popup and isn't `visible` until the overflow trigger is opened. We
+// inspect the chip's attributes before clicking and open the overflow
+// trigger first when the chip is marked as an overflow-option.
+async function clickRenderBackendChip(page, backend) {
+  const label = BACKEND_LAUNCHERS[backend]?.chipLabel;
+  if (!label) {
+    throw new Error(`render: unknown backend "${backend}"`);
+  }
+  const chip = page
+    .locator(`[aria-label="Preview backend ${label}"]`)
+    .first();
+  await chip.waitFor({ state: "attached", timeout: 10_000 });
+  const isOverflow = await chip.getAttribute(
+    "data-compact-choice-overflow-option",
+  );
+  if (isOverflow === "true") {
+    // Open the backend strip's overflow popup so the chip becomes
+    // visible. The overflow trigger sits in the same column.
+    const stripTrigger = page
+      .locator(
+        '[data-edge-strip="backend"] [data-compact-choice-overflow="true"]',
+      )
+      .first();
+    const clusterTrigger = page
+      .locator(
+        '[data-toolbar-cluster="backend"] [data-compact-choice-overflow="true"]',
+      )
+      .first();
+    if (await stripTrigger.count() > 0) {
+      await stripTrigger.click();
+    } else {
+      await clusterTrigger.click();
+    }
+    await chip.waitFor({ state: "visible", timeout: 5_000 });
+  }
+  await clickBackendChip(page, label);
+}
+
+// Resolve the preview-pane clip rectangle from the running editor.
+//
+// The empty-state shell exposes a wrapper element directly tagged
+// `[data-preview-canvas="true"]` (shell.nim line 1384). After a story
+// is selected the active view's body inside `[data-preview-view-stack]`
+// replaces that empty-state element; we pick the visible child of the
+// view stack instead so the clip rectangle is always the preview
+// surface, never the editor chrome.
+async function previewCanvasClip(page) {
+  return await page.evaluate(() => {
+    const isVisible = (el) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      const cs = window.getComputedStyle(el);
+      return cs.display !== "none" && cs.visibility !== "hidden";
+    };
+    const direct = document.querySelector('[data-preview-canvas="true"]');
+    if (isVisible(direct)) {
+      const r = direct.getBoundingClientRect();
+      return {
+        x: Math.max(0, Math.floor(r.left)),
+        y: Math.max(0, Math.floor(r.top)),
+        width: Math.max(1, Math.floor(r.width)),
+        height: Math.max(1, Math.floor(r.height)),
+      };
+    }
+    // Fallback: the active child inside the view stack — i.e. the
+    // current evComponentDetail / evPagePreview / evFoundationsPage
+    // element. There's exactly one visible child after the reactive
+    // view switch runs.
+    const stack = document.querySelector('[data-preview-view-stack="true"]');
+    if (stack) {
+      const kids = Array.from(stack.children).filter(isVisible);
+      if (kids.length > 0) {
+        // Pick the LARGEST visible child to be robust if a tiny aux
+        // element happens to sit alongside the active view.
+        kids.sort((a, b) => {
+          const ra = a.getBoundingClientRect();
+          const rb = b.getBoundingClientRect();
+          return rb.width * rb.height - ra.width * ra.height;
+        });
+        const r = kids[0].getBoundingClientRect();
+        return {
+          x: Math.max(0, Math.floor(r.left)),
+          y: Math.max(0, Math.floor(r.top)),
+          width: Math.max(1, Math.floor(r.width)),
+          height: Math.max(1, Math.floor(r.height)),
+        };
+      }
+    }
+    return null;
+  });
+}
+
+// Render a placeholder PNG to `outPath` reading the message text via a
+// throwaway Playwright page. Using the same headless Chromium we
+// already drive avoids pulling in a separate image-encoding dep.
+//
+// M-EVP-14: the placeholder matches the editor's 1920×1080 capture
+// extent so a `<component>-<backend>-unavailable.png` file can be
+// dropped into the same review-grid cell without resizing.
+async function writeUnavailablePlaceholder(browser, outPath, message) {
+  const safe = message
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html =
+    `<!doctype html><meta charset="utf-8">` +
+    `<style>html,body{margin:0;padding:0;width:100%;height:100%;` +
+    `background:#3a3f48;` +
+    `color:#e6e6e6;font:600 28px/1.4 system-ui,sans-serif;` +
+    `display:flex;align-items:center;justify-content:center;` +
+    `text-align:center;}` +
+    `.box{padding:48px;max-width:1200px;}</style>` +
+    `<div class="box">${safe}</div>`;
+  const ctx = await browser.newContext({
+    viewport: { width: 1920, height: 1080 },
+    deviceScaleFactor: 1,
+  });
+  const page = await ctx.newPage();
+  await page.setContent(html);
+  await page.screenshot({ path: outPath });
+  await ctx.close();
 }
 
 // ---------------------------------------------------------------------------
@@ -886,14 +1291,23 @@ async function main() {
   let skipBuild = false;
   let port = 8091;
   let listOnly = false;
-  let outDir = screenshotDir;
+  let outDir = null; // resolved per-category below
+  let isRender = false;
+  let selectedComponents = null; // null means "all"
+  let selectedBackends = null;   // null means "all"
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
-      case "--view":
-        selectedViews = [args[++i]];
+      case "--view": {
+        const v = args[++i];
+        if (v === "render") {
+          isRender = true;
+        } else {
+          selectedViews = [v];
+        }
         isFiltered = true;
         break;
+      }
       case "--size":
         selectedSizes = [args[++i]];
         isFiltered = true;
@@ -911,6 +1325,14 @@ async function main() {
       case "--list":
         listOnly = true;
         break;
+      case "--component":
+        selectedComponents = [args[++i]];
+        isFiltered = true;
+        break;
+      case "--backend":
+        selectedBackends = [args[++i]];
+        isFiltered = true;
+        break;
       default:
         console.error(`Unknown arg: ${args[i]}`);
         process.exit(1);
@@ -926,22 +1348,53 @@ async function main() {
     for (const [k, v] of Object.entries(sizes)) {
       console.log(`  ${k}: ${v.width}x${v.height}`);
     }
+    console.log("Render cells (--view render):");
+    for (const cell of renderCells()) {
+      const p = `screenshots/render/${cell.component}-${cell.backend}.png`;
+      console.log(`  ${cell.component} × ${cell.backend} -> ${p}`);
+    }
     process.exit(0);
   }
 
-  for (const v of selectedViews) {
-    if (!views[v]) {
-      console.error(`Unknown view: ${v}`);
-      process.exit(1);
+  // Validate selections.
+  if (isRender) {
+    if (selectedComponents !== null) {
+      for (const c of selectedComponents) {
+        if (!renderComponents[c]) {
+          console.error(`Unknown component: ${c}`);
+          process.exit(1);
+        }
+      }
     }
-  }
-  if (selectedSizes !== null) {
-    for (const s of selectedSizes) {
-      if (!sizes[s]) {
-        console.error(`Unknown size: ${s}`);
+    if (selectedBackends !== null) {
+      for (const b of selectedBackends) {
+        if (!renderBackends.includes(b)) {
+          console.error(`Unknown backend: ${b}`);
+          process.exit(1);
+        }
+      }
+    }
+  } else {
+    for (const v of selectedViews) {
+      if (!views[v]) {
+        console.error(`Unknown view: ${v}`);
         process.exit(1);
       }
     }
+    if (selectedSizes !== null) {
+      for (const s of selectedSizes) {
+        if (!sizes[s]) {
+          console.error(`Unknown size: ${s}`);
+          process.exit(1);
+        }
+      }
+    }
+  }
+
+  if (outDir === null) {
+    outDir = isRender
+      ? join(projectRoot, "screenshots", "render")
+      : screenshotDir;
   }
 
   if (!skipBuild) {
@@ -957,24 +1410,65 @@ async function main() {
     console.log("    Built.");
   }
 
+  // The render category needs the editor-server.mjs proxy so each
+  // backend's `/bridge/<slug>` (or `/tui-bridge`) WebSocket reaches the
+  // matching launcher. The non-render legacy categories run fine
+  // against the simpler python3 -m http.server.
   console.log(`==> Starting server on port ${port}...`);
-  const server = spawn(
-    "python3",
-    ["-m", "http.server", String(port), "--bind", "127.0.0.1"],
-    { cwd: editorDir, stdio: "ignore", detached: true },
-  );
+  const server = isRender
+    ? spawn(
+        "node",
+        [join(__dirname, "editor-server.mjs")],
+        {
+          cwd: projectRoot,
+          stdio: "ignore",
+          detached: true,
+          env: { ...process.env, PORT: String(port),
+                 EDITOR_STATIC_ROOT: editorDir },
+        },
+      )
+    : spawn(
+        "python3",
+        ["-m", "http.server", String(port), "--bind", "127.0.0.1"],
+        { cwd: editorDir, stdio: "ignore", detached: true },
+      );
   await new Promise((r) => setTimeout(r, 1000));
 
-  // M-EVP-12: if any selected view requires the TUI launcher, spawn
-  // it once for the lifetime of the screenshot run. The launcher
-  // listens on port 8102 — the editor's `bridgePortForBackend(pbTui)`
-  // contract. We only spawn once per screenshot run so back-to-back
-  // canvas views share the same WebSocket-ready bridge.
-  const needsTui = selectedViews.some((v) => views[v].usesTui);
+  // Per-backend launcher processes. The cleanup loop below kills all
+  // of them on tool exit (success, failure, and SIGINT).
+  const launcherProcs = [];
   let tuiLauncher = null;
-  if (needsTui) {
-    tuiLauncher = await startTuiLauncher(projectRoot);
+
+  // M-EVP-12: if any non-render view needs the legacy pixel-TUI
+  // launcher, spawn it once for the lifetime of the screenshot run.
+  if (!isRender) {
+    const needsTui = selectedViews.some((v) => views[v].usesTui);
+    if (needsTui) {
+      tuiLauncher = await startTuiLauncher(projectRoot);
+    }
   }
+
+  // Register cleanup early so a Ctrl-C tears every child down. We
+  // kill both the process group (-pid) and the direct pid — the
+  // process-group kill is the canonical path for `detached: true`
+  // children, but some launchers (notably the Freya bridge on macOS)
+  // detach themselves from the spawned group, so the negative-pid
+  // signal misses them. Trying both is harmless when one succeeds.
+  let cleanedUp = false;
+  const killOne = (pid) => {
+    if (!pid) return;
+    try { process.kill(-pid); } catch { /* group kill missed */ }
+    try { process.kill(pid); } catch { /* already dead */ }
+  };
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    killOne(server.pid);
+    if (tuiLauncher) killOne(tuiLauncher.pid);
+    for (const p of launcherProcs) killOne(p.pid);
+  };
+  process.on("SIGINT", () => { cleanup(); process.exit(130); });
+  process.on("SIGTERM", () => { cleanup(); process.exit(143); });
 
   if (!isFiltered && existsSync(outDir)) {
     rmSync(outDir, { recursive: true });
@@ -987,52 +1481,135 @@ async function main() {
   let count = 0;
   let failure = null;
   try {
-    for (const viewName of selectedViews) {
-      const view = views[viewName];
-      // Resolve the effective per-view viewport list:
-      //   - explicit --size flag wins (overrides view's `viewports`).
-      //   - else view.viewports if declared.
-      //   - else DEFAULT_VIEWPORTS_WIDE_LAPTOP.
-      const effectiveSizes = (selectedSizes !== null)
-        ? selectedSizes
-        : (Array.isArray(view.viewports) && view.viewports.length > 0
-            ? view.viewports
-            : DEFAULT_VIEWPORTS_WIDE_LAPTOP);
-      for (const sizeName of effectiveSizes) {
-        const vp = sizes[sizeName];
-        if (!vp) {
-          throw new Error(
-            `view "${viewName}": viewport "${sizeName}" not in the sizes table`,
-          );
+    if (isRender) {
+      const cells = renderCells().filter((cell) =>
+        (selectedComponents === null ||
+          selectedComponents.includes(cell.component)) &&
+        (selectedBackends === null ||
+          selectedBackends.includes(cell.backend)),
+      );
+      // Group by component so we can boot per-backend launchers with
+      // the matching `--demo=<slug>` once per component. Booting
+      // launchers up-front for the whole matrix would force every
+      // backend to stream the same demo, which would make the canvas
+      // pixels disagree with the editor's sidebar selection for one
+      // of the two components.
+      const componentsInOrder = [];
+      const cellsByComponent = new Map();
+      for (const cell of cells) {
+        if (!cellsByComponent.has(cell.component)) {
+          componentsInOrder.push(cell.component);
+          cellsByComponent.set(cell.component, []);
         }
-        const context = await browser.newContext({
-          viewport: { width: vp.width, height: vp.height },
-          deviceScaleFactor: 2,
-        });
-        const page = await context.newPage();
-        // M-EVP-12: views that drive M-EVP-10 / M-EVP-11 mirrors must
-        // see `window.__isonimTestMode === true` BEFORE the editor
-        // bundle boots, so the gated `window.__isonim*` write paths
-        // fire on the first event after attachBridgeClient mounts.
-        if (view.requiresTestMode === true) {
-          await page.addInitScript(() => {
-            window.__isonimTestMode = true;
-          });
-        }
-        await page.goto(`http://127.0.0.1:${port}/`);
-        await page.waitForTimeout(400);
-        await view.setup(page);
-        await page.waitForTimeout(200);
-        // M-EVP-2: verify expected state BEFORE writing the PNG so
-        // the captured screenshot can never be silently stale.
-        await verifyExpectedState(page, viewName, view);
-        const p = join(outDir, `${viewName}-${sizeName}.png`);
-        await page.screenshot({ path: p });
-        console.log(
-          `    ${viewName}-${sizeName} (${vp.width}x${vp.height}): ${p}`,
+        cellsByComponent.get(cell.component).push(cell);
+      }
+
+      for (const componentName of componentsInOrder) {
+        const componentCells = cellsByComponent.get(componentName);
+        const comp = renderComponents[componentName];
+        const demoSlug = comp?.demoSlug ?? "task";
+        const backendsNeeded = Array.from(
+          new Set(componentCells.map((c) => c.backend)),
         );
-        count++;
-        await context.close();
+        const launcherState = {}; // backend -> { ok, proc?, reason? }
+        const groupProcs = [];
+        for (const b of backendsNeeded) {
+          const r = await startLauncher(b, projectRoot, { demo: demoSlug });
+          launcherState[b] = r;
+          if (r.ok) {
+            launcherProcs.push(r.proc);
+            groupProcs.push(r.proc);
+          }
+        }
+
+        for (const cell of componentCells) {
+          const baseName = `${cell.component}-${cell.backend}`;
+          const outPath = join(outDir, `${baseName}.png`);
+          const unavailablePath = join(outDir, `${baseName}-unavailable.png`);
+          const state = launcherState[cell.backend];
+          if (!state.ok) {
+            await writeUnavailablePlaceholder(
+              browser, unavailablePath,
+              `${cell.backend} unavailable: ${state.reason}`,
+            );
+            console.log(
+              `    ${baseName}: PLACEHOLDER (${state.reason})`,
+            );
+            count++;
+            continue;
+          }
+          try {
+            await captureRenderCell(browser, port, cell, outPath);
+            console.log(`    ${baseName}: ${outPath}`);
+            count++;
+          } catch (e) {
+            await writeUnavailablePlaceholder(
+              browser, unavailablePath,
+              `${cell.backend} unavailable: capture failed: ${e.message ?? e}`,
+            );
+            console.log(
+              `    ${baseName}: PLACEHOLDER (capture error: ${e.message ?? e})`,
+            );
+            count++;
+          }
+        }
+
+        // Teardown the per-component launcher group before moving on
+        // — otherwise the next component's launcher would clash on
+        // the same per-backend bridge port.
+        for (const p of groupProcs) killOne(p.pid);
+        // Brief pause so the kernel releases the bridge ports before
+        // the next group boots launchers on the same ports.
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    } else {
+      for (const viewName of selectedViews) {
+        const view = views[viewName];
+        // Resolve the effective per-view viewport list:
+        //   - explicit --size flag wins (overrides view's `viewports`).
+        //   - else view.viewports if declared.
+        //   - else DEFAULT_VIEWPORTS_WIDE_LAPTOP.
+        const effectiveSizes = (selectedSizes !== null)
+          ? selectedSizes
+          : (Array.isArray(view.viewports) && view.viewports.length > 0
+              ? view.viewports
+              : DEFAULT_VIEWPORTS_WIDE_LAPTOP);
+        for (const sizeName of effectiveSizes) {
+          const vp = sizes[sizeName];
+          if (!vp) {
+            throw new Error(
+              `view "${viewName}": viewport "${sizeName}" not in the sizes table`,
+            );
+          }
+          const context = await browser.newContext({
+            viewport: { width: vp.width, height: vp.height },
+            deviceScaleFactor: 2,
+          });
+          const page = await context.newPage();
+          // M-EVP-12: views that drive M-EVP-10 / M-EVP-11 mirrors must
+          // see `window.__isonimTestMode === true` BEFORE the editor
+          // bundle boots, so the gated `window.__isonim*` write paths
+          // fire on the first event after attachBridgeClient mounts.
+          if (view.requiresTestMode === true) {
+            await page.addInitScript(() => {
+              window.__isonimTestMode = true;
+            });
+          }
+          await page.goto(`http://127.0.0.1:${port}/`);
+          await page.waitForTimeout(400);
+          await view.setup(page);
+          await page.waitForTimeout(200);
+          // M-EVP-2: verify expected state BEFORE writing the PNG so
+          // the captured screenshot can never be silently stale.
+          await verifyExpectedState(page, viewName, view);
+          const p = join(outDir, `${viewName}-${sizeName}.png`);
+          await page.screenshot({ path: p });
+          console.log(
+            `    ${viewName}-${sizeName} (${vp.width}x${vp.height}): ${p}`,
+          );
+          count++;
+          await context.close();
+        }
       }
     }
   } catch (e) {
@@ -1040,24 +1617,51 @@ async function main() {
   }
 
   await browser.close();
-  try {
-    process.kill(-server.pid);
-  } catch {
-    /* ignore */
-  }
-  if (tuiLauncher) {
-    try {
-      process.kill(-tuiLauncher.pid);
-    } catch {
-      /* ignore */
-    }
-  }
+  cleanup();
   if (failure) {
     console.error(`==> FAILED after ${count} screenshot(s):`);
     console.error(failure.message ?? failure);
     process.exit(1);
   }
   console.log(`==> Done. ${count} screenshot(s) written.`);
+}
+
+// Drive one render cell: navigate to the component story, click the
+// backend chip, wait for a real painted frame, then screenshot the
+// FULL editor viewport (1920×1080).
+//
+// M-EVP-14 capture extent: per the visual-review brief, the reviewer
+// compares the editor *as a whole* (sidebar + preview pane + inspector
+// + chrome bar with the backend chip selected) across backends — not
+// just the raw preview-pane rectangle. We use Playwright's default
+// `page.screenshot()` (no `clip`) so the entire 1920×1080 viewport
+// lands in the PNG.
+async function captureRenderCell(browser, port, cell, outPath) {
+  const comp = renderComponents[cell.component];
+  if (!comp) throw new Error(`unknown render component "${cell.component}"`);
+  // Canvas backends drive the M-EVP-10 / M-EVP-11 mirrors which gate on
+  // __isonimTestMode; the iframe + xterm backends don't need it but
+  // setting it is harmless. We set it unconditionally for render cells.
+  const context = await browser.newContext({
+    viewport: { width: 1920, height: 1080 },
+    deviceScaleFactor: 1,
+  });
+  const page = await context.newPage();
+  await page.addInitScript(() => { window.__isonimTestMode = true; });
+  try {
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForTimeout(400);
+    await comp.setup(page);
+    await page.waitForTimeout(200);
+    await clickRenderBackendChip(page, cell.backend);
+    await waitForFramePainted(page, cell.backend);
+    // Small settle delay so the chrome bar's chip aria-pressed cascade
+    // and per-backend overlay re-flow finish painting.
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: outPath });
+  } finally {
+    await context.close();
+  }
 }
 
 if (isMainModule()) {
