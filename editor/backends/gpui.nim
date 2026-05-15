@@ -20,7 +20,7 @@ import isonim_gpui/bindings as gpui_bindings
 import isonim/core/owner
 
 import isonim_render_serve
-import isonim_render_serve/adapters/gpui_tree_adapter
+import isonim_render_serve/adapters/gpui_adapter
 
 import task_app/core/vm as task_vm
 import task_app/main_gpui as task_gpui
@@ -58,36 +58,28 @@ proc runGpuiDemo(cfg: LauncherConfig) =
       seedTaskInboxDefaults(taskAppVm)
       root = task_gpui.buildTaskApp(r, taskAppVm)
 
-    discard r
+    var dynamicW = w
+    var dynamicH = h
+
+    let src = newGpuiFrameSource(r, root, dynamicW, dynamicH)
     let capturedRoot = root
-    let providerState = GpuiRenderTreeProviderState(
-      root: capturedRoot, width: w, height: h, frameSeq: 0)
 
-    # RS-M13b: a no-op frame source supplies the dimensions reported
-    # in hello.initialSize. The launcher advertises
-    # `rendererSurface = "tree"` so the bridge never invokes
-    # renderFrame on this source.
-    let src = newNoopFrameSource(w, h)
-
-    let elementTreeProvider = ElementTreeProvider(
+    let provider = ElementTreeProvider(
       buildImpl: proc(): ElementTreeManifest {.gcsafe.} =
         {.cast(gcsafe).}:
           buildGpuiElementTreeManifest(capturedRoot,
-            providerState.width, providerState.height))
-
-    let renderTreeProvider = newGpuiRenderTreeProvider(providerState)
+            dynamicW, dynamicH))
 
     let resizingSink = newAnyInputSink(
       proc(event: InputEvent) {.gcsafe.} =
         if event.kind != iekResize: return
         if event.width <= 0 or event.height <= 0: return
-        if event.width == providerState.width and
-           event.height == providerState.height: return
+        if event.width == dynamicW and event.height == dynamicH: return
         {.cast(gcsafe).}:
-          providerState.width = event.width
-          providerState.height = event.height
-          src.width = event.width
-          src.height = event.height)
+          dynamicW = event.width
+          dynamicH = event.height
+          src.width = dynamicW
+          src.height = dynamicH)
 
     let captTaskVm = taskAppVm
     let captSettingsVm = settingsAppVm
@@ -108,10 +100,7 @@ proc runGpuiDemo(cfg: LauncherConfig) =
           applyTaskMutation(captTaskVm, target, key, value, scope)
     let storySink = newStoryDispatchSink(mountFn, applyFn,
                                          inner = resizingSink)
-    runDemoBridgeWith(cfg, src, elementTreeProvider,
-                      storySink.toAnyInputSink(),
-                      renderTree = renderTreeProvider,
-                      rendererSurface = "tree")
+    runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink())
     dispose()
 
 proc runDemoBridge*(backend: string) =

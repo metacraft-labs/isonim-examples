@@ -76,64 +76,6 @@ async function navigateToSettingsGroupStory(page: Page) {
 // Connect to a bridge's static canvas client; wait for the canvas to
 // paint at least one frame; return the canvas's ImageData hash plus the
 // non-background pixel count.
-async function probeRenderTreeBridge(page: Page, port: number, rendererId: string): Promise<{
-  hash: string;
-  nodeCount: number;
-  rendererId: string;
-}> {
-  // RS-M13b: GPUI / Freya launchers stop emitting F packets and
-  // instead emit a `render-tree` M sub-kind. The bridge's
-  // `static/index.html` only paints F packets, so we connect a fresh
-  // WebSocket from the page and read the render-tree body directly.
-  await page.goto(`http://127.0.0.1:${port}/`);
-  return await page.evaluate(async ({ port, rendererId }) => {
-    return new Promise<{ hash: string; nodeCount: number; rendererId: string }>(
-      (resolve, reject) => {
-        const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
-        ws.binaryType = "arraybuffer";
-        const deadline = setTimeout(() => {
-          try { ws.close(); } catch (_) {}
-          reject(new Error(`render-tree timeout on port ${port}`));
-        }, 8000);
-        ws.addEventListener("message", (e) => {
-          if (!(e.data instanceof ArrayBuffer)) return;
-          const bytes = new Uint8Array(e.data);
-          if (bytes.length === 0) return;
-          const kind = String.fromCharCode(bytes[0]);
-          if (kind !== "M") return;
-          const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-          const length = view.getUint32(1, true);
-          const json = new TextDecoder("utf-8").decode(bytes.subarray(5, 5 + length));
-          let node: any;
-          try { node = JSON.parse(json); } catch (_) { return; }
-          if (!node || node.type !== "render-tree") return;
-          clearTimeout(deadline);
-          // FNV-1a over the body bytes.
-          let h = 0x811c9dc5;
-          for (let i = 0; i < json.length; i++) {
-            h = (h ^ json.charCodeAt(i)) >>> 0;
-            h = (h * 0x01000193) >>> 0;
-          }
-          function count(n: any): number {
-            let c = 1;
-            if (n.children) for (const k of n.children) c += count(k);
-            return c;
-          }
-          try { ws.close(); } catch (_) {}
-          resolve({
-            hash: h.toString(16),
-            nodeCount: count(node.root),
-            rendererId: node.rendererId,
-          });
-        });
-        ws.addEventListener("error", () => {
-          clearTimeout(deadline);
-          reject(new Error(`ws error on port ${port}`));
-        });
-      });
-  }, { port, rendererId });
-}
-
 async function probeBridge(page: Page, port: number): Promise<{
   hash: string;
   nonBgPixels: number;
@@ -415,33 +357,29 @@ test.describe("EX-M14: Web backend in-editor preview", () => {
 // --------------------------------------------------------------------------
 
 test.describe("EX-M14: per-backend bridge visual proof", () => {
-  test("Web + TUI bridges paint real demo content; GPUI + Freya emit distinct render-trees", async ({
+  test("every Linux backend's bridge paints a non-empty canvas of real demo content", async ({
     page,
   }) => {
-    // RS-M13b: GPUI + Freya retired pixels. Web still paints via its
-    // stub-fingerprint surface; TUI streams xterm.js cells (the
-    // legacy 8102 pixel raster path was retired at RS-M13; the new
-    // port 8102 stub keeps a non-empty pixel surface for this
-    // legacy assertion).
-    // GPUI + Freya are probed through their render-tree M sub-kind.
-    // The hashes must differ across renderers because their style
-    // tables and rendererId fields differ.
-    const gpui = await probeRenderTreeBridge(page, bridgePorts.gpui, "gpui");
-    const freya = await probeRenderTreeBridge(page, bridgePorts.freya, "freya");
-    expect(gpui.rendererId).toBe("gpui");
-    expect(freya.rendererId).toBe("freya");
+    const probes: Record<string, Awaited<ReturnType<typeof probeBridge>>> = {};
+    for (const id of backendIds) {
+      const port = bridgePorts[id];
+      probes[id] = await probeBridge(page, port);
+      expect(
+        probes[id].nonBgPixels,
+        `${id} bridge must paint non-empty canvas`,
+      ).toBeGreaterThan(0);
+    }
+    // All four canvas hashes must be pairwise distinct: TUI rasterises
+    // demo text via the 8x8 bitmap font; GPUI / Freya paint the
+    // element tree's rect layout (plus their backend-identifier band);
+    // Web paints the per-summary stripe pattern. No two bridges can
+    // share a hash because their pipelines all differ.
+    const hashes = backendIds.map((id) => probes[id].hash);
+    const uniq = new Set(hashes);
     expect(
-      gpui.nodeCount,
-      "GPUI render-tree must carry at least one node",
-    ).toBeGreaterThan(1);
-    expect(
-      freya.nodeCount,
-      "Freya render-tree must carry at least one node",
-    ).toBeGreaterThan(1);
-    expect(
-      gpui.hash,
-      `GPUI vs Freya render-tree hashes must differ; got gpui=${gpui.hash} freya=${freya.hash}`,
-    ).not.toBe(freya.hash);
+      uniq.size,
+      `four distinct canvas hashes required; got ${JSON.stringify(probes)}`,
+    ).toBe(backendIds.length);
   });
 });
 
@@ -472,27 +410,32 @@ test.describe("EX-M17: bridge launchers exercise the fake_db async path", () => 
 // --------------------------------------------------------------------------
 
 test.describe("EX-M15: Freya backend dispatches --demo=settings", () => {
-  test("freya tasks vs freya settings produce distinct render-trees", async ({
+  test("freya tasks vs freya settings produce distinct canvas hashes", async ({
     page,
   }) => {
     // The Freya launcher binary is the same on both ports; only the
-    // --demo flag differs. RS-M13b retired the pixel raster path for
-    // Freya — the launcher now emits a `render-tree` M sub-kind. The
-    // load-bearing assertion that the --demo=settings dispatch lands
-    // is now that the two render-tree bodies hash differently.
-    const tasks = await probeRenderTreeBridge(page, bridgePorts.freya, "freya");
-    const settings = await probeRenderTreeBridge(page, bridgePorts.freyaSettings, "freya");
+    // --demo flag differs. Pre-EX-M15 the settings branch silently fell
+    // back to task_app, so both bridges produced byte-identical pixel
+    // buffers (and identical hashes). EX-M15 fixes the dispatch: the
+    // launcher now wires `--demo=settings` to
+    // `settings_app/main_freya.buildSettingsApp`, which composes a
+    // visibly distinct card-stack layout (every group renders its own
+    // settings-card simultaneously) against the SettingsVM. The
+    // distinct-hash assertion below is the load-bearing proof that the
+    // dispatch lands.
+    const tasks = await probeBridge(page, bridgePorts.freya);
+    const settings = await probeBridge(page, bridgePorts.freyaSettings);
     expect(
-      tasks.nodeCount,
-      "freya --demo=tasks render-tree must carry nodes",
-    ).toBeGreaterThan(1);
+      tasks.nonBgPixels,
+      "freya --demo=tasks bridge must paint non-empty canvas",
+    ).toBeGreaterThan(0);
     expect(
-      settings.nodeCount,
-      "freya --demo=settings render-tree must carry nodes",
-    ).toBeGreaterThan(1);
+      settings.nonBgPixels,
+      "freya --demo=settings bridge must paint non-empty canvas",
+    ).toBeGreaterThan(0);
     expect(
       settings.hash,
-      `freya tasks vs freya settings render-trees must differ; ` +
+      `freya tasks vs freya settings must differ; ` +
         `got tasks=${tasks.hash} settings=${settings.hash}`,
     ).not.toBe(tasks.hash);
   });
@@ -1534,15 +1477,29 @@ test.describe("M-EVP-11 vector-symbol canvas dblclick", () => {
     await expect(gpuiChip).toBeVisible({ timeout: 10_000 });
     await gpuiChip.click();
 
-    // RS-M13b: GPUI mounts a render-tree DOM host instead of the
-    // canvas. The dblclick listener is wired on the host element by
-    // attachRenderTreeClient.
-    const rtHost = page.locator('[data-render-tree-host="gpui"]').first();
-    await expect(rtHost).toBeVisible({ timeout: 15_000 });
+    const canvas = page.locator('canvas[data-canvas-active="true"]').first();
+    await expect(canvas).toBeVisible({ timeout: 10_000 });
+
+    // Wait for the canvas to paint a non-empty frame.
     await page.waitForFunction(
       () => {
-        const h = document.querySelector('[data-render-tree-host="gpui"]');
-        return !!h && h.children.length > 0;
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        if (c.width === 0 || c.height === 0) return false;
+        const ctx = c.getContext("2d");
+        if (!ctx) return false;
+        try {
+          const img = ctx.getImageData(0, 0, c.width, c.height);
+          for (let i = 0; i < img.data.length; i += 4) {
+            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
+          }
+        } catch {
+          return false;
+        }
+        return false;
       },
       null,
       { timeout: 15_000 },
@@ -1599,24 +1556,35 @@ test.describe("M-EVP-11 vector-symbol canvas dblclick", () => {
     );
     expect(targetSymbol).toBeDefined();
 
+    // Wait for the canvas pixel dims to match the manifest's surface
+    // so the dblclick coordinate math is well-defined.
+    await page.waitForFunction(
+      (expected: { w: number; h: number }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        return c.width === expected.w && c.height === expected.h;
+      },
+      { w: manifestInfo.surfaceWidth, h: manifestInfo.surfaceHeight },
+      { timeout: 10_000 },
+    );
+
     const click = await page.evaluate(
-      (input: { sym: { bounds: { x: number; y: number; w: number; h: number } };
-                surfaceWidth: number; surfaceHeight: number }) => {
-        const h = document.querySelector(
-          '[data-render-tree-host="gpui"]',
-        ) as HTMLElement;
-        const rect = h.getBoundingClientRect();
-        const cx = input.sym.bounds.x + Math.floor(input.sym.bounds.w / 2);
-        const cy = input.sym.bounds.y + Math.floor(input.sym.bounds.h / 2);
-        const clientX = rect.left + (cx + 0.5) * (rect.width / input.surfaceWidth);
-        const clientY = rect.top + (cy + 0.5) * (rect.height / input.surfaceHeight);
+      (sym: { bounds: { x: number; y: number; w: number; h: number } }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        const c = list[0] as HTMLCanvasElement;
+        const rect = c.getBoundingClientRect();
+        const cx = sym.bounds.x + Math.floor(sym.bounds.w / 2);
+        const cy = sym.bounds.y + Math.floor(sym.bounds.h / 2);
+        const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
+        const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
         return { cx, cy, clientX, clientY };
       },
-      {
-        sym: targetSymbol!,
-        surfaceWidth: manifestInfo.surfaceWidth,
-        surfaceHeight: manifestInfo.surfaceHeight,
-      },
+      targetSymbol!,
     );
 
     // The seeded leaf's bounds must actually contain the centre point
@@ -1684,16 +1652,16 @@ test.describe("M-EVP-11 vector-symbol canvas dblclick", () => {
     await expect(taskListStory).toBeVisible({ timeout: 10_000 });
     await taskListStory.click();
 
-    // RS-M13b: GPUI now mounts a render-tree DOM host instead of a
-    // canvas. The dblclick negative path uses the same JS shim
-    // (attachRenderTreeClient) which wires `onDblClick` exactly like
-    // the F/M/I client.
+    // GPUI: the dblclick negative path requires the F/M/I canvas
+    // attach (the same JS shim the positive path tests). RS-M13's
+    // TUI no longer wires dblclick handlers because xterm.js owns
+    // the host element.
     const gpuiChip = page.locator('[data-preview-backend="gpui"]').first();
     await expect(gpuiChip).toBeVisible({ timeout: 10_000 });
     await gpuiChip.click();
 
-    const rtHost = page.locator('[data-render-tree-host="gpui"]').first();
-    await expect(rtHost).toBeVisible({ timeout: 15_000 });
+    const canvas = page.locator('canvas[data-canvas-active="true"]').first();
+    await expect(canvas).toBeVisible({ timeout: 10_000 });
 
     await page.waitForFunction(
       () => {
@@ -1738,25 +1706,34 @@ test.describe("M-EVP-11 vector-symbol canvas dblclick", () => {
     });
     expect(manifestInfo.taskRows.length).toBeGreaterThan(0);
 
+    await page.waitForFunction(
+      (expected: { w: number; h: number }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        if (list.length === 0) return false;
+        const c = list[0] as HTMLCanvasElement;
+        return c.width === expected.w && c.height === expected.h;
+      },
+      { w: manifestInfo.surfaceWidth, h: manifestInfo.surfaceHeight },
+      { timeout: 10_000 },
+    );
+
     const targetRow = manifestInfo.taskRows[0];
     const click = await page.evaluate(
-      (input: { row: { bounds: { x: number; y: number; w: number; h: number } };
-                surfaceWidth: number; surfaceHeight: number }) => {
-        const h = document.querySelector(
-          '[data-render-tree-host="gpui"]',
-        ) as HTMLElement;
-        const rect = h.getBoundingClientRect();
-        const cx = input.row.bounds.x + Math.floor(input.row.bounds.w / 2);
-        const cy = input.row.bounds.y + Math.floor(input.row.bounds.h / 2);
-        const clientX = rect.left + (cx + 0.5) * (rect.width / input.surfaceWidth);
-        const clientY = rect.top + (cy + 0.5) * (rect.height / input.surfaceHeight);
+      (row: { bounds: { x: number; y: number; w: number; h: number } }) => {
+        const list = document.querySelectorAll(
+          'canvas[data-canvas-active="true"]',
+        );
+        const c = list[0] as HTMLCanvasElement;
+        const rect = c.getBoundingClientRect();
+        const cx = row.bounds.x + Math.floor(row.bounds.w / 2);
+        const cy = row.bounds.y + Math.floor(row.bounds.h / 2);
+        const clientX = rect.left + (cx + 0.5) * (rect.width / c.width);
+        const clientY = rect.top + (cy + 0.5) * (rect.height / c.height);
         return { clientX, clientY };
       },
-      {
-        row: targetRow,
-        surfaceWidth: manifestInfo.surfaceWidth,
-        surfaceHeight: manifestInfo.surfaceHeight,
-      },
+      targetRow,
     );
 
     await page.mouse.dblclick(click.clientX, click.clientY);
@@ -1980,13 +1957,15 @@ test.describe("M-EVP-13 page preview canvas", () => {
     expect(["none", "absent"]).toContain(tuiDisplay);
   });
 
-  test("Surface fit-to-pane (GPUI render-tree): host fills most of preview pane", async ({
+  test("Canvas fit-to-pane (GPUI): rendered height fills most of preview pane", async ({
     page,
   }) => {
-    // RS-M13b: GPUI replaced its F-packet canvas with a render-tree
-    // DOM host. The fit-to-pane regression guard now targets that
-    // host: it must occupy a substantial share of the preview pane
-    // so the prior "tiny stretched strip" pathology can't recur.
+    // The fit-to-pane regression guard uses GPUI: a non-Web,
+    // non-TUI backend whose launcher still paints F-packet RGBA
+    // pixels into the canvas. (RS-M13 swapped TUI to xterm.js, so
+    // the canvas-paint path is no longer exercised for TUI; GPUI is
+    // the closest analogue that still drives the Approach A canvas
+    // CSS.)
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__isonimTestMode = true;
     });
@@ -1997,52 +1976,81 @@ test.describe("M-EVP-13 page preview canvas", () => {
     await expect(gpuiChip).toBeVisible({ timeout: 10_000 });
     await gpuiChip.click();
 
-    const rtHost = page.locator('[data-render-tree-host="gpui"]').first();
-    await expect(rtHost).toBeVisible({ timeout: 15_000 });
+    const canvasLoc = page
+      .locator('canvas[data-page-project-canvas="true"][data-canvas-active="true"]')
+      .first();
+    await expect(canvasLoc).toBeVisible({ timeout: 10_000 });
 
-    // Wait for the render-tree host to be populated (children > 0
-    // implies the materialiser ran on a real render-tree manifest).
+    // Wait for first non-empty frame so layout has settled to the real
+    // surface dimensions.
     await page.waitForFunction(
       () => {
-        const h = document.querySelector('[data-render-tree-host="gpui"]');
-        return !!h && h.children.length > 0;
+        const c = document.querySelector(
+          'canvas[data-page-project-canvas="true"][data-canvas-active="true"]',
+        ) as HTMLCanvasElement | null;
+        if (!c) return false;
+        if (c.width === 0 || c.height === 0) return false;
+        const ctx = c.getContext("2d");
+        if (!ctx) return false;
+        try {
+          const img = ctx.getImageData(0, 0, c.width, c.height);
+          for (let i = 0; i < img.data.length; i += 4) {
+            if (img.data[i] | img.data[i + 1] | img.data[i + 2]) return true;
+          }
+        } catch {
+          return false;
+        }
+        return false;
       },
       null,
       { timeout: 15_000 },
     );
 
+    // Measure the canvas's rendered box vs the surrounding preview
+    // pane host. M-EVP-13 mounts the canvas in a sibling pane that
+    // bypasses the cell-sized device frame, so the canvas can fill
+    // the available preview area. Approach A's
+    // `object-fit: contain` preserves the launcher's surface
+    // aspect ratio.
     const measurements = await page.evaluate(() => {
-      const h = document.querySelector(
-        '[data-render-tree-host="gpui"]',
-      ) as HTMLElement | null;
+      const c = document.querySelector(
+        'canvas[data-page-project-canvas="true"][data-canvas-active="true"]',
+      ) as HTMLCanvasElement | null;
       const previewHost = document.querySelector(
         '[data-page-preview="true"]',
       ) as HTMLElement | null;
       const canvasPane = document.querySelector(
         '[data-page-canvas-pane="true"]',
       ) as HTMLElement | null;
-      if (!h || !previewHost || !canvasPane) return null;
-      const hRect = h.getBoundingClientRect();
-      const previewRect = previewHost.getBoundingClientRect();
-      const paneRect = canvasPane.getBoundingClientRect();
+      if (!c || !previewHost || !canvasPane) {
+        return null;
+      }
+      const cRect = c.getBoundingClientRect();
+      const hRect = previewHost.getBoundingClientRect();
+      const pRect = canvasPane.getBoundingClientRect();
       return {
-        cw: hRect.width,
-        ch: hRect.height,
-        hw: previewRect.width,
-        hh: previewRect.height,
-        pw: paneRect.width,
-        ph: paneRect.height,
+        cw: cRect.width,
+        ch: cRect.height,
+        hw: hRect.width,
+        hh: hRect.height,
+        pw: pRect.width,
+        ph: pRect.height,
       };
     });
     expect(measurements).not.toBeNull();
     const m = measurements!;
+    // Regression guard against the "tiny stretched strip" pathology
+    // from the prior `width: 100%; min-height: 1px;` rule. With
+    // M-EVP-13's Approach A + dedicated canvas pane, the canvas's
+    // height must occupy a substantial share of the preview pane.
     expect(
       m.ch,
-      `render-tree host height ${m.ch} must exceed 25% of preview-pane height ${m.hh}`,
+      `canvas height ${m.ch} must exceed 25% of preview-pane height ${m.hh}`,
     ).toBeGreaterThan(m.hh * 0.25);
+    expect(m.cw).toBeLessThanOrEqual(m.hw + 1);
     expect(
       m.cw,
-      `render-tree host width ${m.cw} must exceed 80% of canvas-pane width ${m.pw}`,
+      `canvas width ${m.cw} must exceed 80% of canvas-pane width ${m.pw}`,
     ).toBeGreaterThan(m.pw * 0.8);
     expect(m.ch).toBeGreaterThan(200);
   });
@@ -2290,122 +2298,5 @@ test.describe("RS-M13 xterm.js terminal mount", () => {
         ),
       { timeout: 5_000 },
     ).toBe(targetPath);
-  });
-});
-
-// --------------------------------------------------------------------------
-// RS-M13b: GPUI + Freya render-tree DOM mount
-// --------------------------------------------------------------------------
-
-test.describe("RS-M13b render-tree DOM mount", () => {
-  test("GPUI chip mounts a render-tree DOM host with SF-style font stack", async ({
-    page,
-  }) => {
-    await page.addInitScript(() => {
-      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
-    });
-    await gotoEditor(page);
-
-    // Open a Component story so the canvas surface takes over.
-    const taskListGroup = page
-      .locator('[aria-label="Toggle Task App / TaskList stories"]')
-      .first();
-    await expect(taskListGroup).toBeVisible({ timeout: 10_000 });
-    if ((await taskListGroup.getAttribute("aria-expanded")) !== "true") {
-      await taskListGroup.click();
-    }
-    const twoActive = page
-      .locator('[aria-label="Select story Task App / TaskList / Two Active"]')
-      .first();
-    await expect(twoActive).toBeVisible({ timeout: 10_000 });
-    await twoActive.click();
-
-    // Click the GPUI chip.
-    const gpuiChip = page.locator('[data-preview-backend="gpui"]').first();
-    await expect(gpuiChip).toBeVisible({ timeout: 10_000 });
-    await gpuiChip.click();
-
-    // The render-tree host must mount with the gpui renderer-id.
-    const rtHost = page.locator('[data-render-tree-host="gpui"]').first();
-    await expect(rtHost).toBeVisible({ timeout: 15_000 });
-    // The host must be populated with at least one child (the
-    // materialised root of the render-tree).
-    await expect.poll(
-      async () =>
-        await page.evaluate(() => {
-          const h = document.querySelector('[data-render-tree-host="gpui"]');
-          return h ? h.children.length : 0;
-        }),
-      { timeout: 10_000, message: "render-tree host must have children" },
-    ).toBeGreaterThan(0);
-
-    // The host applies the SF-style font stack from gpui.css.
-    const fontFamily = await page.evaluate(() => {
-      const h = document.querySelector(
-        '[data-render-tree-host="gpui"]',
-      ) as HTMLElement | null;
-      if (!h) return "";
-      return getComputedStyle(h).fontFamily;
-    });
-    expect(fontFamily).toMatch(/-apple-system|SF Pro Display|BlinkMacSystemFont/);
-
-    // The latest render-tree manifest must be mirrored to window.
-    const mirroredId = await page.evaluate(() => {
-      return (window as unknown as Record<string, unknown>)
-        .__isonimRenderTreeRendererId as string | undefined;
-    });
-    expect(mirroredId).toBe("gpui");
-  });
-
-  test("Freya chip mounts a render-tree DOM host with Material font stack", async ({
-    page,
-  }) => {
-    await page.addInitScript(() => {
-      (window as unknown as Record<string, unknown>).__isonimTestMode = true;
-    });
-    await gotoEditor(page);
-
-    const taskListGroup = page
-      .locator('[aria-label="Toggle Task App / TaskList stories"]')
-      .first();
-    await expect(taskListGroup).toBeVisible({ timeout: 10_000 });
-    if ((await taskListGroup.getAttribute("aria-expanded")) !== "true") {
-      await taskListGroup.click();
-    }
-    const twoActive = page
-      .locator('[aria-label="Select story Task App / TaskList / Two Active"]')
-      .first();
-    await expect(twoActive).toBeVisible({ timeout: 10_000 });
-    await twoActive.click();
-
-    const freyaChip = page.locator('[data-preview-backend="freya"]').first();
-    await expect(freyaChip).toBeVisible({ timeout: 10_000 });
-    await freyaChip.click();
-
-    const rtHost = page.locator('[data-render-tree-host="freya"]').first();
-    await expect(rtHost).toBeVisible({ timeout: 15_000 });
-    await expect.poll(
-      async () =>
-        await page.evaluate(() => {
-          const h = document.querySelector('[data-render-tree-host="freya"]');
-          return h ? h.children.length : 0;
-        }),
-      { timeout: 10_000, message: "Freya render-tree host must have children" },
-    ).toBeGreaterThan(0);
-
-    const fontFamily = await page.evaluate(() => {
-      const h = document.querySelector(
-        '[data-render-tree-host="freya"]',
-      ) as HTMLElement | null;
-      if (!h) return "";
-      return getComputedStyle(h).fontFamily;
-    });
-    expect(fontFamily).toMatch(/Roboto|Helvetica Neue|Arial|system-ui/);
-
-    const mirroredId = await page.evaluate(() => {
-      return (window as unknown as Record<string, unknown>)
-        .__isonimRenderTreeRendererId as string | undefined;
-    });
-    expect(mirroredId).toBe("freya");
   });
 });

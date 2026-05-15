@@ -180,29 +180,6 @@ build-backends-dev-pixel-tui:
         -o:build/backends/isonim-examples-tui \
         editor/backends/tui.nim 2>&1 | tee -a test-logs/build-backends.log
 
-# RS-M13b: build the deprecated pixel-raster GPUI / Freya launchers.
-# The default `build-backends` recipe now produces render-tree launchers
-# that emit a `render-tree` M sub-kind instead of pixel F packets; these
-# legacy targets keep the older pixel-raster surface producible for one
-# release cycle so any consumer pinned to F-stream pixels has a window
-# to migrate. The pixel-adapter source files carry `{.deprecated.}`
-# pragmas — `nim c` warns on every build.
-build-backends-dev-pixel-gpui:
-    @mkdir -p build/backends
-    @echo "[build-backends-dev-pixel-gpui] isonim-examples-gpui-pixel (deprecated)"
-    nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
-        -d:isonimDevPixelLauncher \
-        -o:build/backends/isonim-examples-gpui-pixel \
-        editor/backends/gpui.nim 2>&1 | tee -a test-logs/build-backends.log
-
-build-backends-dev-pixel-freya:
-    @mkdir -p build/backends
-    @echo "[build-backends-dev-pixel-freya] isonim-examples-freya-pixel (deprecated)"
-    nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
-        -d:isonimDevPixelLauncher \
-        -o:build/backends/isonim-examples-freya-pixel \
-        editor/backends/freya.nim 2>&1 | tee -a test-logs/build-backends.log
-
 # Build the macOS-only Cocoa launcher (EX-M19). The launcher
 # `editor/backends/cocoa.nim` is gated `when defined(macosx)`: on
 # Linux it compiles as an empty shell (no `runDemoBridge` symbol)
@@ -247,7 +224,7 @@ build-backends-android:
 # of-truth + SHA pin lives in
 # ../isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt.
 editor-build:
-    @mkdir -p build/editor build/editor/vendor/xterm build/editor/render_styles
+    @mkdir -p build/editor build/editor/vendor/xterm
     nim js --path:. --path:../isonim/src --path:../nim-everywhere/src \
         -o:build/editor/editor.js editor/main.nim
     cp editor/index.html build/editor/index.html
@@ -257,10 +234,6 @@ editor-build:
         build/editor/vendor/xterm/xterm.css
     cp ../isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt \
         build/editor/vendor/xterm/MANIFEST.txt
-    cp ../isonim/src/isonim/editor/render_styles/gpui.css \
-        build/editor/render_styles/gpui.css
-    cp ../isonim/src/isonim/editor/render_styles/freya.css \
-        build/editor/render_styles/freya.css
     @echo "Built: build/editor/ - open build/editor/index.html"
 
 # Serve the editor at http://localhost:8091, proxying /bridge/<backend>

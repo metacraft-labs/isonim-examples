@@ -16,7 +16,7 @@ import isonim_freya/bindings as freya_bindings
 import isonim/core/owner
 
 import isonim_render_serve
-import isonim_render_serve/adapters/freya_tree_adapter
+import isonim_render_serve/adapters/freya_adapter
 
 import task_app/core/vm as task_vm
 import task_app/main_freya as task_freya
@@ -54,34 +54,28 @@ proc runFreyaDemo(cfg: LauncherConfig) =
       seedTaskInboxDefaults(taskAppVm)
       root = task_freya.buildTaskApp(r, taskAppVm)
 
-    discard r
+    var dynamicW = w
+    var dynamicH = h
+
+    let src = newFreyaFrameSource(r, root, dynamicW, dynamicH)
     let capturedRoot = root
-    let providerState = FreyaRenderTreeProviderState(
-      root: capturedRoot, width: w, height: h, frameSeq: 0)
 
-    # RS-M13b: render-tree launchers ship a no-op frame source; the
-    # bridge announces `rendererSurface = "tree"` and skips F packets.
-    let src = newNoopFrameSource(w, h)
-
-    let elementTreeProvider = ElementTreeProvider(
+    let provider = ElementTreeProvider(
       buildImpl: proc(): ElementTreeManifest {.gcsafe.} =
         {.cast(gcsafe).}:
           buildFreyaElementTreeManifest(capturedRoot,
-            providerState.width, providerState.height))
-
-    let renderTreeProvider = newFreyaRenderTreeProvider(providerState)
+            dynamicW, dynamicH))
 
     let resizingSink = newAnyInputSink(
       proc(event: InputEvent) {.gcsafe.} =
         if event.kind != iekResize: return
         if event.width <= 0 or event.height <= 0: return
-        if event.width == providerState.width and
-           event.height == providerState.height: return
+        if event.width == dynamicW and event.height == dynamicH: return
         {.cast(gcsafe).}:
-          providerState.width = event.width
-          providerState.height = event.height
-          src.width = event.width
-          src.height = event.height)
+          dynamicW = event.width
+          dynamicH = event.height
+          src.width = dynamicW
+          src.height = dynamicH)
 
     let captTaskVm = taskAppVm
     let captSettingsVm = settingsAppVm
@@ -102,10 +96,7 @@ proc runFreyaDemo(cfg: LauncherConfig) =
           applyTaskMutation(captTaskVm, target, key, value, scope)
     let storySink = newStoryDispatchSink(mountFn, applyFn,
                                          inner = resizingSink)
-    runDemoBridgeWith(cfg, src, elementTreeProvider,
-                      storySink.toAnyInputSink(),
-                      renderTree = renderTreeProvider,
-                      rendererSurface = "tree")
+    runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink())
     dispose()
 
 proc runDemoBridge*(backend: string) =
