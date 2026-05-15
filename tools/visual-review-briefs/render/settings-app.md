@@ -3,20 +3,81 @@
 ## What You're Reviewing
 
 The **Settings App** demo is one of two showcase apps in IsoNim's
-editor. You are reviewing the live-rendered preview of this demo
-across every backend the editor supports. The screenshot bundle for
-this review contains one PNG per backend, all rendered from the same
-`SettingsVM` + `buildDemoSettingsCatalog()` state — same data, same
-demo, different renderers.
+editor. You are reviewing **full-editor screenshots** of the IsoNim
+Examples editor with the Settings App demo selected — one PNG per
+backend, with the same `SettingsVM` + `buildDemoSettingsCatalog()`
+state rendered through each renderer in the editor's preview pane.
+
+Each PNG is the full 1920×1080 editor viewport: left sidebar with the
+story tree, top chrome bar (backend / viewport / mode chips), the
+preview pane (showing the demo rendered through that backend), and
+the right-side inspector panel.
 
 The bundle filenames are
 `screenshots/render/settings-app-<backend>.png` where `<backend>` is
 one of: `web`, `tui`, `gpui`, `freya`, `cocoa`, `android`, `ios`.
 
-## Required Content (Information Equivalence)
+**Two design surfaces are being reviewed in the same images**:
 
-The catalog has three groups: **Appearance**, **Editor**,
-**Notifications**. Each group has three items totalling **nine
+1. **The IsoNim editor's chrome itself** (sidebar / chrome bar /
+   inspector) — this is constant across the 7 cells of this brief but
+   you should still critique it. Both the editor design and the app
+   inside it can be improved by fix agents.
+2. **The Settings App demo as rendered through each backend** in the
+   preview pane — this is what varies between the 7 cells.
+
+Score and report on both dimensions independently. A weak editor
+chrome should not pull down a strong app score and vice versa.
+
+## Editor Chrome Design (Constant Across All Cells)
+
+The editor chrome should look like a professional design-system /
+storybook tool — comparable to VS Code, Figma, Storybook dark mode,
+Linear, or the Material 3 docs site.
+
+- **Dark theme**, deep dark gray canvas (`#0f0f14` … `#1a1a2e`), one
+  step lighter panel surfaces (`#1d1d28` … `#22232e`).
+- **Three-panel layout**, edge-to-edge (NO global top bar above the
+  panels):
+  - **Left sidebar** — story browser. A search input at top, then a
+    quick-nav strip of icons (Foundations / Components / Pages /
+    User Journeys / Guidelines), then five collapsible sections
+    holding the seed workspace's stories. **The Settings App story
+    must be visible and highlighted** with the accent color in
+    every cell of this brief (since the brief covers the Settings
+    App component); the other stories should be reachable but de-
+    emphasised.
+  - **Centre preview pane** — a single top toolbar
+    `[data-preview-chrome-bar]` with three chip clusters in this
+    order:
+    1. **Backend chips**: Web / TUI / GPUI / Freya / Cocoa /
+       Android / iOS — seven chips. The chip matching this cell's
+       backend must be **visibly active** (accent background or
+       border). Unavailable backends (e.g. Cocoa / iOS / Android
+       on Linux) are greyed.
+    2. **Viewport chips**: Desktop / Laptop / Tablet / Phone (or
+       TUI cell viewports when TUI is selected).
+    3. **Mode chips**: exactly three — View / Comment / Edit.
+    Below the toolbar: the preview canvas, containing the live
+    demo render.
+  - **Right inspector** — properties / styles / AI-chat tabs. May
+    start collapsed; should not visually dominate.
+- **Subtle 1 px hairline borders** between panels (mid-gray, not
+  heavy lines). 4 px / 8 px spacing rhythm.
+- **Typography hierarchy** — page title > section heading > story
+  label > body > metadata. Single sans-serif family (system stack
+  or Inter-like).
+- **Single accent color** (`#7c7aed` indigo) used sparingly: active
+  backend chip, selected story, focused inputs, primary CTAs. Never
+  overused.
+- **The preview pane is the focal point** — nothing else should
+  visually dominate. Sidebar and inspector frame it without
+  competing.
+
+## Preview-Pane Content (Varies Per Backend) — Information Equivalence
+
+Inside the editor's preview pane, the catalog has three groups:
+**Appearance**, **Editor**, **Notifications**. Each group has three items totalling **nine
 controls of three kinds** (toggle, choice, number). Different backends
 display the catalog differently (accordion / sidebar / two-column /
 card stack) — the per-backend section below documents what is
@@ -115,38 +176,67 @@ the brief *as expressed through the backend's native conventions*.
   toggle, selected group, focused control should all use the
   IsoNim indigo or its closest native-palette analog.
 
-## Scoring Rubric (Absolute 1-10)
+## Scoring Rubric (Absolute 1-10, two scores per cell)
 
-Score each backend's cell INDEPENDENTLY against this rubric. The target
-is **10/10 on every cell**.
+Score each backend's cell against TWO independent dimensions. The
+target is **10/10 on both** across every cell.
+
+### Editor Chrome score
+
+How the editor itself looks in this screenshot (sidebar, chrome bar,
+inspector, story highlight, backend-chip active state, accent usage).
+Since the chrome is constant across the 7 cells of this brief, your
+chrome score may be similar across cells; differences are only:
+which backend chip is highlighted, and whether the preview pane is
+sized appropriately for that backend's content.
+
+### App Rendering score
+
+How the Settings App demo looks rendered through this specific
+backend inside the preview pane.
+
+Both scores use the same scale:
 
 - **10** — Production-ready showcase settings page. All required
-  items, perfect composition, native-idiomatic widgets, accent
-  usage spot-on, hierarchical typography crisp, three-group
+  items present, perfect composition, native-idiomatic widgets,
+  accent usage spot-on, hierarchical typography crisp, three-group
   navigation immediately obvious. Could ship as a Polaris /
   Material 3 / iOS Settings reference.
 - **9** — Excellent. One minor polish miss (a slightly tight gap,
-  a description not styled distinctly enough). Information perfect.
+  a description not styled distinctly enough). Content perfect.
 - **7-8** — Solid. All items present and aesthetically pleasant
   but missing polish: descriptions blend into labels, accent
   missing, controls look default-styled.
-- **5-6** — Functional but rough. Information present but visually
+- **5-6** — Functional but rough. Content present but visually
   flat. Spacing inconsistencies, no accent, generic widgets.
 - **4 or below** — Missing items, unreadable controls, or
   unnavigable groups. Triggers an immediate fix before re-scoring.
 
 ## How to Report
 
-Reply with one section per backend, in this order: web, tui, gpui,
-freya, cocoa, android, ios. Each section must include:
+Begin with an **Editor Chrome** section that applies to all 7 cells
+of this brief (since the chrome is constant):
 
-- **Score** (1-10).
+- **Editor Chrome score** (1-10).
+- **Findings on the editor itself** — bulleted list of concrete issues
+  visible in the chrome (sidebar, chrome bar, inspector, story-
+  highlight, backend-chip cluster). Mention any backend chip that
+  doesn't show its active state correctly in its cell.
+- **Quickest path to chrome 10/10** — one or two targeted edits a
+  fix agent should make (paths in `~/metacraft/isonim/src/isonim/
+  editor/` if you can guess them; otherwise component name).
+
+Then one section per backend, in this order: web, tui, gpui, freya,
+cocoa, android, ios. Each section must include:
+
+- **App Rendering score** (1-10).
 - **Required-content check** — ✓ / ✗ for each of the 4 items in the
-  checklist, plus a note on how the other (non-active) groups are
-  reachable.
-- **Findings** — bulleted list of concrete issues with location
-  hints. Concrete: "the Font size number widget has no visible
-  spinner buttons; users can't tell it's editable".
-- **Quickest path to 10** — one or two targeted edits the fix
-  agent should make (file:line if you can guess it, otherwise
-  component name).
+  *Preview-Pane Content* checklist, plus a note on how the other
+  (non-active) groups are reachable.
+- **Findings on the app rendering** — bulleted list of concrete
+  issues in the preview pane. Concrete: "the Font size number
+  widget has no visible spinner buttons; users can't tell it's
+  editable".
+- **Quickest path to app 10/10** — one or two targeted edits
+  (paths in `~/metacraft/isonim-examples/settings_app/<backend>/
+  leaves.nim` if you can guess them; otherwise component name).
