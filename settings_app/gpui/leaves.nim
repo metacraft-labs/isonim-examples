@@ -27,18 +27,33 @@ proc itemContainerLeaf*(r: GpuiRenderer): GpuiElement =
   # cross-renderer ``componentPath`` set identical.
   r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
   r.setAttribute(node, ElementKindAttr, "row")
+  # RS-M14 Phase 2 styling: the real headless renderer captures only
+  # what the leaves explicitly request. See the matching note in
+  # ``task_app/gpui/leaves.nim``. The shim's renderer maps CSS-like
+  # names through ``apply_styles_to_div``; ``border`` / ``font-size`` /
+  # ``font-weight`` are accepted but ignored by the renderer (no
+  # corresponding GPUI method). Padding takes a single scalar.
+  r.setStyle(node, "background", "#1d1d28")
+  r.setStyle(node, "padding", "10")
+  r.setStyle(node, "gap", "8")
+  r.setStyle(node, "flex-direction", "row")
+  r.setStyle(node, "align-items", "center")
+  r.setStyle(node, "border-radius", "6")
   node
 
 proc labelLeaf*(r: GpuiRenderer; text: string): GpuiElement =
   let node = r.createElement("label")
   r.setAttribute(node, "class", "settings-label")
   r.setTextContent(node, text)
+  r.setStyle(node, "color", "#e8e9f0")
+  r.setStyle(node, "padding", "2")
   node
 
 proc descriptionLeaf*(r: GpuiRenderer; text: string): GpuiElement =
   let node = r.createElement("span")
   r.setAttribute(node, "class", "settings-description")
   r.setTextContent(node, text)
+  r.setStyle(node, "color", "#a0a2b0")
   node
 
 # ----------------------------------------------------------------------------
@@ -49,6 +64,9 @@ proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
                  itemId: string): GpuiElement =
   let node = r.createElement("input")
   r.setAttribute(node, "type", "checkbox")
+  r.setStyle(node, "padding", "6")
+  r.setStyle(node, "border-radius", "4")
+  r.setStyle(node, "cursor", "pointer")
   let captured = vmRef
   let id = itemId
   createRenderEffect proc() =
@@ -56,8 +74,13 @@ proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
     r.setAttribute(node, "data-value", (if value: "true" else: "false"))
     if value:
       r.setAttribute(node, "checked", "checked")
+      # Active accent fill mirrors the editor's accent token.
+      r.setStyle(node, "background", "#7c7aed")
+      r.setStyle(node, "color", "#ffffff")
     else:
       r.removeAttribute(node, "checked")
+      r.setStyle(node, "background", "#22232e")
+      r.setStyle(node, "color", "#a0a2b0")
   r.addEventListener(node, "click", proc() =
     let current = getAttribute(node, "data-value") == "true"
     discard captured.setToggle(id, not current))
@@ -88,12 +111,19 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
   r.setAttribute(host, "data-step", $stepValue)
   if suffix.len > 0:
     r.setAttribute(host, "data-suffix", suffix)
+  r.setStyle(host, "flex-direction", "row")
+  r.setStyle(host, "align-items", "center")
+  r.setStyle(host, "gap", "6")
 
   let inputNode = r.createElement("input")
   r.setAttribute(inputNode, "type", "number")
   r.setAttribute(inputNode, "data-min", $minValue)
   r.setAttribute(inputNode, "data-max", $maxValue)
   r.setAttribute(inputNode, "data-step", $stepValue)
+  r.setStyle(inputNode, "background", "#22232e")
+  r.setStyle(inputNode, "color", "#e8e9f0")
+  r.setStyle(inputNode, "padding", "6")
+  r.setStyle(inputNode, "border-radius", "4")
 
   let captured = vmRef
   let id = itemId
@@ -123,6 +153,7 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
     let suffixNode = r.createElement("span")
     r.setAttribute(suffixNode, "class", "settings-number-suffix")
     r.setTextContent(suffixNode, suffix)
+    r.setStyle(suffixNode, "color", "#a0a2b0")
     r.appendChild(host, suffixNode)
 
   host
@@ -136,8 +167,16 @@ proc choiceLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
   let host = r.createElement("div")
   r.setAttribute(host, "class", "settings-choice")
   r.setAttribute(host, "data-options", options.join("|"))
+  r.setStyle(host, "flex-direction", "row")
+  r.setStyle(host, "align-items", "center")
+  r.setStyle(host, "gap", "6")
 
   let selectNode = r.createElement("select")
+  r.setStyle(selectNode, "background", "#22232e")
+  r.setStyle(selectNode, "color", "#e8e9f0")
+  r.setStyle(selectNode, "padding", "6")
+  r.setStyle(selectNode, "border-radius", "4")
+  r.setStyle(selectNode, "cursor", "pointer")
   let captured = vmRef
   let id = itemId
   let capturedOptions = options
@@ -146,6 +185,7 @@ proc choiceLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
     let optionNode = r.createElement("option")
     r.setAttribute(optionNode, "data-value", opt)
     r.setTextContent(optionNode, opt)
+    r.setStyle(optionNode, "color", "#e8e9f0")
     r.appendChild(selectNode, optionNode)
 
   createRenderEffect proc() =
@@ -181,6 +221,12 @@ proc groupContainerLeaf*(r: GpuiRenderer): GpuiElement =
   r.setAttribute(node, "class", "settings-group")
   r.setAttribute(node, ComponentPathAttr, SettingsGroupPath)
   r.setAttribute(node, ElementKindAttr, "group")
+  # Pane card containing one group's header + items.
+  r.setStyle(node, "background", "#15151c")
+  r.setStyle(node, "padding", "12")
+  r.setStyle(node, "gap", "8")
+  r.setStyle(node, "flex-direction", "column")
+  r.setStyle(node, "border-radius", "8")
   node
 
 proc groupHeaderLeaf*(r: GpuiRenderer; label, description: string):
@@ -192,16 +238,21 @@ proc groupHeaderLeaf*(r: GpuiRenderer; label, description: string):
   r.setAttribute(host, ElementKindAttr, "group-header")
   if description.len > 0:
     r.setAttribute(host, "data-description", description)
+  r.setStyle(host, "padding", "8")
+  r.setStyle(host, "gap", "4")
+  r.setStyle(host, "flex-direction", "column")
 
   let h2 = r.createElement("h2")
   r.setAttribute(h2, "class", "settings-group-header-label")
   r.setTextContent(h2, label)
+  r.setStyle(h2, "color", "#e8e9f0")
   r.appendChild(host, h2)
 
   if description.len > 0:
     let p = r.createElement("p")
     r.setAttribute(p, "class", "settings-group-header-description")
     r.setTextContent(p, description)
+    r.setStyle(p, "color", "#a0a2b0")
     r.appendChild(host, p)
 
   host

@@ -84,6 +84,22 @@ proc appShell*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   # leaves the F-packet stream byte-identical.
   r.setAttribute(app, ComponentPathAttr, TaskAppPath)
   r.setAttribute(app, ElementKindAttr, "app-shell")
+  # RS-M14 Phase 2 styling: real headless renderer captures only what
+  # the leaves explicitly request. Apply a baseline dark canvas so the
+  # F-packet stream is visibly non-black. Caveats (per
+  # ``isonim-gpui/rust/.../gpui_app.rs:apply_styles_to_div``):
+  # only ``bg``/``text_color``/``p``/``m``/``gap``/``rounded`` plus
+  # flex/items/justify map to GPUI methods; ``border``, ``font-size``,
+  # ``font-weight`` are accepted by the shim but silently dropped by
+  # the renderer. Colors must be ``#RRGGBB`` (no alpha). Padding is a
+  # single scalar (no ``8px 12px`` shorthand).
+  r.setStyle(app, "background", "#0f0f14")
+  r.setStyle(app, "color", "#e8e9f0")
+  r.setStyle(app, "padding", "16")
+  r.setStyle(app, "flex-direction", "column")
+  r.setStyle(app, "gap", "12")
+  r.setStyle(app, "width", "100%")
+  r.setStyle(app, "height", "100%")
   app
 
 proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
@@ -96,10 +112,20 @@ proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(wrapper, "class", "task-input")
   r.setAttribute(wrapper, ComponentPathAttr, TaskInputPath)
   r.setAttribute(wrapper, ElementKindAttr, "input")
+  # Card-style row: input + submit button laid out horizontally.
+  r.setStyle(wrapper, "background", "#1d1d28")
+  r.setStyle(wrapper, "padding", "10")
+  r.setStyle(wrapper, "gap", "8")
+  r.setStyle(wrapper, "flex-direction", "row")
+  r.setStyle(wrapper, "border-radius", "8")
 
   let inp = r.createElement("input")
   r.setAttribute(inp, "type", "text")
   r.setAttribute(inp, "placeholder", "New task...")
+  r.setStyle(inp, "background", "#22232e")
+  r.setStyle(inp, "color", "#e8e9f0")
+  r.setStyle(inp, "padding", "8")
+  r.setStyle(inp, "border-radius", "4")
   s.inputNode = inp
   r.appendChild(wrapper, inp)
 
@@ -110,6 +136,11 @@ proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   let addBtn = r.createElement("button")
   r.setAttribute(addBtn, "type", "submit")
   r.setTextContent(addBtn, "Add Task")
+  r.setStyle(addBtn, "background", "#7c7aed")
+  r.setStyle(addBtn, "color", "#ffffff")
+  r.setStyle(addBtn, "padding", "8")
+  r.setStyle(addBtn, "border-radius", "4")
+  r.setStyle(addBtn, "cursor", "pointer")
   r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
   s.addBtn = addBtn
   r.appendChild(wrapper, addBtn)
@@ -124,9 +155,13 @@ proc makeFilterSelectionEffect(r: GpuiRenderer; vm: TaskAppVM;
     if vm.filter.val == fm:
       r.setAttribute(btn, "class", "selected")
       r.setAttribute(btn, "aria-pressed", "true")
+      r.setStyle(btn, "background", "#7c7aed")
+      r.setStyle(btn, "color", "#ffffff")
     else:
       r.setAttribute(btn, "class", "")
       r.removeAttribute(btn, "aria-pressed")
+      r.setStyle(btn, "background", "#22232e")
+      r.setStyle(btn, "color", "#a0a2b0")
 
 proc filterBar*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   ## Three-button filter selector (All / Active / Completed). Each
@@ -138,11 +173,20 @@ proc filterBar*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(wrapper, "class", "filter-bar")
   r.setAttribute(wrapper, ComponentPathAttr, FilterBarPath)
   r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
+  r.setStyle(wrapper, "flex-direction", "row")
+  r.setStyle(wrapper, "gap", "6")
+  r.setStyle(wrapper, "padding", "6")
 
   for fm in [fmAll, fmActive, fmCompleted]:
     let btn = r.createElement("button")
     r.setTextContent(btn, $fm)
     r.setAttribute(btn, "data-filter", $fm)
+    # Baseline style; the selection effect overrides bg/color when active.
+    r.setStyle(btn, "background", "#22232e")
+    r.setStyle(btn, "color", "#a0a2b0")
+    r.setStyle(btn, "padding", "6")
+    r.setStyle(btn, "border-radius", "4")
+    r.setStyle(btn, "cursor", "pointer")
     r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
     makeFilterSelectionEffect(r, vm, btn, fm)
     r.appendChild(wrapper, btn)
@@ -157,10 +201,26 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   r.setAttribute(row, ElementKindAttr, "row")
   if t.completed:
     r.setAttribute(row, "class", "completed")
+  # Card-style row separation.
+  r.setStyle(row, "background", "#1d1d28")
+  r.setStyle(row, "padding", "10")
+  r.setStyle(row, "gap", "8")
+  r.setStyle(row, "flex-direction", "row")
+  r.setStyle(row, "align-items", "center")
+  r.setStyle(row, "border-radius", "6")
+  if t.completed:
+    r.setStyle(row, "color", "#6e7080")
+  else:
+    r.setStyle(row, "color", "#e8e9f0")
 
   let toggleBtn = r.createElement("button")
   let marker = if t.completed: "[x]" else: "[ ]"
   r.setTextContent(toggleBtn, marker)
+  r.setStyle(toggleBtn, "background", "#22232e")
+  r.setStyle(toggleBtn, "color", (if t.completed: "#7c7aed" else: "#a0a2b0"))
+  r.setStyle(toggleBtn, "padding", "6")
+  r.setStyle(toggleBtn, "border-radius", "4")
+  r.setStyle(toggleBtn, "cursor", "pointer")
   r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
   r.appendChild(row, toggleBtn)
 
@@ -168,11 +228,17 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   let display =
     if t.completed: t.name & " (done)" else: t.name
   r.setTextContent(label, display)
+  r.setStyle(label, "color", (if t.completed: "#6e7080" else: "#e8e9f0"))
   r.appendChild(row, label)
 
   let removeBtn = r.createElement("button")
   r.setAttribute(removeBtn, "class", "remove")
   r.setTextContent(removeBtn, "x")
+  r.setStyle(removeBtn, "background", "#34353f")
+  r.setStyle(removeBtn, "color", "#e08080")
+  r.setStyle(removeBtn, "padding", "6")
+  r.setStyle(removeBtn, "border-radius", "4")
+  r.setStyle(removeBtn, "cursor", "pointer")
   r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
   r.appendChild(row, removeBtn)
 
@@ -181,6 +247,8 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
 proc placeholderRow(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   result = r.createElement("p")
   r.setAttribute(result, "class", "empty")
+  r.setStyle(result, "color", "#6e7080")
+  r.setStyle(result, "padding", "12")
   let placeholderNode = result
   createRenderEffect proc() =
     let placeholder =
@@ -199,6 +267,9 @@ proc taskList*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(listNode, "class", "task-list")
   r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
   r.setAttribute(listNode, ElementKindAttr, "list")
+  r.setStyle(listNode, "flex-direction", "column")
+  r.setStyle(listNode, "gap", "6")
+  r.setStyle(listNode, "padding", "4")
   s.listNode = listNode
 
   var placeholder: GpuiElement = nil
@@ -225,8 +296,15 @@ proc summaryBar*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(summaryNode, "class", "task-summary")
   r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
   r.setAttribute(summaryNode, ElementKindAttr, "summary")
+  r.setStyle(summaryNode, "background", "#1d1d28")
+  r.setStyle(summaryNode, "color", "#a0a2b0")
+  r.setStyle(summaryNode, "padding", "10")
+  r.setStyle(summaryNode, "gap", "8")
+  r.setStyle(summaryNode, "flex-direction", "row")
+  r.setStyle(summaryNode, "border-radius", "6")
   s.summaryNode = summaryNode
   let row = r.createElement("span")
+  r.setStyle(row, "color", "#a0a2b0")
   r.appendChild(summaryNode, row)
   createRenderEffect proc() =
     let active = vm.activeCount
@@ -241,6 +319,7 @@ proc summaryBar*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
   r.setAttribute(icon, ElementKindAttr, "vector-symbol")
   r.setTextContent(icon, "v")
+  r.setStyle(icon, "color", "#7c7aed")
   r.appendChild(summaryNode, icon)
 
   summaryNode
