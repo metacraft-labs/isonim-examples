@@ -161,27 +161,25 @@ build-backends:
     nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
         -o:build/backends/isonim-examples-tui-term \
         editor/backends/tui_term.nim 2>&1 | tee -a test-logs/build-backends.log
-    @# RS-M14 Phase 2: the GPUI launcher can be built with
-    @# `-d:useGpuiHeadless` to route through Zed's `HeadlessAppContext`
-    @# + `Window::render_to_image` for real GPUI pixels. The flag is
-    @# OFF by default in this recipe because the task_app GPUI leaves
-    @# do not yet set explicit background / text colours, so the
-    @# headless capture currently emits all-black (transparent divs
-    @# against a default-black backbuffer). The Playwright suite's
-    @# fit-to-pane probes wait for the first non-black pixel; with
-    @# synthetic stripes those tests pass, with the unstyled headless
-    @# capture they time out. Opt in by setting
-    @# `ISONIM_ENABLE_GPUI_HEADLESS=1` once the leaves grow real
-    @# styles. Linux leaves the flag off either way because the
-    @# pinned Zed revision's `current_headless_renderer()` returns
-    @# `None` on non-macOS (RS-M14b owns the Linux real-pixel story).
+    @# RS-M14 Phase 2: the GPUI launcher routes through Zed's
+    @# `HeadlessAppContext` + `Window::render_to_image` for real GPUI
+    @# pixels whenever the build host is Darwin (the pinned Zed
+    @# revision's `current_headless_renderer()` returns `None` on
+    @# non-macOS, so Linux still falls through to the synthetic
+    @# vertical-stripe stub at runtime; RS-M14b owns the Linux real-
+    @# pixel story). The earlier `ISONIM_ENABLE_GPUI_HEADLESS=1`
+    @# opt-in gate was a Phase-2 safety net while the task_app GPUI
+    @# leaves had no explicit styles; with the leaves now setting
+    @# real background / text colours (live: ~436 unique RGB on
+    @# --demo=tasks, ~689 on --demo=settings), the headless path is
+    @# always-on for Darwin builds.
     @for renderer in web gpui freya; do \
       echo "[build-backends] isonim-examples-$renderer"; \
       extra_flags=""; \
       if [ "$renderer" = "freya" ]; then \
         extra_flags="-d:useFreyaHeadless"; \
       fi; \
-      if [ "$renderer" = "gpui" ] && [ "$(uname -s)" = "Darwin" ] && [ "${ISONIM_ENABLE_GPUI_HEADLESS:-}" = "1" ]; then \
+      if [ "$renderer" = "gpui" ] && [ "$(uname -s)" = "Darwin" ]; then \
         extra_flags="-d:useGpuiHeadless"; \
       fi; \
       nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
