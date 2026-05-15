@@ -558,20 +558,27 @@ body { padding: 32px; overflow-y: auto; }
 }
 .toggle.on { background: #7C7AED; }
 .toggle.on::after { transform: translateX(16px); }
-.choice { display: flex; gap: 6px; }
+.choice {
+  display: inline-flex;
+  gap: 0;
+  background: #1A1B26;
+  border: 1px solid #2A2C3A;
+  border-radius: 8px;
+  padding: 3px;
+}
 .choice-pill {
   font-size: 12px;
-  padding: 4px 12px;
-  border-radius: 999px;
+  padding: 5px 14px;
+  border-radius: 6px;
   background: transparent;
   color: #9CA0B0;
-  border: 1px solid #2A2C3A;
   font-weight: 500;
+  text-align: center;
+  min-width: 72px;
 }
 .choice-pill.active {
   background: #272752;
   color: #ECEDF3;
-  border-color: #7C7AED;
 }
 .number {
   background: #1A1B26;
@@ -583,6 +590,36 @@ body { padding: 32px; overflow-y: auto; }
   width: 80px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+.stepper {
+  display: inline-flex;
+  align-items: stretch;
+  background: #1A1B26;
+  border: 1px solid #2A2C3A;
+  border-radius: 8px;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+.stepper-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  font-size: 14px;
+  color: #ECEDF3;
+  background: #15161F;
+  user-select: none;
+}
+.stepper-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 5px 10px;
+  font-size: 13px;
+  color: #ECEDF3;
+  border-left: 1px solid #2A2C3A;
+  border-right: 1px solid #2A2C3A;
 }
 .group-title {
   font-size: 11px;
@@ -602,7 +639,15 @@ body { padding: 32px; overflow-y: auto; }
   padding: 12px 16px;
 }
 .task-input-glyph { font-size: 14px; color: #6B6F80; }
-.task-input-text { color: #6B6F80; font-size: 13px; }
+.task-input-text { color: #6B6F80; font-size: 13px; flex: 1; }
+.task-input-cta {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ECEDF3;
+  background: #7C7AED;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
 .task-list { display: flex; flex-direction: column; gap: 2px; }
 .task {
   display: flex;
@@ -642,6 +687,13 @@ body { padding: 32px; overflow-y: auto; }
   border: 1px solid #2A2C3A;
   padding: 2px 7px;
   border-radius: 999px;
+}
+.task .remove {
+  font-size: 16px;
+  line-height: 1;
+  color: #6B6F80;
+  padding: 0 6px;
+  user-select: none;
 }
 .filter-bar {
   display: flex;
@@ -713,6 +765,10 @@ body { padding: 32px; overflow-y: auto; }
 """
 
 func renderSettingsAppearanceHtml(): string =
+  ## Catalog parity: the three pills below match
+  ## `buildDemoSettingsCatalog()` byte-for-byte
+  ## (`Default / Solarized / Dracula`) so the Web cell is in lock-step
+  ## with the TUI / GPUI / Freya rendering of the same `SettingsVM`.
   """
 <section class="card">
   <div class="group-title">Appearance</div>
@@ -731,8 +787,7 @@ func renderSettingsAppearanceHtml(): string =
     <div class="choice">
       <span class="choice-pill active">Default</span>
       <span class="choice-pill">Solarized</span>
-      <span class="choice-pill">Solar</span>
-      <span class="choice-pill">Mono</span>
+      <span class="choice-pill">Dracula</span>
     </div>
   </div>
   <div class="row">
@@ -740,12 +795,21 @@ func renderSettingsAppearanceHtml(): string =
       <div class="row-title">Font size</div>
       <div class="row-hint">Editor body text, points</div>
     </div>
-    <input class="number" value="14" />
+    <div class="stepper">
+      <span class="stepper-button">&minus;</span>
+      <span class="stepper-value">14 pt</span>
+      <span class="stepper-button">+</span>
+    </div>
   </div>
 </section>
 """
 
 func renderSettingsEditorHtml(): string =
+  ## Catalog parity: `Tab width` default = 4 (`buildDemoSettingsCatalog`
+  ## `editor.tab_width`), rendered through the explicit `[-] N [+]`
+  ## stepper so the readout is unambiguous (the reviewer's pre-fix
+  ## screenshot read `4 4` because the bare `<input class="number">`
+  ## visually echoed the value next to UA spinner stubs).
   """
 <section class="card">
   <div class="group-title">Editor</div>
@@ -761,7 +825,11 @@ func renderSettingsEditorHtml(): string =
       <div class="row-title">Tab width</div>
       <div class="row-hint">Number of spaces per indent level</div>
     </div>
-    <input class="number" value="2" />
+    <div class="stepper">
+      <span class="stepper-button">&minus;</span>
+      <span class="stepper-value">4</span>
+      <span class="stepper-button">+</span>
+    </div>
   </div>
   <div class="row">
     <div class="row-label">
@@ -771,44 +839,61 @@ func renderSettingsEditorHtml(): string =
     <div class="choice">
       <span class="choice-pill active">LF</span>
       <span class="choice-pill">CRLF</span>
+      <span class="choice-pill">CR</span>
     </div>
   </div>
 </section>
 """
 
 func renderSettingsNotificationsHtml(): string =
+  ## Catalog parity: `notifications.poll_interval_ms` default = 5000,
+  ## suffix `ms`. Rendered through the same `[-] N suffix [+]` stepper
+  ## convention used by the Appearance / Editor groups so the readout
+  ## is unambiguous.
   """
 <section class="card">
   <div class="group-title">Notifications</div>
   <div class="row">
     <div class="row-label">
-      <div class="row-title">Email digest</div>
-      <div class="row-hint">Daily roll-up of mentions and assigned issues</div>
-    </div>
-    <div class="toggle"></div>
-  </div>
-  <div class="row">
-    <div class="row-label">
-      <div class="row-title">Desktop alerts</div>
-      <div class="row-hint">Pop a system notification for new mentions</div>
+      <div class="row-title">Play sounds</div>
+      <div class="row-hint">Audio cue on new mentions</div>
     </div>
     <div class="toggle on"></div>
   </div>
   <div class="row">
     <div class="row-label">
-      <div class="row-title">Poll interval</div>
-      <div class="row-hint">Milliseconds between server checks</div>
+      <div class="row-title">Show badges</div>
+      <div class="row-hint">Numeric dot on the sidebar entry</div>
     </div>
-    <input class="number" value="2000" />
+    <div class="toggle"></div>
+  </div>
+  <div class="row">
+    <div class="row-label">
+      <div class="row-title">Poll interval</div>
+      <div class="row-hint">How often to check for new notifications</div>
+    </div>
+    <div class="stepper">
+      <span class="stepper-button">&minus;</span>
+      <span class="stepper-value">5000 ms</span>
+      <span class="stepper-button">+</span>
+    </div>
   </div>
 </section>
 """
 
 func renderTaskInboxHtml(): string =
+  ## The three seeded tasks here are the brief-mandated showcase set —
+  ## "Buy groceries / Walk the dog / Ship EX-M14" — byte-identical with
+  ## the `TaskAppVM` seed used by every other backend launcher (see
+  ## `editor/backends/{cocoa,freya,tui,gpui,web,android}.nim`). The
+  ## Web cell is the only backend whose iframe content originates from
+  ## this static HTML; keeping the seed in lock-step here is what makes
+  ## the cross-backend information-equivalence check pass.
   """
 <div class="task-input">
   <span class="task-input-glyph">+</span>
-  <span class="task-input-text">Add a task and press Enter to save</span>
+  <span class="task-input-text">New task… (press Enter to add)</span>
+  <span class="task-input-cta">Add Task</span>
 </div>
 <div class="filter-bar">
   <span class="pill active">All</span>
@@ -818,22 +903,22 @@ func renderTaskInboxHtml(): string =
 <div class="task-list">
   <div class="task">
     <div class="checkbox"></div>
-    <div class="name">Review the new editor chrome screenshots</div>
-    <span class="badge">today</span>
-  </div>
-  <div class="task done">
-    <div class="checkbox"></div>
-    <div class="name">Wire the M57 backend strip to the absolute left edge</div>
-    <span class="badge">done</span>
+    <div class="name">Buy groceries</div>
+    <span class="remove">×</span>
   </div>
   <div class="task">
     <div class="checkbox"></div>
-    <div class="name">Replace placeholder preview with a real settings card</div>
-    <span class="badge">soon</span>
+    <div class="name">Walk the dog</div>
+    <span class="remove">×</span>
+  </div>
+  <div class="task">
+    <div class="checkbox"></div>
+    <div class="name">Ship EX-M14</div>
+    <span class="remove">×</span>
   </div>
 </div>
 <div class="summary">
-  <span>2 active &middot; 1 completed</span>
+  <span>3 active &middot; 0 completed</span>
   <span class="clear">Clear completed</span>
 </div>
 """

@@ -100,6 +100,7 @@ when defined(android) or defined(mockJni):
       import isonim_android/capture as androidCapture
       import isonim_render_serve/adapters/android_adapter
       import isonim_render_serve/packet as renderPacket
+      import nim_everywhere/async_compat
       type
         JNIEnvPtr = androidCapture.JNIEnvPtr
         JClass = pointer
@@ -143,6 +144,23 @@ when defined(android) or defined(mockJni):
       template cmdLen(): JInt = JInt(cmdbuf.commandBuffer.len)
       template cmd(i: JInt): cmdbuf.UICommand = cmdbuf.commandBuffer[i]
 
+      proc seedAppVmDefaults(vm: TaskAppVM) =
+        ## Plant the three sample tasks the brief mandates so the
+        ## on-device demo opens with a populated inbox instead of the
+        ## "(no tasks yet)" placeholder. Mirrors
+        ## `editor/backends/story_dispatch_demo.seedTaskInboxDefaults`
+        ## but inlined here to avoid pulling the editor-side imports
+        ## (which transitively depend on settings_app) into the
+        ## task_app .so. The FakeDb backing this VM is zero-latency, so
+        ## a single `drainPlatformCallbacks()` per add flushes the
+        ## save → refresh chain.
+        vm.addTask("Buy groceries")
+        for _ in 0 ..< 10: drainPlatformCallbacks()
+        vm.addTask("Walk the dog")
+        for _ in 0 ..< 10: drainPlatformCallbacks()
+        vm.addTask("Ship EX-M14")
+        for _ in 0 ..< 10: drainPlatformCallbacks()
+
       proc buildTaskAppUI(env: JNIEnvPtr; cls: JClass): JInt
           {.exportc: jniPrefix & "buildTaskAppUI", cdecl, dynlib.} =
         cmdbuf.commandBuffer.setLen(0)
@@ -150,6 +168,7 @@ when defined(android) or defined(mockJni):
         resetCallbacks()
         resetAndroidLeaves()
         appVm = newTaskAppVM()
+        seedAppVmDefaults(appVm)
         discard runTaskApp(appVm)
         cmdLen()
 
@@ -167,6 +186,7 @@ when defined(android) or defined(mockJni):
         resetAndroidLeaves()
         if appVm.isNil:
           appVm = newTaskAppVM()
+          seedAppVmDefaults(appVm)
         discard runTaskApp(appVm)
         cmdLen()
 
