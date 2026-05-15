@@ -1501,6 +1501,76 @@ body {
 }
 """
 
+const iosOverlayStyles = """
+/* iOS backend overlay — UIKit on a real device. Marks the chrome with
+   a thin top status-bar-like band so the iOS preview is visually
+   distinct from Cocoa (AppKit vibrancy) and Android (Material 3). */
+body {
+  background: #F2F2F7 !important;
+  color: #1C1C1E !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif !important;
+  font-size: 15px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-top: 24px solid #000000 !important;
+  position: relative;
+}
+body::before {
+  content: "9:41";
+  position: absolute;
+  top: -22px;
+  left: 24px;
+  color: #FFFFFF;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.app {
+  padding: 24px !important;
+}
+.card, .task-input, .task, .filter-bar {
+  background: #FFFFFF !important;
+  border: none !important;
+  border-radius: 14px !important;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04) !important;
+}
+.app-title { color: #000000 !important; font-weight: 700 !important; letter-spacing: -0.02em !important; }
+.app-subtitle { color: rgba(60, 60, 67, 0.6) !important; }
+.row-title { color: #000000 !important; font-weight: 500 !important; }
+.row-hint { color: rgba(60, 60, 67, 0.6) !important; }
+.toggle { background: rgba(120, 120, 128, 0.16) !important; }
+.toggle.on { background: #34C759 !important; }
+.choice-pill {
+  background: rgba(118, 118, 128, 0.12) !important;
+  border-color: transparent !important;
+  color: #007AFF !important;
+  border-radius: 999px !important;
+}
+.choice-pill.active {
+  background: #007AFF !important;
+  border-color: #007AFF !important;
+  color: #FFFFFF !important;
+}
+.filter-bar .pill.active { background: rgba(0,122,255,0.12) !important; color: #007AFF !important; }
+.number {
+  background: rgba(118, 118, 128, 0.12) !important;
+  border-color: transparent !important;
+  color: #000000 !important;
+  border-radius: 8px !important;
+}
+.backend-band {
+  background: #007AFF;
+  color: #FFFFFF;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 4px 14px;
+  display: inline-block;
+  border-radius: 999px;
+}
+"""
+
 func backendOverlayStylesFor(platform: Platform): string =
   ## Per-backend CSS overlay layered on top of the shared base styles.
   ## Each non-Web backend gets a distinct visual signature so clicking a
@@ -1512,6 +1582,7 @@ func backendOverlayStylesFor(platform: Platform): string =
   of pbFreya: freyaOverlayStyles
   of pbCocoa: cocoaOverlayStyles
   of pbAndroid: androidOverlayStyles
+  of pbIos: iosOverlayStyles
 
 func backendBandLabel(platform: Platform): string =
   case platform
@@ -1521,6 +1592,7 @@ func backendBandLabel(platform: Platform): string =
   of pbFreya: "Freya - Material card adapter"
   of pbCocoa: "Cocoa - AppKit vibrancy"
   of pbAndroid: "Android - Material 3 dark"
+  of pbIos: "iOS - UIKit on device"
 
 func previewDocumentHtmlFor(item: StoryItem; title, body: string;
                             platform: Platform): string =

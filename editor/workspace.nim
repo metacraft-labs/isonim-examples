@@ -54,6 +54,14 @@ const
       # Android device via `adb`; both macOS and Linux dev hosts can
       # build + run it. Other hosts (Windows in principle) remain
       # unregistered.
+    pbIos:     (when defined(macosx): "isonim-examples-ios" else: ""),
+      # iOS UIKit-on-device launcher (host-side). macOS-only because
+      # Apple's iOS dev tooling (Bonjour discovery + Wi-Fi pairing) is
+      # Mac-only. Linux iOS-on-network is theoretically possible but
+      # out-of-scope for the prototype; the registry leaves pbIos
+      # unregistered there so the M57 left-edge strip surfaces it as
+      # aria-disabled per the spec's "host can't serve the backend;
+      # surface, don't hide" rule.
   ]
 
   LinuxRegistrableBackends* = [pbWeb, pbTui, pbGpui, pbFreya]
@@ -65,9 +73,12 @@ const
     ## ``BackendBinaryNames[pbCocoa]`` at runtime, which evaluates to
     ## non-empty on macOS hosts.
 
-  MacosRegistrableBackends* = [pbCocoa]
-    ## The Cocoa launcher binary that the macOS-only
-    ## ``just build-backends-macos`` Justfile target produces (EX-M19).
+  MacosRegistrableBackends* = [pbCocoa, pbIos]
+    ## The macOS-only launcher binaries: Cocoa (EX-M19) and iOS (host-
+    ## side launcher that streams UIKit frames from a paired iPhone
+    ## over Wi-Fi). Both are produced by the macOS-only
+    ## ``just build-backends-macos`` + ``just build-backends-ios``
+    ## Justfile targets.
 
   AndroidRegistrableBackends* = [pbAndroid]
     ## The Android launcher binary that the

@@ -189,6 +189,10 @@ suite "EX-M14: newDemoBackendRegistry":
       check reg.binaryFor(pbAndroid).isSome
     else:
       check reg.binaryFor(pbAndroid).isNone
+    when defined(macosx):
+      check reg.binaryFor(pbIos).isSome
+    else:
+      check reg.binaryFor(pbIos).isNone
 
   test "registered paths use the build directory":
     let reg = newDemoBackendRegistry("/tmp/isonim-examples-build")

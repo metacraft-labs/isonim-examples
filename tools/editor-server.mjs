@@ -42,6 +42,7 @@ const BRIDGE_PORTS = {
   freya: 8104,
   cocoa: 8105,
   android: 8106,
+  ios: 8107,
 };
 
 const MIME = {

@@ -236,6 +236,24 @@ build-backends-android:
         -o:build/backends/isonim-examples-android \
         editor/backends/android.nim 2>&1 | tee -a test-logs/build-backends.log
 
+# Build the iOS launcher. The launcher `editor/backends/ios.nim` is a
+# host-side binary that talks to a UIKit app running on a paired
+# iPhone over Wi-Fi: it discovers the device's TCP endpoint via Bonjour
+# (`_isonim-stream._tcp`) — or falls back to the
+# `ISONIM_IOS_DEVICE_ENDPOINT=<host>:<port>` env var — connects, reads
+# raw F packets from the device, and republishes them through the
+# render-serve bridge. Gated `when defined(macosx):` because Apple's
+# iOS dev tooling is Mac-only; on other hosts this recipe still
+# compiles an empty shell so the BackendBinaryRegistry leaves `pbIos`
+# unregistered per the spec's "host can't serve the backend; surface,
+# don't hide" rule.
+build-backends-ios:
+    @mkdir -p build/backends
+    @echo "[build-backends-ios] isonim-examples-ios"
+    nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
+        -o:build/backends/isonim-examples-ios \
+        editor/backends/ios.nim 2>&1 | tee -a test-logs/build-backends.log
+
 # Build the editor (Nim → JS).
 #
 # RS-M13: copies the vendored xterm.js bundle into build/editor/

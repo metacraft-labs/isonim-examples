@@ -24,7 +24,7 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
 
 const desktop = { width: 1440, height: 900 };
 
-// All six PreviewBackend enum values. The `id` is the wire identifier
+// All seven PreviewBackend enum values. The `id` is the wire identifier
 // used by the chip's `data-preview-backend` attribute; the `dataBackend`
 // is the value the demoPreviewHook bakes into `<body data-backend>` via
 // `$platform` (the Nim enum's repr, e.g. `pbWeb`).
@@ -35,6 +35,7 @@ const backends = [
   { id: "freya", dataBackend: "pbFreya" },
   { id: "cocoa", dataBackend: "pbCocoa" },
   { id: "android", dataBackend: "pbAndroid" },
+  { id: "ios", dataBackend: "pbIos" },
 ] as const;
 
 // Story kinds exposed in the isonim-examples demo workspace. The
