@@ -76,9 +76,25 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
 
         let disclosure = renderer.createElement("div")
         renderer.setAttribute(disclosure, "data-disclosure-id", gid)
+        # M-EVP-14 round-3: collapsed groups get a tight fixed height
+        # (just the triangle band + header) so the active group
+        # absorbs the surrounding vertical slack and its items have
+        # room to render meaningfully. Without this, all three groups
+        # equally divide the parent's body height regardless of
+        # expansion state, which leaves the active group's items
+        # squeezed to a few pixels each.
+        if not initiallyActive:
+          renderer.setAttribute(disclosure, "data-fixed-height", "60")
 
         let triangle = renderer.createElement("span")
         renderer.setAttribute(triangle, "class", "settings-disclosure-triangle")
+        # M-EVP-14 round-3: pin the disclosure triangle to a small
+        # fixed band so the rest of the disclosure container's
+        # vertical slice is left for the group section underneath.
+        # Without this, the prior heuristic split the disclosure 50/50
+        # between the triangle marker and the group, halving the
+        # group's available height.
+        renderer.setAttribute(triangle, "data-fixed-height", "20")
         renderer.setTextContent(triangle, (if initiallyActive: "▼" else: "▶"))
         renderer.appendChild(disclosure, triangle)
 
@@ -130,6 +146,12 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
              else: "settings-disclosure"))
           rCaptured.setTextContent(triangleNode,
             (if isActive: "▼" else: "▶"))
+          # Update the fixed-height marker so the layout pass gives
+          # the newly-active group the surrounding vertical slack.
+          if isActive:
+            rCaptured.removeAttribute(disclosureNode, "data-fixed-height")
+          else:
+            rCaptured.setAttribute(disclosureNode, "data-fixed-height", "60")
           if isActive:
             rCaptured.setAttribute(disclosureNode, "aria-expanded", "true")
             # When activated, render the items if they aren't already

@@ -64,8 +64,15 @@ proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
                  itemId: string): GpuiElement =
   let node = r.createElement("input")
   r.setAttribute(node, "type", "checkbox")
-  r.setStyle(node, "padding", "6")
-  r.setStyle(node, "border-radius", "4")
+  # Round-3 review: against the dark card surface (#1d1d28) the toggle
+  # was invisible because it inherited a near-identical background and
+  # the GPUI shim drops borders. Pin pill geometry explicitly (the shim
+  # honours width/height/border-radius) and use an off-state fill that
+  # contrasts against the card so the control is visible even when the
+  # underlying signal is false.
+  r.setStyle(node, "width", "32")
+  r.setStyle(node, "height", "18")
+  r.setStyle(node, "border-radius", "9")
   r.setStyle(node, "cursor", "pointer")
   let captured = vmRef
   let id = itemId
@@ -79,7 +86,9 @@ proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
       r.setStyle(node, "color", "#ffffff")
     else:
       r.removeAttribute(node, "checked")
-      r.setStyle(node, "background", "#22232e")
+      # Off-state pill: lighter than the card so the control reads as a
+      # tangible affordance rather than a hole in the surface.
+      r.setStyle(node, "background", "#3a3a52")
       r.setStyle(node, "color", "#a0a2b0")
   r.addEventListener(node, "click", proc() =
     let current = getAttribute(node, "data-value") == "true"

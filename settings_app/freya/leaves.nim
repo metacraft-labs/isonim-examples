@@ -27,12 +27,13 @@ const
   cTextPrimary = "rgb(232, 233, 240)"
   cTextSecondary = "rgb(160, 162, 176)"
   cAccent = "rgb(124, 122, 237)"
-  cAccentText = "rgb(255, 255, 255)"
   cChipBg = "rgb(34, 35, 46)"
+  cTogglePillOff = "rgb(58, 58, 82)"
+  cToggleKnob = "rgb(232, 233, 240)"
   cCardBg = "rgb(29, 29, 40)"
   cCardBorder = "1 solid rgb(60, 61, 75)"
-  cCardGap = "12"
-  cCardPad = "16"
+  cCardGap = "8"
+  cCardPad = "10"
 
 # ----------------------------------------------------------------------------
 # Layout containers
@@ -44,17 +45,30 @@ proc itemContainerLeaf*(r: FreyaRenderer): FreyaElement =
   # EX-M23b: component-path annotation; identical string to GPUI + TUI.
   r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
   r.setAttribute(node, ElementKindAttr, "row")
+  # Round-4: tighten the per-item gap+padding so all three cards fit
+  # in the default viewport. Column direction stays (label /
+  # description / control stacked) because the shared component
+  # template appends children in that fixed order; switching to row
+  # would force the leaves to wrap label+description into a sub-
+  # column, which the per-platform leaf surface forbids (it would
+  # break the cross-renderer parity probe in
+  # `tests/test_settings_components_compile_cross_renderer.nim`).
   r.setStyle(node, "flex-direction", "column")
-  r.setStyle(node, "gap", "4")
-  r.setStyle(node, "padding", "8")
+  r.setStyle(node, "gap", "2")
+  r.setStyle(node, "padding", "2")
+  r.setStyle(node, "width", "100%")
   node
 
 proc labelLeaf*(r: FreyaRenderer; text: string): FreyaElement =
   let node = r.createElement("label")
   r.setAttribute(node, "class", "settings-label")
   r.setTextContent(node, text)
+  # Round-4: drop label font-size from 14→13 so longer labels (e.g.
+  # "Insert spaces for tabs") fit on one line at the typical card
+  # width. Don't pin height: the label's height should follow its
+  # glyph metrics so wrapped text remains visible.
   r.setStyle(node, "color", cTextPrimary)
-  r.setStyle(node, "font-size", "14")
+  r.setStyle(node, "font-size", "13")
   r.setStyle(node, "font-weight", "bold")
   node
 
@@ -63,7 +77,7 @@ proc descriptionLeaf*(r: FreyaRenderer; text: string): FreyaElement =
   r.setAttribute(node, "class", "settings-description")
   r.setTextContent(node, text)
   r.setStyle(node, "color", cTextSecondary)
-  r.setStyle(node, "font-size", "12")
+  r.setStyle(node, "font-size", "11")
   node
 
 # ----------------------------------------------------------------------------
@@ -72,35 +86,44 @@ proc descriptionLeaf*(r: FreyaRenderer; text: string): FreyaElement =
 
 proc toggleLeaf*(r: FreyaRenderer; vmRef: SettingsVM;
                  itemId: string): FreyaElement =
+  ## Round-4: render as a true pill toggle (~36×20, fully rounded)
+  ## with an inset knob, replacing the round-3 `[ ]`/`[x]` glyph that
+  ## reviewers flagged as "looking unfinished" against the polished
+  ## segmented Theme control. The headless raster does not paint
+  ## borders, so the on/off contrast lives in the fill colours: dark
+  ## neutral when off, indigo accent when on. The knob is a small
+  ## white rect child laid out by `main_align` (start vs end) so it
+  ## visibly slides across the track on toggle.
   let node = r.createElement("input")
   r.setAttribute(node, "type", "checkbox")
-  r.setStyle(node, "background", cChipBg)
-  r.setStyle(node, "padding", "4")
-  r.setStyle(node, "border-radius", "4")
+  r.setStyle(node, "background", cTogglePillOff)
+  r.setStyle(node, "padding", "2")
+  r.setStyle(node, "border-radius", "10")
   r.setStyle(node, "flex-direction", "row")
   r.setStyle(node, "cross_align", "center")
-  # Visible marker as a child span (→ Freya `label`): "[x]" or "[ ]".
-  let marker = r.createElement("span")
-  r.setStyle(marker, "color", cTextPrimary)
-  r.setStyle(marker, "font-size", "13")
-  r.setStyle(marker, "font-weight", "bold")
-  r.appendChild(node, marker)
+  r.setStyle(node, "main_align", "start")
+  r.setStyle(node, "width", "36")
+  r.setStyle(node, "height", "20")
+  let knob = r.createElement("div")
+  r.setStyle(knob, "background", cToggleKnob)
+  r.setStyle(knob, "width", "16")
+  r.setStyle(knob, "height", "16")
+  r.setStyle(knob, "border-radius", "8")
+  r.appendChild(node, knob)
   let captured = vmRef
   let id = itemId
-  let markerRef = marker
+  let nodeRef = node
   createRenderEffect proc() =
     let value = captured.toggleValue(id)
-    r.setAttribute(node, "data-value", (if value: "true" else: "false"))
+    r.setAttribute(nodeRef, "data-value", (if value: "true" else: "false"))
     if value:
-      r.setAttribute(node, "checked", "checked")
-      r.setStyle(node, "background", cAccent)
-      r.setTextContent(markerRef, "[x]")
-      r.setStyle(markerRef, "color", cAccentText)
+      r.setAttribute(nodeRef, "checked", "checked")
+      r.setStyle(nodeRef, "background", cAccent)
+      r.setStyle(nodeRef, "main_align", "end")
     else:
-      r.removeAttribute(node, "checked")
-      r.setStyle(node, "background", cChipBg)
-      r.setTextContent(markerRef, "[ ]")
-      r.setStyle(markerRef, "color", cTextSecondary)
+      r.removeAttribute(nodeRef, "checked")
+      r.setStyle(nodeRef, "background", cTogglePillOff)
+      r.setStyle(nodeRef, "main_align", "start")
   r.addEventListener(node, "click", proc() =
     let current = getAttribute(node, "data-value") == "true"
     discard captured.setToggle(id, not current))
@@ -271,13 +294,18 @@ proc groupContainerLeaf*(r: FreyaRenderer): FreyaElement =
   # Card-style group: dark surface + hairline border + outer gap. The
   # outer gap pushes the group cards apart so they no longer touch
   # their inner padding (M-EVP-14 round-2 settings cell finding).
+  # Round-4: tighten the inner padding + inter-item gap so the third
+  # card (Notifications) clears the default viewport. Pin width to
+  # 100% so the section spans its parent card-wrapper (cross_align
+  # default `start` would otherwise collapse it to content width).
   r.setStyle(node, "background", cCardBg)
   r.setStyle(node, "padding", cCardPad)
-  r.setStyle(node, "margin", "6")
+  r.setStyle(node, "margin", "0")
   r.setStyle(node, "border", cCardBorder)
   r.setStyle(node, "border-radius", "8")
   r.setStyle(node, "flex-direction", "column")
   r.setStyle(node, "gap", cCardGap)
+  r.setStyle(node, "width", "100%")
   node
 
 proc groupHeaderLeaf*(r: FreyaRenderer; label, description: string):
@@ -289,17 +317,20 @@ proc groupHeaderLeaf*(r: FreyaRenderer; label, description: string):
   r.setAttribute(host, ElementKindAttr, "group-header")
   if description.len > 0:
     r.setAttribute(host, "data-description", description)
+  # Round-4: tighten the header's inner gap+padding to claw back
+  # vertical space for the Notifications card.
   r.setStyle(host, "flex-direction", "column")
-  r.setStyle(host, "gap", "4")
-  r.setStyle(host, "padding", "4")
+  r.setStyle(host, "gap", "2")
+  r.setStyle(host, "padding", "2")
 
   let h2 = r.createElement("h2")
   r.setAttribute(h2, "class", "settings-group-header-label")
   r.setTextContent(h2, label)
-  # Visibly heavier + larger than item labels: 18 px / bold against
-  # primary text colour, while items use 14 px bold.
+  # Visibly heavier + larger than item labels: 16 px / bold against
+  # primary text colour, while items use 13 px bold. Round-4 dropped
+  # the header from 18→16 to claw back vertical space.
   r.setStyle(h2, "color", cTextPrimary)
-  r.setStyle(h2, "font-size", "18")
+  r.setStyle(h2, "font-size", "16")
   r.setStyle(h2, "font-weight", "bold")
   r.appendChild(host, h2)
 
@@ -308,7 +339,7 @@ proc groupHeaderLeaf*(r: FreyaRenderer; label, description: string):
     r.setAttribute(p, "class", "settings-group-header-description")
     r.setTextContent(p, description)
     r.setStyle(p, "color", cTextSecondary)
-    r.setStyle(p, "font-size", "12")
+    r.setStyle(p, "font-size", "11")
     r.appendChild(host, p)
 
   host

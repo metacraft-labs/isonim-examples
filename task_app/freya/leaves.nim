@@ -97,16 +97,27 @@ proc makeFilterClickHandler(vm: TaskAppVM; fm: FilterMode): proc() =
   result = proc() = vm.setFilter(fm)
 
 proc makeFilterSelectionEffect(r: FreyaRenderer; vm: TaskAppVM;
-                               btn: FreyaElement; fm: FilterMode) =
+                               btn, labelSpan: FreyaElement;
+                               fm: FilterMode) =
+  ## Round-4: visibly distinguish active vs inactive filter chip. The
+  ## active chip flips to an indigo fill + white text; inactive chips
+  ## drop back to the dark card surface with secondary text colour. We
+  ## also flip the label span's colour explicitly so the chip's text
+  ## reads against either background (Freya's `label` honours its own
+  ## `color` style, not the parent rect's colour).
   createRenderEffect proc() =
     if vm.filter.val == fm:
       r.setAttribute(btn, "class", "selected")
       r.setAttribute(btn, "aria-pressed", "true")
       r.setStyle(btn, "background", "rgb(124, 122, 237)")
+      r.setStyle(labelSpan, "color", "rgb(255, 255, 255)")
+      r.setStyle(labelSpan, "font-weight", "bold")
     else:
       r.setAttribute(btn, "class", "")
       r.removeAttribute(btn, "aria-pressed")
       r.setStyle(btn, "background", "rgb(34, 35, 46)")
+      r.setStyle(labelSpan, "color", "rgb(160, 162, 176)")
+      r.setStyle(labelSpan, "font-weight", "normal")
 
 # ----------------------------------------------------------------------------
 # Layer-1 leaf procs — invoked by views.nim
@@ -127,11 +138,15 @@ proc appShell*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   # M-EVP-14 round-2: paint a dark canvas + add ~16 px outer padding
   # so the first task row's glyphs are not clipped against the top of
   # the surface (the headless Skia raster otherwise hugs y=0).
+  # Round-4: tighter outer gap (8px) so the input row, filter chips,
+  # task list and summary fit comfortably without the auto-grow rect
+  # heuristic stretching each child to ~50px.
   r.setStyle(app, "background", "rgb(15, 15, 20)")
   r.setStyle(app, "color", "rgb(232, 233, 240)")
-  r.setStyle(app, "padding", "16")
+  r.setStyle(app, "padding", "12")
   r.setStyle(app, "flex-direction", "column")
-  r.setStyle(app, "gap", "12")
+  r.setStyle(app, "gap", "8")
+  r.setStyle(app, "cross_align", "start")
   r.setStyle(app, "width", "100%")
   r.setStyle(app, "height", "100%")
   app
@@ -147,31 +162,43 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setAttribute(wrapper, ComponentPathAttr, TaskInputPath)
   r.setAttribute(wrapper, ElementKindAttr, "input")
   # Card-style row: input + submit button laid out horizontally.
+  # Round-4: pin a row height (~52 px) so the wrapper does not auto-
+  # grow into a 50%-of-canvas band when Freya distributes free space
+  # between the four shell children.
   r.setStyle(wrapper, "background", "rgb(29, 29, 40)")
-  r.setStyle(wrapper, "padding", "10")
+  r.setStyle(wrapper, "padding", "8")
   r.setStyle(wrapper, "gap", "8")
   r.setStyle(wrapper, "flex-direction", "row")
   r.setStyle(wrapper, "cross_align", "center")
   r.setStyle(wrapper, "border-radius", "8")
+  r.setStyle(wrapper, "width", "100%")
+  r.setStyle(wrapper, "height", "52")
 
   let inp = r.createElement("input")
   r.setAttribute(inp, "type", "text")
   r.setAttribute(inp, "placeholder", "New task...")
+  # Round-4: pin the input field's height so the placeholder span
+  # does not vertically dominate; let the input flex horizontally.
   r.setStyle(inp, "background", "rgb(34, 35, 46)")
   r.setStyle(inp, "padding", "8")
   r.setStyle(inp, "border-radius", "4")
   r.setStyle(inp, "flex-direction", "row")
   r.setStyle(inp, "cross_align", "center")
+  r.setStyle(inp, "width", "fill")
+  r.setStyle(inp, "height", "36")
   s.inputNode = inp
   r.appendChild(wrapper, inp)
 
   # Placeholder text must live in a child <span> (→ Freya `label`)
   # because the underlying `rect` does not render its own text. The
   # span's text mirrors `vm.inputText.val`; when empty we fall back
-  # to the placeholder copy so the cell stays informative.
+  # to the placeholder copy so the cell stays informative. The
+  # placeholder weight stays light (`normal`) to read as hint text;
+  # entered text flips to primary colour at body weight.
   let placeholderSpan = r.createElement("span")
-  r.setStyle(placeholderSpan, "color", "rgb(160, 162, 176)")
+  r.setStyle(placeholderSpan, "color", "rgb(110, 112, 128)")
   r.setStyle(placeholderSpan, "font-size", "14")
+  r.setStyle(placeholderSpan, "font-weight", "normal")
   r.appendChild(inp, placeholderSpan)
 
   let inpRef = inp
@@ -182,18 +209,26 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
     if v.len == 0:
       r.setTextContent(placeRef, "New task...")
       r.setStyle(placeRef, "color", "rgb(110, 112, 128)")
+      r.setStyle(placeRef, "font-weight", "normal")
     else:
       r.setTextContent(placeRef, v)
       r.setStyle(placeRef, "color", "rgb(232, 233, 240)")
+      r.setStyle(placeRef, "font-weight", "normal")
 
   let addBtn = r.createElement("button")
   r.setAttribute(addBtn, "type", "submit")
   r.setTextContent(addBtn, "Add Task")
+  # Round-4: pin width/height so the CTA reads as a real button (not a
+  # full-width band). 96×36 is roughly content-width for "Add Task" at
+  # 14 px bold + 16 px horizontal padding.
   r.setStyle(addBtn, "background", "rgb(124, 122, 237)")
   r.setStyle(addBtn, "padding", "8")
-  r.setStyle(addBtn, "border-radius", "4")
+  r.setStyle(addBtn, "border-radius", "6")
   r.setStyle(addBtn, "flex-direction", "row")
   r.setStyle(addBtn, "cross_align", "center")
+  r.setStyle(addBtn, "main_align", "center")
+  r.setStyle(addBtn, "width", "96")
+  r.setStyle(addBtn, "height", "36")
   r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
   s.addBtn = addBtn
   r.appendChild(wrapper, addBtn)
@@ -214,29 +249,40 @@ proc filterBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setAttribute(wrapper, "class", "filter-bar")
   r.setAttribute(wrapper, ComponentPathAttr, FilterBarPath)
   r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
+  # Round-4: pin a row height so the chips do not auto-grow into a
+  # 50%-of-canvas band. cross_align=center keeps the chips centred
+  # vertically inside the row.
   r.setStyle(wrapper, "flex-direction", "row")
-  r.setStyle(wrapper, "gap", "6")
-  r.setStyle(wrapper, "padding", "4")
+  r.setStyle(wrapper, "gap", "8")
+  r.setStyle(wrapper, "padding", "0")
+  r.setStyle(wrapper, "cross_align", "center")
+  r.setStyle(wrapper, "height", "32")
 
   for fm in [fmAll, fmActive, fmCompleted]:
     let btn = r.createElement("button")
     r.setTextContent(btn, $fm)
     r.setAttribute(btn, "data-filter", $fm)
-    # Baseline style; the selection effect overrides bg when active.
+    # Round-4: chip-shaped pill (~80×28). Baseline bg/text are the
+    # inactive treatment; the selection effect flips to indigo +
+    # white on the active chip so `All` is visibly distinguishable
+    # from `Active` / `Completed`.
     r.setStyle(btn, "background", "rgb(34, 35, 46)")
     r.setStyle(btn, "padding", "6")
-    r.setStyle(btn, "border-radius", "4")
+    r.setStyle(btn, "border-radius", "14")
     r.setStyle(btn, "flex-direction", "row")
     r.setStyle(btn, "cross_align", "center")
+    r.setStyle(btn, "main_align", "center")
+    r.setStyle(btn, "width", "82")
+    r.setStyle(btn, "height", "28")
     r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
-    makeFilterSelectionEffect(r, vm, btn, fm)
     r.appendChild(wrapper, btn)
-    # Visible label as a span child so the raster paints it. The text
-    # colour stays light on both selected (indigo bg) and inactive
-    # (dark bg) variants for legibility.
-    addTextSpan(r, btn, $fm,
-                color = "rgb(232, 233, 240)",
-                fontSize = "13", fontWeight = "normal")
+    # Visible label as a span child so the raster paints it. The
+    # selection effect updates the span's colour reactively so the
+    # chip text contrasts against either the dark or indigo fill.
+    let labelSpan = addTextSpan(r, btn, $fm,
+                                color = "rgb(160, 162, 176)",
+                                fontSize = "13", fontWeight = "normal")
+    makeFilterSelectionEffect(r, vm, btn, labelSpan, fm)
     s.filterButtons.add btn
 
   wrapper
@@ -248,31 +294,44 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   r.setAttribute(row, ElementKindAttr, "row")
   if t.completed:
     r.setAttribute(row, "class", "completed")
-  # Card-style row separation.
+  # Card-style row separation. Round-4: pin a row height (~36 px) so the
+  # rows pack tightly and the toggle/remove glyphs don't autoscale to
+  # ~50 px tall.
   r.setStyle(row, "background", "rgb(29, 29, 40)")
-  r.setStyle(row, "padding", "10")
+  r.setStyle(row, "padding", "8")
   r.setStyle(row, "gap", "10")
   r.setStyle(row, "flex-direction", "row")
   r.setStyle(row, "cross_align", "center")
   r.setStyle(row, "border-radius", "6")
+  r.setStyle(row, "height", "36")
+  r.setStyle(row, "width", "100%")
 
   let toggleBtn = r.createElement("button")
   let marker = if t.completed: "[x]" else: "[ ]"
   r.setTextContent(toggleBtn, marker)
-  r.setStyle(toggleBtn, "background", "rgb(34, 35, 46)")
-  r.setStyle(toggleBtn, "padding", "6")
+  # Round-4: small (~20×20) checkbox-style square. Off → neutral fill;
+  # on → indigo accent. main_align/cross_align centre the marker glyph.
+  let toggleBg = if t.completed: "rgb(124, 122, 237)" else: "rgb(52, 53, 63)"
+  r.setStyle(toggleBtn, "background", toggleBg)
+  r.setStyle(toggleBtn, "padding", "0")
   r.setStyle(toggleBtn, "border-radius", "4")
   r.setStyle(toggleBtn, "flex-direction", "row")
   r.setStyle(toggleBtn, "cross_align", "center")
+  r.setStyle(toggleBtn, "main_align", "center")
+  r.setStyle(toggleBtn, "width", "20")
+  r.setStyle(toggleBtn, "height", "20")
   r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
   r.appendChild(row, toggleBtn)
   addTextSpan(r, toggleBtn, marker,
-              color = (if t.completed: "rgb(124, 122, 237)"
+              color = (if t.completed: "rgb(255, 255, 255)"
                        else: "rgb(160, 162, 176)"),
-              fontSize = "14", fontWeight = "bold")
+              fontSize = "11", fontWeight = "bold")
 
   let display =
     if t.completed: t.name & " (done)" else: t.name
+  # Round-4: task title at body weight (`normal`); completed rows fade
+  # to secondary text colour (acts as a strikethrough proxy since the
+  # headless raster doesn't paint borders / text-decoration).
   addTextSpan(r, row, display,
               color = (if t.completed: "rgb(110, 112, 128)"
                        else: "rgb(232, 233, 240)"),
@@ -281,11 +340,17 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   let removeBtn = r.createElement("button")
   r.setAttribute(removeBtn, "class", "remove")
   r.setTextContent(removeBtn, "x")
-  r.setStyle(removeBtn, "background", "rgb(52, 53, 63)")
-  r.setStyle(removeBtn, "padding", "6")
+  # Round-4: small (~20×20) text-only remove glyph in soft red. No fill
+  # so it reads as a tertiary affordance, not a primary destructive
+  # button.
+  r.setStyle(removeBtn, "background", "rgb(29, 29, 40)")
+  r.setStyle(removeBtn, "padding", "0")
   r.setStyle(removeBtn, "border-radius", "4")
   r.setStyle(removeBtn, "flex-direction", "row")
   r.setStyle(removeBtn, "cross_align", "center")
+  r.setStyle(removeBtn, "main_align", "center")
+  r.setStyle(removeBtn, "width", "20")
+  r.setStyle(removeBtn, "height", "20")
   r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
   r.appendChild(row, removeBtn)
   addTextSpan(r, removeBtn, "x",
@@ -317,9 +382,13 @@ proc taskList*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setAttribute(listNode, "class", "task-list")
   r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
   r.setAttribute(listNode, ElementKindAttr, "list")
+  # Round-4: span the wrapper width so each row's pinned width=100%
+  # paints across the full canvas. The list keeps `padding=0` so the
+  # row-card backgrounds touch the shell's outer padding.
   r.setStyle(listNode, "flex-direction", "column")
   r.setStyle(listNode, "gap", "6")
-  r.setStyle(listNode, "padding", "4")
+  r.setStyle(listNode, "padding", "0")
+  r.setStyle(listNode, "width", "100%")
   s.listNode = listNode
 
   var placeholder: FreyaElement = nil
@@ -346,12 +415,16 @@ proc summaryBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setAttribute(summaryNode, "class", "task-summary")
   r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
   r.setAttribute(summaryNode, ElementKindAttr, "summary")
+  # Round-4: pin a summary row height (~30 px) so it reads as a footer
+  # caption strip rather than another auto-grown card.
   r.setStyle(summaryNode, "background", "rgb(29, 29, 40)")
-  r.setStyle(summaryNode, "padding", "10")
+  r.setStyle(summaryNode, "padding", "8")
   r.setStyle(summaryNode, "gap", "8")
   r.setStyle(summaryNode, "flex-direction", "row")
   r.setStyle(summaryNode, "cross_align", "center")
   r.setStyle(summaryNode, "border-radius", "6")
+  r.setStyle(summaryNode, "width", "100%")
+  r.setStyle(summaryNode, "height", "30")
   s.summaryNode = summaryNode
   let row = r.createElement("span")
   r.setStyle(row, "color", "rgb(160, 162, 176)")

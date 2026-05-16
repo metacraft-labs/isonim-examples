@@ -41,11 +41,22 @@ when defined(macosx):
     r.setAttribute(node, "class", "settings-item")
     # EX-M23c: component-path annotation; identical strings to TUI /
     # GPUI / Freya / Android counterparts (the cross-renderer
-    # set-equality invariant). AppKit's headless capture path does
-    # not read ``data-*`` attributes, so F-packet output is
-    # byte-identical.
+    # set-equality invariant). The RS-M5 AppKit capture path does
+    # read a small set of layout-driving ``data-*`` attributes
+    # (``data-layout``, ``data-fixed-height``, ``data-fixed-width``)
+    # to hint per-row geometry; everything else still collapses to
+    # the default vertical-stack heuristic, so cross-renderer
+    # F-packet shape stays comparable.
     r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
     r.setAttribute(node, ElementKindAttr, "row")
+    # M-EVP-14 round-3: each item row gets a real fixed slice inside
+    # the group container (~52 px). Without this, the prior heuristic
+    # split the group's body height equally among header + N items,
+    # squeezing each item down to single-digit pixels and losing all
+    # of the toggle / stepper / popup widgets in the captured raster.
+    # The label sits above the widget vertically; the wrapper itself
+    # stacks vertically by default.
+    r.setAttribute(node, "data-fixed-height", "52")
     node
 
   proc labelLeaf*(r: CocoaRenderer; text: string): CocoaElement =
@@ -213,6 +224,10 @@ when defined(macosx):
     r.setAttribute(host, "data-label", label)
     r.setAttribute(host, ComponentPathAttr, SettingsGroupHeaderPath)
     r.setAttribute(host, ElementKindAttr, "group-header")
+    # M-EVP-14 round-3: pin the header to a fixed height so the
+    # group-container layout reserves its slice up front and lets
+    # the per-item rows below claim the remaining vertical space.
+    r.setAttribute(host, "data-fixed-height", "44")
     if description.len > 0:
       r.setAttribute(host, "data-description", description)
 

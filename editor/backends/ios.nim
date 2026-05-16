@@ -36,7 +36,7 @@
 ## once the dispatcher path lands in a follow-up.
 
 when defined(macosx):
-  import std/[net, os, strutils]
+  import std/[net, options, os, osproc, streams, strutils, times]
 
   import isonim_render_serve
 
@@ -51,9 +51,23 @@ when defined(macosx):
       ## `isonim/src/isonim/editor/streaming_preview.nim` and the
       ## `ios: 8107` entry in `tools/editor-server.mjs`).
     EndpointEnvVar = "ISONIM_IOS_DEVICE_ENDPOINT"
-      ## Fallback endpoint when Bonjour discovery is not wired.
-      ## Format: `<host>:<port>`, e.g. `192.168.1.42:8200`.
+      ## Preferred endpoint when explicitly configured. Format
+      ## `<host>:<port>`, e.g. `192.168.1.42:8200`. When the configured
+      ## endpoint refuses (device asleep, IP rotated by DHCP, …) we
+      ## fall back to Bonjour discovery for `_isonim-stream._tcp` so
+      ## the screenshot tool can still recover without manual handoff.
     ReadChunk = 64 * 1024
+    BonjourServiceType = "_isonim-stream._tcp"
+    BonjourBudgetSeconds = 5
+      ## Total wall-clock budget for the Bonjour browse + resolve
+      ## fallback. Tight on purpose: the screenshot tool's per-cell
+      ## probe is bounded too; we want a fast fail when nothing is
+      ## reachable so the user gets a clear "tap the icon" signal.
+    ConnectTimeoutMs = 2_000
+      ## TCP connect attempt timeout. Long enough to forgive a busy
+      ## Wi-Fi network, short enough that the screenshot tool's 5 s
+      ## probe budget can still cover one configured-endpoint attempt
+      ## plus a Bonjour fallback round-trip.
 
   type
     IosTcpFrameSource* = ref object
@@ -104,18 +118,153 @@ when defined(macosx):
       chunk.setLen(n)
       src.buffer.add chunk
 
+  proc tryConnect(host: string; port: int;
+                  timeoutMs: int): Option[Socket] =
+    ## Open a TCP connection to `host:port` with a hard wall-clock
+    ## timeout. Returns `none` on connect failure / timeout so the
+    ## caller can decide whether to retry via Bonjour. We deliberately
+    ## use `connect(..., timeout)` instead of the default blocking
+    ## variant — without a timeout an unreachable iPhone (asleep,
+    ## off-network) leaves the launcher hanging until the screenshot
+    ## tool's outer 30 s budget fires, masking the real diagnosis.
+    if host.len == 0 or port <= 0:
+      return none(Socket)
+    let s = newSocket(buffered = false)
+    try:
+      s.connect(host, Port(port), timeout = timeoutMs)
+      return some(s)
+    except CatchableError:
+      try: s.close()
+      except CatchableError: discard
+      return none(Socket)
+
+  proc discoverViaBonjour(budgetSeconds: int):
+      Option[tuple[host: string, port: int]] =
+    ## Browse + resolve the `_isonim-stream._tcp` Bonjour service via
+    ## macOS's `dns-sd` CLI (built into the OS — no Nix-managed
+    ## dependency, no `dns_sd.h` FFI to maintain). The output is text
+    ## and the parsing is fragile by nature; we lean on three
+    ## conventions that have been stable across recent macOS releases:
+    ##
+    ##   * `dns-sd -B <type> local.` lists candidates one per line
+    ##     after a 4-column header. The instance name is the
+    ##     concatenation of all tokens after the 6th column.
+    ##   * `dns-sd -L <instance> <type> local.` echoes a "can be
+    ##     reached at <host>:<port>" line once it resolves the
+    ##     SRV/TXT pair.
+    ##
+    ## Both invocations stay running until killed; we read for at
+    ## most `budgetSeconds` total, then send SIGTERM. On any parse
+    ## failure or timeout we return `none` so the caller surfaces the
+    ## standard "device unreachable" error.
+    if budgetSeconds <= 0: return none((string, int))
+    let deadline = epochTime() + float(budgetSeconds)
+
+    # --- Browse: find the first instance name on the local domain ---
+    var browseProc: Process
+    try:
+      browseProc = startProcess("/usr/bin/dns-sd",
+        args = ["-B", BonjourServiceType, "local."],
+        options = {poStdErrToStdOut, poUsePath})
+    except OSError:
+      return none((string, int))
+    defer:
+      try: browseProc.terminate()
+      except OSError: discard
+      try: browseProc.close()
+      except OSError: discard
+
+    var instanceName = ""
+    let browseStream = browseProc.outputStream()
+    while epochTime() < deadline:
+      if browseStream.atEnd: break
+      let line = browseStream.readLine()
+      # Sample line:
+      #   timestamp Add 3 4 local. _isonim-stream._tcp. <name…>
+      if line.len == 0: continue
+      let tokens = line.splitWhitespace()
+      if tokens.len < 7: continue
+      if tokens[1] != "Add": continue
+      if not tokens[5].startsWith(BonjourServiceType): continue
+      instanceName = tokens[6 .. ^1].join(" ")
+      break
+    try: browseProc.terminate()
+    except OSError: discard
+    if instanceName.len == 0:
+      return none((string, int))
+
+    # --- Resolve: ask `dns-sd -L` for the SRV record ---
+    let remaining = deadline - epochTime()
+    if remaining <= 0: return none((string, int))
+    var resolveProc: Process
+    try:
+      resolveProc = startProcess("/usr/bin/dns-sd",
+        args = ["-L", instanceName, BonjourServiceType, "local."],
+        options = {poStdErrToStdOut, poUsePath})
+    except OSError:
+      return none((string, int))
+    defer:
+      try: resolveProc.terminate()
+      except OSError: discard
+      try: resolveProc.close()
+      except OSError: discard
+
+    let resolveStream = resolveProc.outputStream()
+    while epochTime() < deadline:
+      if resolveStream.atEnd: break
+      let line = resolveStream.readLine()
+      # Sample line:
+      #   timestamp <instance>._isonim-stream._tcp.local. can be reached
+      #     at iPhone.local.:8200 (interface 12)
+      let idx = line.find("can be reached at ")
+      if idx < 0: continue
+      let tail = line[idx + len("can be reached at ") .. ^1].strip()
+      let endpoint = tail.split(' ')[0]
+      let colon = endpoint.rfind(':')
+      if colon <= 0: continue
+      var host = endpoint[0 ..< colon]
+      let portStr = endpoint[colon + 1 .. ^1]
+      var port: int
+      try: port = parseInt(portStr)
+      except ValueError: continue
+      # Strip the trailing `.` Bonjour appends to fully-qualified names.
+      if host.endsWith('.'): host = host[0 ..< host.len - 1]
+      return some((host: host, port: port))
+    none((string, int))
+
   proc connectIfNeeded(src: IosTcpFrameSource) =
     if src.socket != nil:
       return
-    if src.deviceHost.len == 0 or src.devicePort <= 0:
-      raise newException(IOError,
-        "iOS launcher: no device endpoint configured. Pass " &
-        "--device-host <host>:<port> or set " & EndpointEnvVar &
-        "=<host>:<port>. Bonjour discovery for `_isonim-stream._tcp` " &
-        "is a planned follow-up.")
-    let s = newSocket(buffered = false)
-    s.connect(src.deviceHost, Port(src.devicePort))
-    src.socket = s
+    # Step 1: try the explicitly-configured endpoint (CLI flag / env
+    # var). This is the fast path when the iPhone is awake and on the
+    # same Wi-Fi address it had last time.
+    var sockOpt = tryConnect(src.deviceHost, src.devicePort,
+                             ConnectTimeoutMs)
+    if sockOpt.isSome:
+      src.socket = sockOpt.get()
+      return
+    # Step 2: fall back to Bonjour. If DHCP rotated the iPhone's IP
+    # we need a fresh address; if the device just woke up the
+    # NWListener may have re-published with a different port number.
+    let discovered = discoverViaBonjour(BonjourBudgetSeconds)
+    if discovered.isSome:
+      let (host, port) = discovered.get()
+      sockOpt = tryConnect(host, port, ConnectTimeoutMs)
+      if sockOpt.isSome:
+        # Cache the discovered endpoint so subsequent reconnects in the
+        # same session don't pay the Bonjour cost again.
+        src.deviceHost = host
+        src.devicePort = port
+        src.socket = sockOpt.get()
+        return
+    # All recovery paths exhausted — surface the clearest possible
+    # message so the screenshot tool can pattern-match it (and the
+    # user knows what to do).
+    raise newException(IOError,
+      "iOS launcher: device unreachable. Tap the IsoNim Stream icon " &
+      "on the iPhone to wake the device, then re-run. (Tried " &
+      "configured endpoint `" & src.deviceHost & ":" & $src.devicePort &
+      "` and Bonjour `" & BonjourServiceType & "` browse/resolve.)")
 
   proc captureFrame*(src: IosTcpFrameSource): Frame =
     ## Block on the next F packet from the device, decode it, and
@@ -183,9 +332,12 @@ when defined(macosx):
     ##   1. `--device-host <host>:<port>` CLI flag (preferred for
     ##      tests and explicit debugging).
     ##   2. `ISONIM_IOS_DEVICE_ENDPOINT=<host>:<port>` env var.
-    ##   3. (Future) Bonjour DNS-SD browse for `_isonim-stream._tcp`.
-    ## Returns `("", 0)` if none is set; the source then raises a
-    ## clear error on the first capture attempt.
+    ##   3. Bonjour DNS-SD browse for `_isonim-stream._tcp` — handled
+    ##      lazily inside `connectIfNeeded` so the launcher boots even
+    ##      when no endpoint is configured (the device may just need a
+    ##      moment to publish itself).
+    ## Returns `("", 0)` if neither (1) nor (2) is set; the connect
+    ## path then goes straight to Bonjour discovery.
     if cfgFromArgv.len > 0:
       return parseEndpoint(cfgFromArgv)
     let envVal = getEnv(EndpointEnvVar)

@@ -163,8 +163,17 @@ proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setTextContent(addBtn, "Add Task")
   r.setStyle(addBtn, "background", "#7c7aed")
   r.setStyle(addBtn, "color", "#ffffff")
+  # Round-3 review: in round-2 the button stretched to fill the
+  # vertically-stacked wrapper row, blowing up to ~70 px tall and
+  # full-width — visually overpowering the task list. Pin explicit
+  # pill geometry so it reads as a left-aligned secondary CTA below
+  # the input field instead of a wall-filling primary action. The
+  # GPUI shim honours width/height/padding/border-radius (single
+  # scalar padding only — no shorthand).
+  r.setStyle(addBtn, "width", "140")
+  r.setStyle(addBtn, "height", "40")
   r.setStyle(addBtn, "padding", "8")
-  r.setStyle(addBtn, "border-radius", "4")
+  r.setStyle(addBtn, "border-radius", "6")
   r.setStyle(addBtn, "cursor", "pointer")
   r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
   s.addBtn = addBtn
@@ -226,10 +235,13 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   r.setAttribute(row, ElementKindAttr, "row")
   if t.completed:
     r.setAttribute(row, "class", "completed")
-  # Card-style row separation.
+  # Round-3 review: rows were ~60 px tall in round-2 because every leaf
+  # (row + toggle + label + remove) carried 8 px padding on top of the
+  # row's own padding. Drop padding so the row settles closer to the
+  # body-text band and stops dominating the list visually.
   r.setStyle(row, "background", "#1d1d28")
-  r.setStyle(row, "padding", "8")
-  r.setStyle(row, "gap", "8")
+  r.setStyle(row, "padding", "10")
+  r.setStyle(row, "gap", "10")
   r.setStyle(row, "flex-direction", "row")
   r.setStyle(row, "align-items", "center")
   r.setStyle(row, "border-radius", "6")
@@ -238,12 +250,23 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   else:
     r.setStyle(row, "color", "#e8e9f0")
 
+  # Round-3 review: the leading `[ ]` / `[x]` toggle glyph was being
+  # visually missed in screenshots (muted dark-on-dark fill). Pin
+  # explicit pill geometry and a brighter off-state fill so the
+  # completion control is unambiguously visible at the row's leading
+  # edge — the brief requires `[toggle] [title] [×]` in horizontal flex.
   let toggleBtn = r.createElement("button")
   let marker = if t.completed: "[x]" else: "[ ]"
   r.setTextContent(toggleBtn, marker)
-  r.setStyle(toggleBtn, "background", "#22232e")
-  r.setStyle(toggleBtn, "color", (if t.completed: "#7c7aed" else: "#a0a2b0"))
-  r.setStyle(toggleBtn, "padding", "6")
+  if t.completed:
+    r.setStyle(toggleBtn, "background", "#7c7aed")
+    r.setStyle(toggleBtn, "color", "#ffffff")
+  else:
+    r.setStyle(toggleBtn, "background", "#3a3a52")
+    r.setStyle(toggleBtn, "color", "#e8e9f0")
+  r.setStyle(toggleBtn, "width", "24")
+  r.setStyle(toggleBtn, "height", "24")
+  r.setStyle(toggleBtn, "padding", "4")
   r.setStyle(toggleBtn, "border-radius", "4")
   r.setStyle(toggleBtn, "cursor", "pointer")
   r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
@@ -253,7 +276,10 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   let display =
     if t.completed: t.name & " (done)" else: t.name
   r.setTextContent(label, display)
-  r.setStyle(label, "color", (if t.completed: "#6e7080" else: "#e8e9f0"))
+  # Title sits at body weight (font-size is dropped by the shim — we
+  # express emphasis purely through colour). Slightly muted relative to
+  # the active state so the hierarchy reads control > title > muted.
+  r.setStyle(label, "color", (if t.completed: "#6e7080" else: "#c8cad6"))
   r.appendChild(row, label)
 
   let removeBtn = r.createElement("button")
@@ -261,7 +287,11 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   r.setTextContent(removeBtn, "x")
   r.setStyle(removeBtn, "background", "#34353f")
   r.setStyle(removeBtn, "color", "#e08080")
-  r.setStyle(removeBtn, "padding", "6")
+  # Round-3 review: pin remove button to the same scale as the leading
+  # toggle so the row reads as a balanced [toggle] [title] [×] band.
+  r.setStyle(removeBtn, "width", "24")
+  r.setStyle(removeBtn, "height", "24")
+  r.setStyle(removeBtn, "padding", "4")
   r.setStyle(removeBtn, "border-radius", "4")
   r.setStyle(removeBtn, "cursor", "pointer")
   r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))

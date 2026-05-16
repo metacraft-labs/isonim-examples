@@ -135,13 +135,21 @@ when defined(macosx):
                                  btn: CocoaElement; fm: FilterMode) =
     ## Top-level factory so the captured `fm` / `btn` cannot alias a loop
     ## variable in `filterBar`.
+    ##
+    ## M-EVP-14 round-3: the active chip gets an indigo (#7c7aed)
+    ## background so the user can tell which filter is current. The
+    ## inactive chips fall back to a neutral dark fill so the renderer
+    ## doesn't paint them with the depth-keyed neutral tint that the
+    ## selected chip uses for accent purposes.
     createRenderEffect proc() =
       if vm.filter.val == fm:
         r.setAttribute(btn, "class", "selected")
         r.setAttribute(btn, "aria-pressed", "true")
+        r.setStyle(btn, "background-color", "#7c7aed")
       else:
         r.setAttribute(btn, "class", "")
         r.removeAttribute(btn, "aria-pressed")
+        r.setStyle(btn, "background-color", "#22232e")
 
   # ----------------------------------------------------------------------------
   # Layer-1 leaf procs — invoked by views.nim
@@ -181,6 +189,12 @@ when defined(macosx):
     r.setAttribute(wrapper, "class", "task-input")
     r.setAttribute(wrapper, ComponentPathAttr, TaskInputPath)
     r.setAttribute(wrapper, ElementKindAttr, "input")
+    # M-EVP-14 round-3: arrange the input field and the Add button
+    # side by side instead of stacking them vertically. The adapter's
+    # ``layoutTreeForCapture`` reads ``data-layout="horizontal"`` and
+    # switches axis accordingly.
+    r.setAttribute(wrapper, "data-layout", "horizontal")
+    r.setAttribute(wrapper, "data-fixed-height", "44")
 
     let inp = r.createElement("input")
     r.setAttribute(inp, "type", "text")
@@ -195,6 +209,10 @@ when defined(macosx):
     let addBtn = r.createElement("button")
     r.setAttribute(addBtn, "type", "submit")
     r.setTextContent(addBtn, "Add Task")
+    # Pin the Add button to a fixed trailing width so the input
+    # field consumes the remaining horizontal slice.
+    r.setAttribute(addBtn, "data-fixed-width", "96")
+    r.setStyle(addBtn, "background-color", "#7c7aed")
     r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
     s.addBtn = addBtn
     r.appendChild(wrapper, addBtn)
@@ -211,6 +229,11 @@ when defined(macosx):
     r.setAttribute(wrapper, "class", "filter-bar")
     r.setAttribute(wrapper, ComponentPathAttr, FilterBarPath)
     r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
+    # M-EVP-14 round-3: lay the three chips out left-to-right so the
+    # filter strip reads as a single horizontal toolbar instead of a
+    # vertical stack of equally-sized buttons.
+    r.setAttribute(wrapper, "data-layout", "horizontal")
+    r.setAttribute(wrapper, "data-fixed-height", "36")
 
     for fm in [fmAll, fmActive, fmCompleted]:
       let btn = r.createElement("button")
@@ -228,17 +251,15 @@ when defined(macosx):
     r.setAttribute(row, "data-task-id", $t.id)
     r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
     r.setAttribute(row, ElementKindAttr, "row")
-    # M-EVP-14 round-3 hint: target row height ~48 px with the title
-    # vertically centred. The adapter's vertical-stack layout in
-    # ``isonim-render-serve/adapters/cocoa_adapter.nim``
-    # (``layoutTreeForCapture``) distributes the parent's bodyH
-    # evenly among children, so with the task list's three rows in
-    # a ~135 px slice each row gets ~45 px — close enough to the
-    # 48 px target. The ``min-height`` style here is the
-    # leaf-level intent for any future renderer that consults it.
-    # TODO(M-EVP-14 follow-up): wire row height through the renderer's
-    # AutoLayout pass so the live NSView height matches this style
-    # without relying on the capture-side heuristic.
+    # M-EVP-14 round-3: arrange the toggle marker, the title label,
+    # and the trailing remove glyph horizontally instead of stacking
+    # them vertically. The ``data-fixed-height`` reservation gives
+    # each row a real ~48 px slice inside the task-list parent (which
+    # otherwise distributes its body height equally among rows and,
+    # under the round-2 heuristic, collapsed deeper levels to single-
+    # digit pixels).
+    r.setAttribute(row, "data-layout", "horizontal")
+    r.setAttribute(row, "data-fixed-height", "48")
     r.setStyle(row, "min-height", "48px")
     r.setStyle(row, "padding", "8px 12px")
     if t.completed:
@@ -247,6 +268,9 @@ when defined(macosx):
     let toggleBtn = r.createElement("button")
     let marker = if t.completed: "[x]" else: "[ ]"
     r.setTextContent(toggleBtn, marker)
+    # Pin the toggle glyph to a small leading width so the title
+    # label can claim the row's central horizontal slice.
+    r.setAttribute(toggleBtn, "data-fixed-width", "44")
     r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
     r.appendChild(row, toggleBtn)
 
@@ -259,6 +283,8 @@ when defined(macosx):
     let removeBtn = r.createElement("button")
     r.setAttribute(removeBtn, "class", "remove")
     r.setTextContent(removeBtn, "x")
+    # Pin the trailing remove glyph to a small fixed width.
+    r.setAttribute(removeBtn, "data-fixed-width", "32")
     r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
     r.appendChild(row, removeBtn)
 

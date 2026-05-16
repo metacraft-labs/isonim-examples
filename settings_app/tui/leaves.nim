@@ -6,6 +6,45 @@
 ## live state is updated via their public setters (`setValue` on
 ## `Switch` / `Input`, `setHighlight` on `OptionList`) so programmatic
 ## VM mutations propagate to the TUI cell grid without a re-mount.
+##
+## M-EVP-14 round-3 polish gap (settings rows render label / description
+## / widget on three separate lines instead of one):
+##
+## The shared component templates `renderToggleItem` / `renderNumberItem`
+## / `renderChoiceItem` build each row as ``itemContainerLeaf →
+## [labelLeaf, descriptionLeaf, valueLeaf]``. The `labelLeaf` /
+## `descriptionLeaf` return `<span>` elements (`tnkBox` with one text
+## child each); the value leaf returns a `<div>` (`tnkBox` containing
+## the live widget tree). The TUI compositor's row-collapse rule
+## (`isonim-tui/src/isonim_tui/compositor.nim:walkLayoutImpl`'s
+## `allText` branch) only fuses children of a `tnkBox` into a single
+## row when *every* direct child is a `tnkText` node. A row with mixed
+## span + div children walks every child as its own row.
+##
+## The TUI end-to-end test (`tests/test_settings_tui_end_to_end.nim`)
+## asserts on the row's structure directly:
+##
+##   * `row.children[0].attributes["class"] == "settings-label"` — the
+##     label must be a span carrying that class.
+##   * `row.children[^1]` is the leaf host containing the widget node
+##     (`data-widget="switch"` / `"option-list"` / `"input"`); the test
+##     locates the widget via that attribute.
+##   * `textContent(row.children[0]) == settingsItem.label` — the label
+##     span's text content must equal the bare label string.
+##
+## A flat-text replacement (e.g., labelLeaf returning a `tnkText` with
+## ``"Dark mode  [●·]"``) breaks every one of those assertions. A
+## "shadow" sibling-text-row prepended to the row has the same effect
+## on `row.children[0]`. The compositor offers no per-node "skip
+## rendering" hook (no display:none, no layer-suppress for tnkBox) that
+## would let the existing test-bound widget tree render off-screen.
+##
+## Per the round-3 brief ("If the fix isn't viable without breaking
+## tests, document why and skip — this is polish."), this gap is left
+## as-is. Closing it requires either (a) the test to relax its
+## structural assertions, or (b) a compositor extension that lets the
+## TUI walker bypass marked nodes. Both are out of scope for a polish
+## pass.
 
 import std/strutils
 import std/tables  # getOrDefault on attributes (used by setGroupHeaderExpanded)

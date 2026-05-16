@@ -830,6 +830,111 @@ async function waitForTcpPort(port, host, timeoutMs) {
   return false;
 }
 
+// iOS-specific reachability probe.
+//
+// The pipeline keeps timing out at the 30 s frame-paint wait when the
+// iPhone is asleep — the launcher accepts the WS connection but no F
+// packets ever arrive, so `waitForFramePainted` burns the full budget
+// before falling back to the placeholder PNG. This probe runs BEFORE
+// `waitForFramePainted` for the iOS backend: it performs the same two
+// things the launcher's `connectIfNeeded` does (configured-endpoint
+// TCP connect + Bonjour browse) within a tight ~5 s budget so we can
+// surface a clear error to the placeholder text and skip ~25 s of
+// dead waiting per iOS cell.
+//
+// Returns:
+//   { ok: true }                  — device reachable
+//   { ok: false, reason: "..." }  — device unreachable, with hint text
+async function probeIosDevice() {
+  const endpoint =
+    process.env.ISONIM_IOS_DEVICE_ENDPOINT ?? "192.168.100.156:8200";
+  const colonIdx = endpoint.lastIndexOf(":");
+  const host = colonIdx > 0 ? endpoint.slice(0, colonIdx) : endpoint;
+  const port = colonIdx > 0
+    ? parseInt(endpoint.slice(colonIdx + 1), 10)
+    : 8200;
+
+  // Step 1: 2 s TCP connect to the configured endpoint.
+  const directOk = await new Promise((resolve) => {
+    const sock = net.createConnection({ port, host });
+    const timer = setTimeout(() => {
+      sock.destroy();
+      resolve(false);
+    }, 2_000);
+    sock.once("connect", () => {
+      clearTimeout(timer);
+      sock.end();
+      resolve(true);
+    });
+    sock.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+  if (directOk) return { ok: true };
+
+  // Step 2: 3 s Bonjour browse for `_isonim-stream._tcp`. We only
+  // need to see a single "Add" line to confirm the device is awake
+  // and publishing — at which point the launcher's own Bonjour
+  // fallback will resolve and connect.
+  const bonjourSawDevice = await new Promise((resolve) => {
+    let resolved = false;
+    let proc;
+    try {
+      proc = spawn("dns-sd", ["-B", "_isonim-stream._tcp", "local."], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      resolve(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      try { proc.kill("SIGTERM"); } catch { /* ignore */ }
+      resolve(false);
+    }, 3_000);
+    proc.stdout.on("data", (b) => {
+      const text = b.toString();
+      // Look for any line whose 2nd column is `Add` AND whose service
+      // type column references our service. The header lines never
+      // match because the 2nd column is `Flags`/`Domain`/etc.
+      for (const line of text.split("\n")) {
+        const tokens = line.trim().split(/\s+/);
+        if (tokens.length < 6) continue;
+        if (tokens[1] !== "Add") continue;
+        if (!tokens[5].includes("_isonim-stream._tcp")) continue;
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        try { proc.kill("SIGTERM"); } catch { /* ignore */ }
+        resolve(true);
+        return;
+      }
+    });
+    proc.once("error", () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      resolve(false);
+    });
+    proc.once("close", () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+  if (bonjourSawDevice) return { ok: true };
+
+  return {
+    ok: false,
+    reason:
+      "iOS device asleep — tap the IsoNim Stream icon on iPhone 14 to " +
+      "wake, then re-run",
+  };
+}
+
 function hasAdbDevice() {
   try {
     const out = execSync("adb devices", {
@@ -877,6 +982,20 @@ async function startLauncher(backend, projectRoot, opts = {}) {
       };
     }
     envExtra[spec.requireEnv] = value;
+  }
+  // iOS-specific fast-fail: before we even spawn the launcher,
+  // confirm the iPhone is reachable. The launcher itself now does
+  // its own 2 s configured-endpoint try plus a 5 s Bonjour fallback
+  // (`editor/backends/ios.nim::connectIfNeeded`), so a fully unreachable
+  // device would still bring the launcher up briefly before raising
+  // on the first capture — and the 30 s frame-paint wait would then
+  // burn its full budget. Probing here saves ~25 s per iOS cell and
+  // lets us write a clear placeholder text the user can act on.
+  if (backend === "ios") {
+    const probe = await probeIosDevice();
+    if (!probe.ok) {
+      return { ok: false, reason: probe.reason };
+    }
   }
   const launcherBin = join(
     projectRoot, "build", "backends", spec.bin,
@@ -1095,6 +1214,42 @@ async function waitForFramePainted(page, backend) {
   }
   // Canvas backends.
   await waitForCanvasManifest(page);
+}
+
+// Wait until the preview chrome bar's active backend chip matches
+// `backend`. The chrome bar's `bindBackendChip` reactive effect writes
+// `aria-pressed="true"` + the unified accent fill onto the chip that
+// corresponds to `vm.platform.val`. Without this gate the render-cell
+// screenshot can race the chip's reactive cascade — the launcher frame
+// can paint before the chip's effect has flushed — which produces the
+// settings-cell "active-chip misfires" the round-3 reviewer flagged
+// (the settings cell visibly highlights the wrong backend because the
+// chrome bar still reflects the previous click). The selector matches
+// the chip's `aria-pressed="true"` AND its `data-preview-backend` data
+// attribute scoped to the chrome bar's `data-toolbar-cluster="backend"`
+// cluster so we never pick up a stale duplicate sitting in the legacy
+// edge-strip locations.
+async function waitForChromeBarActiveBackend(page, backend) {
+  // `data-preview-backend` uses the lowercase wire id (see
+  // streaming_preview.nim `backendId`): pbWeb -> "web", etc. The render
+  // backend keys in this file already mirror those ids 1:1.
+  await page.waitForFunction(
+    (expectedId) => {
+      const candidates = Array.from(document.querySelectorAll(
+        `[data-preview-backend="${expectedId}"][aria-pressed="true"]`,
+      ));
+      // Prefer a chip inside the chrome bar's backend cluster so we
+      // never satisfy on a hidden legacy/edge-strip mirror.
+      for (const el of candidates) {
+        if (el.closest('[data-toolbar-cluster="backend"]')) return true;
+      }
+      // Fallback: any visible aria-pressed chip with the right backend
+      // id — covers earlier chrome layouts that did not tag the cluster.
+      return candidates.length > 0;
+    },
+    backend,
+    { timeout: 5000 },
+  );
 }
 
 // Click the chrome-bar backend chip for `backend`. The chrome bar's
@@ -1655,8 +1810,17 @@ async function captureRenderCell(browser, port, cell, outPath) {
     await page.waitForTimeout(200);
     await clickRenderBackendChip(page, cell.backend);
     await waitForFramePainted(page, cell.backend);
-    // Small settle delay so the chrome bar's chip aria-pressed cascade
-    // and per-backend overlay re-flow finish painting.
+    // Before snapping, gate on the chrome bar's reactive
+    // `aria-pressed="true"` cascade for this backend. The launcher's
+    // first painted frame and the chip's reactive effect run on
+    // independent code paths, and on the settings-app cell the chip
+    // path was visibly losing the race (round-3 reviewer: "settings
+    // cell highlights the wrong backend"). Waiting here makes the
+    // capture deterministic — the chrome bar always reflects the chip
+    // we just clicked.
+    await waitForChromeBarActiveBackend(page, cell.backend);
+    // Small settle delay so the chip's accent fill and per-backend
+    // overlay re-flow finish painting (browser-side compositor flush).
     await page.waitForTimeout(200);
     await page.screenshot({ path: outPath });
   } finally {

@@ -51,6 +51,17 @@ when defined(android) or defined(mockJni):
   import task_app/core/vm
   import task_app/core/component_paths
 
+  # Visual palette. Round-3 reviewer flagged accent over-use: the
+  # accent (indigo) is now reserved for the *primary* CTA (Add Task)
+  # and for the active filter chip; everything else lives on the
+  # neutral surface so the indigo reads as a deliberate accent rather
+  # than a wash.
+  const
+    accentIndigo = "#7c7aed"
+    surfaceCard  = "#1d1d28"  # neutral row / chip surface
+    onSurface    = "#e6e6f0"  # default text on a dark surface
+    mutedText    = "#a0a0b8"
+
   # ----------------------------------------------------------------------------
   # Per-VM bookkeeping (mirrors `tui/leaves.nim`, `web/leaves.nim`,
   # `gpui/leaves.nim`, `freya/leaves.nim`, `cocoa/leaves.nim`).
@@ -104,24 +115,28 @@ when defined(android) or defined(mockJni):
     ## Top-level factory so the captured `fm` / `btn` cannot alias a
     ## loop variable in `filterBar`.
     ##
-    ## M-EVP-14 round-2 fix: render filter buttons as Material 3
-    ## segmented FilterChips — the active chip is filled indigo, the
-    ## inactive chips are outlined (transparent fill with an indigo
-    ## border-like background tint via a subtle alpha). The legacy
-    ## `class="selected"` attribute is preserved so the existing tests
-    ## (`tests/test_android_leaves_android_only.nim`) keep passing.
+    ## Round-3 fix: the active chip stays filled indigo (it's the only
+    ## accent in the chip row), but inactive chips drop their indigo
+    ## tint entirely — they now render on the neutral surface with
+    ## indigo text only, so the accent reads as "this one is selected"
+    ## instead of bathing the whole row.
+    ##
+    ## The legacy `class="selected"` attribute is preserved so the
+    ## existing tests (`tests/test_android_leaves_android_only.nim`)
+    ## keep passing.
     createRenderEffect proc() =
       if vm.filter.val == fm:
         r.setAttribute(btn, "class", "selected")
         r.setAttribute(btn, "aria-pressed", "true")
-        r.setStyle(btn, "background-color", "#7c7aed")
+        r.setStyle(btn, "background-color", accentIndigo)
         r.setStyle(btn, "color", "#ffffff")
       else:
         r.setAttribute(btn, "class", "")
         r.removeAttribute(btn, "aria-pressed")
-        # Outlined chip: very light indigo tint background.
-        r.setStyle(btn, "background-color", "#eef0ff")
-        r.setStyle(btn, "color", "#7c7aed")
+        # Outlined chip on the neutral card surface — indigo only as
+        # the chip *label* color, not as a fill or tint.
+        r.setStyle(btn, "background-color", surfaceCard)
+        r.setStyle(btn, "color", accentIndigo)
 
   # ----------------------------------------------------------------------------
   # Layer-1 leaf procs — invoked by views.nim
@@ -177,11 +192,11 @@ when defined(android) or defined(mockJni):
     r.setAttribute(addBtn, "type", "submit")
     r.setTextContent(addBtn, "Add Task")
     r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
-    # M-EVP-14 round-2 fix: target Material 3 button height (~48 dp)
-    # instead of the LinearLayout-default ~80 dp bar. Indigo fill marks
-    # the primary CTA against the outlined filter chips below.
+    # Add Task is the primary CTA for the screen — keep the indigo
+    # fill (round-3 brief: "this is the primary CTA — accent is
+    # appropriate here").
     r.setStyle(addBtn, "height", "48")
-    r.setStyle(addBtn, "background-color", "#7c7aed")
+    r.setStyle(addBtn, "background-color", accentIndigo)
     r.setStyle(addBtn, "color", "#ffffff")
     r.setStyle(addBtn, "border-radius", "8")
     s.addBtn = addBtn
@@ -195,13 +210,11 @@ when defined(android) or defined(mockJni):
     ## "selected" class + indigo fill is driven by a
     ## `createRenderEffect` per chip.
     ##
-    ## M-EVP-14 round-2 fix: render the filter as a Material 3
-    ## horizontal segmented row of FilterChip-like buttons (active
-    ## filled indigo, inactive outlined indigo) instead of three
-    ## stacked full-width indigo bars. The wrapper is forced to
-    ## HORIZONTAL orientation, chips claim equal weight via
-    ## `flex-grow`, and chip height matches the M3 chip metric
-    ## (~36 dp).
+    ## Round-3 fix: only the *active* chip carries an indigo fill —
+    ## inactive chips drop to the neutral card surface with indigo
+    ## text only (see `makeFilterSelectionEffect`). This restores the
+    ## "accent reads as a selection cue, not a wash" invariant the
+    ## reviewer flagged.
     let s = leavesFor(vm)
     s.filterButtons = @[]
     let wrapper = r.createElement("div")
@@ -233,28 +246,34 @@ when defined(android) or defined(mockJni):
     r.setAttribute(row, ElementKindAttr, "row")
     if t.completed:
       r.setAttribute(row, "class", "completed")
+    # Round-3 fix: task rows now sit on the neutral surface (indigo
+    # was previously washing the whole list). 8 dp rounded corners +
+    # 12 dp interior padding mark each row as a discrete card.
+    r.setStyle(row, "background-color", surfaceCard)
+    r.setStyle(row, "border-radius", "8")
+    r.setStyle(row, "padding", "12")
 
     let toggleBtn = r.createElement("button")
     let marker = if t.completed: "[x]" else: "[ ]"
     r.setTextContent(toggleBtn, marker)
     r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
+    # Neutral toggle button — accent stays reserved for the Add CTA.
+    r.setStyle(toggleBtn, "color", onSurface)
     r.appendChild(row, toggleBtn)
 
     let label = r.createElement("span")
     let display =
       if t.completed: t.name & " (done)" else: t.name
     r.setTextContent(label, display)
-    # M-EVP-14 round-2 fix: task names rendered too heavy in round 1
-    # (same weight as the `Add Task` CTA label). Drop to M3 body
-    # weight via a tighter textSize so the title bar / Add Task button
-    # carry the primary visual hierarchy. The bridge maps `font-size`
-    # to Android `textSize` (sp) on TextView; 14 sp is M3 bodyMedium.
+    # M3 bodyMedium for the task name; 14 sp, on-surface color.
     r.setStyle(label, "font-size", "14")
+    r.setStyle(label, "color", onSurface)
     r.appendChild(row, label)
 
     let removeBtn = r.createElement("button")
     r.setAttribute(removeBtn, "class", "remove")
     r.setTextContent(removeBtn, "x")
+    r.setStyle(removeBtn, "color", mutedText)
     r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
     r.appendChild(row, removeBtn)
 
@@ -281,6 +300,8 @@ when defined(android) or defined(mockJni):
     r.setAttribute(listNode, "class", "task-list")
     r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
     r.setAttribute(listNode, ElementKindAttr, "list")
+    # Vertical gap between row cards so they read as discrete items.
+    r.setStyle(listNode, "gap", "8")
     s.listNode = listNode
 
     # `AndroidElement = ViewHandle = int64` — the nil/empty sentinel is
@@ -312,6 +333,7 @@ when defined(android) or defined(mockJni):
     r.setAttribute(summaryNode, ElementKindAttr, "summary")
     s.summaryNode = summaryNode
     let row = r.createElement("span")
+    r.setStyle(row, "color", onSurface)
     r.appendChild(summaryNode, row)
     createRenderEffect proc() =
       let active = vm.activeCount
@@ -326,6 +348,11 @@ when defined(android) or defined(mockJni):
     r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
     r.setAttribute(icon, ElementKindAttr, "vector-symbol")
     r.setTextContent(icon, "v")
+    # Round-3 fix: the chevron now uses the on-surface text color
+    # (was previously inheriting the accent indigo via the title-bar
+    # cascade). The accent stays reserved for the Add CTA + active
+    # filter chip.
+    r.setStyle(icon, "color", onSurface)
     r.appendChild(summaryNode, icon)
 
     summaryNode

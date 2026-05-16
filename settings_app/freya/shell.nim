@@ -74,10 +74,13 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
     # M-EVP-14 round-2: paint a dark canvas + outer padding so the
     # card stack has visible breathing room and a contrasting
     # background that makes the cards' corner radii read clearly.
+    # Round-4: tighten outer padding (16→8) and inter-card gap
+    # (12→8) so the Notifications card fits inside the 1080-px
+    # viewport (round-3 reviewer flagged it as cropped).
     renderer.setStyle(appRoot, "background", "rgb(15, 15, 20)")
-    renderer.setStyle(appRoot, "padding", "16")
+    renderer.setStyle(appRoot, "padding", "8")
     renderer.setStyle(appRoot, "flex-direction", "column")
-    renderer.setStyle(appRoot, "gap", "12")
+    renderer.setStyle(appRoot, "gap", "8")
     renderer.setStyle(appRoot, "width", "100%")
     renderer.setStyle(appRoot, "height", "100%")
 
@@ -96,8 +99,16 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
         # ~12 px outer gap between cards. The leaves' `groupContainerLeaf`
         # paints the visible card surface; the wrapper's padding here
         # is the breathing room reviewers flagged in M-EVP-14 round-2.
-        renderer.setStyle(card, "padding", "4")
+        # Round-4: drop the wrapper padding to 0 so the per-card
+        # vertical footprint is bounded by the inner section + its
+        # outer gap; this is what allowed the 3rd card to fit. Pin
+        # width to 100% so the card spans the full canvas instead of
+        # collapsing to its content width (Freya's default cross_align
+        # is `start`, which made the cards a narrow column on the
+        # left edge in round-3).
+        renderer.setStyle(card, "padding", "0")
         renderer.setStyle(card, "flex-direction", "column")
+        renderer.setStyle(card, "width", "100%")
 
         let groupNode = groupContainerLeaf(renderer)
         renderer.setAttribute(groupNode, "data-group-id", gid)

@@ -100,11 +100,18 @@ proc taskInput*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   ## Single-line text field that adds a task on Enter. The InputWidget
   ## handle is needed for post-mount `setValue("")` after submit so we
   ## build it outside the `ui()` block and embed it.
+  ##
+  ## M-EVP-14 round-3 polish: the inner width is sized so the box's
+  ## outer width (34 cells = 32 inner + two `│` walls) matches the task
+  ## list, the filter bar, and the summary bar. Round-2 had width=30
+  ## here and width=30 (inner padded with single spaces, outer 34) on
+  ## the list — the resulting 32 vs 34 mismatch was the visible
+  ## "input box doesn't align with the list" gap reviewers flagged.
   let s = leavesFor(vm)
   let inp = newInput(r,
     value = vm.inputText.val,
     placeholder = "New task...",
-    width = 30,
+    width = 32,
     border = bsRound,
     onChange = makeInputChangeHandler(vm),
     onSubmit = makeInputSubmitHandler(vm, s))
@@ -156,14 +163,23 @@ proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   r.appendChild(lineNode, txtNode)
   r.appendChild(host, lineNode)
   proc labelFor(active: FilterMode; name: string; mine: FilterMode): string =
-    if active == mine: "< " & name & " >"
-    else: "  " & name & "  "
+    if active == mine: "<" & name & ">"
+    else: " " & name & " "
   createRenderEffect proc() =
     let active = vm.filter.val
     let parts = labelFor(active, "All", fmAll) & " | " &
                 labelFor(active, "Active", fmActive) & " | " &
                 labelFor(active, "Completed", fmCompleted)
-    r.setTextContent(txtNode, parts)
+    # M-EVP-14 round-3 polish: wrap the filter row in `│CONTENT│`
+    # walls (no interior padding) so it lines up with the input box
+    # (34 cells outer width: `│` + 32 inner + `│`) and the task list.
+    # Round-2 had this row paint with no walls at all, which read as a
+    # visual gap between the bordered input box above and the bordered
+    # list below. The bracket form was tightened (`<X>` instead of
+    # `< X >`, single-space inactive padding) so the worst-case row
+    # ("All | Active | <Completed>", 30 cells) fits inside the
+    # 32-cell inner width.
+    r.setTextContent(txtNode, "│" & padOrTruncate(parts, 32) & "│")
   ui(r):
     embedNode(host)
 
@@ -179,8 +195,13 @@ proc renderTaskRow(r: TerminalRenderer; vm: TaskAppVM;
   ## list).
   let marker = if t.completed: "[x] " else: "[ ] "
   let label = marker & t.name
+  # M-EVP-14 round-3 polish: rows are framed with `│CONTENT│` (no
+  # interior padding) so the body's column-1 character lines up with
+  # the input widget's first cell. Round-2 used `│ … │` with an extra
+  # space of padding inside the walls — that read as a visible 1-cell
+  # offset between the input box (no padding) and the list box.
   let inner = padOrTruncate(label, width)
-  let body = "│ " & inner & " │"
+  let body = "│" & inner & "│"
   result = r.createElement("div")
   r.setAttribute(result, "data-task-id", $t.id)
   # EX-M23: stable component path for the element-tree manifest.
@@ -210,7 +231,7 @@ proc placeholderRow(r: TerminalRenderer; vm: TaskAppVM;
       of fmAll:       "(no tasks yet)"
       of fmActive:    "(no active tasks)"
       of fmCompleted: "(no completed tasks)"
-    r.setTextContent(txtNode, "│ " & padOrTruncate(placeholder, w) & " │")
+    r.setTextContent(txtNode, "│" & padOrTruncate(placeholder, w) & "│")
 
 proc taskList*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   ## Visible task rows wrapped in a Unicode box-drawing frame
@@ -234,15 +255,21 @@ proc taskList*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
     tdiv(class = "task-list", ref = listRef,
          `data-component-path` = TaskListPath,
          `data-component-kind` = "list")
-  s.listWidth = 30
+  # M-EVP-14 round-3 polish: the inner content width matches the input
+  # widget's `width` (32) so the box's outer dimensions (34 cells:
+  # `│` + 32 inner + `│`) line up exactly with the input box and the
+  # framed filter / summary rows. Round-2 had inner=30 + 2-cell padding
+  # which produced a 1-cell column offset between the input body and
+  # the task rows.
+  s.listWidth = 32
   let listNode = listRef
   let width = s.listWidth
 
-  # Box-drawing top/bottom rows. The horizontal run uses one cell per
-  # inner column, plus the corner glyphs and one cell of padding on
-  # each side so the rows align with the `│ … │` body rows.
+  # Box-drawing top/bottom rows. The horizontal run is exactly the
+  # inner content width so `╭` + run + `╮` matches the body row
+  # `│` + content + `│`.
   let topRow = r.createElement("div")
-  let topRun = repeat("─", width + 2)
+  let topRun = repeat("─", width)
   r.appendChild(topRow, r.createTextNode("╭" & topRun & "╮"))
   r.appendChild(listNode, topRow)
 
@@ -293,14 +320,34 @@ proc summaryBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   createRenderEffect proc() =
     let active = vm.activeCount
     let total = vm.totalCount
+    # The reactive text node carries the bare summary string. The
+    # EX-M2 end-to-end test reads
+    # ``s.summaryNode.children[0].children[0].text == "N of M remaining"``
+    # and ``s.summaryNode.children.len == 2``, so we cannot prepend
+    # `│ ` walls inside the txtNode itself, nor wrap with sibling
+    # walls (extra siblings would shift `children[0]` away from
+    # txtNode). The summary therefore renders unframed below the
+    # bordered list — see the TUI polish gap notes in
+    # ``settings_app/tui/leaves.nim`` for the analogous
+    # row-of-mixed-children compositor constraint.
     r.setTextContent(txtNode, $active & " of " & $total & " remaining")
 
   # M-EVP-11: nested vector-symbol leaf. The visual is intentionally
-  # minimal — a single stylized check-mark glyph — because what matters
-  # for the milestone is the manifest annotation: the editor's canvas
-  # dblclick handler reads ``kind = "vector-symbol"`` from the
-  # element-tree manifest and opens the vector editor for the matching
-  # ``skVectorSymbol`` story.
+  # minimal — historically a single stylized check-mark glyph — because
+  # what matters for the milestone is the manifest annotation: the
+  # editor's canvas dblclick handler reads ``kind = "vector-symbol"``
+  # from the element-tree manifest and opens the vector editor for the
+  # matching ``skVectorSymbol`` story.
+  #
+  # M-EVP-14 round-3 polish: the icon span's visible text is repurposed
+  # as a single check glyph (`v`) padded inside a minimal-width frame —
+  # specifically a one-character text node so the compositor (a) emits
+  # exactly one row for the icon (keeping the cell-region non-zero so
+  # the cross-renderer manifest walker still includes
+  # ``TaskCheckIcon``) and (b) so the rendered surface trails off with
+  # a single tiny glyph instead of an unframed multi-character word.
+  # The component-path + ``vector-symbol`` kind annotations stay on the
+  # span so the editor's dblclick → vector-editor path still resolves.
   let icon = r.createElement("span")
   r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
   r.setAttribute(icon, ElementKindAttr, "vector-symbol")
