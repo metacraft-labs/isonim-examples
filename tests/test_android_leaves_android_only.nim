@@ -94,13 +94,19 @@ when defined(android):
       check row0 != 0
       check r.getAttribute(row0, "data-task-id") == "1"
       check "buy milk" in r.treeTextContent(row0)
-      check "[ ]" in r.treeTextContent(row0)
+      # Round-4 fix: the toggle no longer renders `[ ]` / `[x]` ASCII
+      # brackets — it's a styled Material-checkbox-shaped <button>
+      # whose text content is the empty string when unchecked and
+      # the check glyph ("\xE2\x9C\x93", U+2713 "✓") when checked.
+      # The assertions below mirror that: pre-toggle the toggle's
+      # text is empty, post-toggle it carries the check glyph.
+      let preToggleBtn = r.nthChild(row0, 0)
+      check preToggleBtn != 0
+      check r.textContent(preToggleBtn) == ""
       check "3 of 3 remaining" in r.treeTextContent(s.summaryNode)
 
       # ── 2. Toggle the first task via its per-row toggle button.
-      let toggleBtn0 = r.nthChild(row0, 0)
-      check toggleBtn0 != 0
-      r.fireEvent(toggleBtn0, "click")
+      r.fireEvent(preToggleBtn, "click")
 
       check vm.tasks.val[0].completed == true
       check vm.activeCount == 2
@@ -108,7 +114,8 @@ when defined(android):
       let row0After = r.nthChild(s.listNode, 0)
       check row0After != 0
       check r.getAttribute(row0After, "class") == "completed"
-      check "[x]" in r.treeTextContent(row0After)
+      let postToggleBtn = r.nthChild(row0After, 0)
+      check r.textContent(postToggleBtn) == "\xE2\x9C\x93"
       check "2 of 3 remaining" in r.treeTextContent(s.summaryNode)
 
       # ── 3. Switch filter to Active via the second filter button.
@@ -122,8 +129,9 @@ when defined(android):
       check r.getAttribute(s.filterButtons[1], "aria-pressed") == "true"
       for i in 0 ..< r.childCount(s.listNode):
         let row = r.nthChild(s.listNode, i)
-        check "[x]" notin r.treeTextContent(row)
-        check "[ ]" in r.treeTextContent(row)
+        let tBtn = r.nthChild(row, 0)
+        # Active filter — every visible row's toggle is unchecked.
+        check r.textContent(tBtn) == ""
 
       # ── 4. Switch filter to Completed; only the toggled task shows.
       r.fireEvent(s.filterButtons[2], "click")
@@ -131,7 +139,8 @@ when defined(android):
       check vm.visibleTasks.len == 1
       check r.childCount(s.listNode) == 1
       let onlyRow = r.nthChild(s.listNode, 0)
-      check "[x]" in r.treeTextContent(onlyRow)
+      let onlyToggle = r.nthChild(onlyRow, 0)
+      check r.textContent(onlyToggle) == "\xE2\x9C\x93"
       check "buy milk" in r.treeTextContent(onlyRow)
       check r.getAttribute(s.filterButtons[2], "class") == "selected"
 

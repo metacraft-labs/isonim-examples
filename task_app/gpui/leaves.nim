@@ -124,7 +124,19 @@ proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setStyle(wrapper, "padding", "8")
   r.setStyle(wrapper, "gap", "8")
   r.setStyle(wrapper, "flex-direction", "column")
-  r.setStyle(wrapper, "align-items", "start")
+  # Round-4 review: the Add Task pill needs to sit at the right edge of
+  # the wrapper instead of bottom-left. The GPUI shim does NOT honour
+  # ``margin-left: auto`` or ``align-self`` (see
+  # ``apply_styles_to_div`` in
+  # ``isonim-gpui/rust/gpui-nim-shim/src/render_sync.rs`` — the
+  # property list ignores both), but it does honour ``align-items``
+  # on the parent. Flipping the wrapper's cross-axis alignment to
+  # ``end`` right-aligns its column children. The full-width input
+  # still spans the wrapper because its own ``width: 100%`` overrides
+  # the alignment for that child, but the fixed-width Add Task pill
+  # below is pushed to the right edge — visually matching "Add Task
+  # pill next to the right end of the input row".
+  r.setStyle(wrapper, "align-items", "end")
   r.setStyle(wrapper, "border-radius", "8")
 
   # Round-2 review: the input row was invisible because (a) the inner
@@ -166,10 +178,15 @@ proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   # Round-3 review: in round-2 the button stretched to fill the
   # vertically-stacked wrapper row, blowing up to ~70 px tall and
   # full-width — visually overpowering the task list. Pin explicit
-  # pill geometry so it reads as a left-aligned secondary CTA below
-  # the input field instead of a wall-filling primary action. The
-  # GPUI shim honours width/height/padding/border-radius (single
-  # scalar padding only — no shorthand).
+  # pill geometry so it reads as a secondary CTA below the input
+  # field instead of a wall-filling primary action. The GPUI shim
+  # honours width/height/padding/border-radius (single scalar
+  # padding only — no shorthand).
+  #
+  # Round-4 review: the right-edge positioning of the pill is driven
+  # by the wrapper's ``align-items: end`` (see the comment block on
+  # the wrapper above) — neither ``margin-left: auto`` nor
+  # ``align-self`` is honoured by the GPUI shim.
   r.setStyle(addBtn, "width", "140")
   r.setStyle(addBtn, "height", "40")
   r.setStyle(addBtn, "padding", "8")
@@ -370,10 +387,18 @@ proc summaryBar*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   # Cocoa / Android leaves' minimal check-mark annotation so the
   # editor's canvas dblclick handler can resolve the click back to
   # the matching ``skVectorSymbol`` story and open the vector editor.
+  # Round-4 review: the prior placeholder text was the bare letter
+  # ``v``, which rendered as an unmoored caret-like glyph at the
+  # bottom-left of the summary bar (the web cell omits this leaf
+  # entirely, hence the cross-backend asymmetry). Repurposing the
+  # text as a Unicode check mark (``✓``) keeps the leaf semantically
+  # meaningful — it now reads as the "tasks completed" indicator —
+  # while preserving the ``vector-symbol`` annotation that the
+  # editor's dblclick handler keys on.
   let icon = r.createElement("span")
   r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
   r.setAttribute(icon, ElementKindAttr, "vector-symbol")
-  r.setTextContent(icon, "v")
+  r.setTextContent(icon, "✓")
   r.setStyle(icon, "color", "#7c7aed")
   r.appendChild(summaryNode, icon)
 

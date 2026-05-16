@@ -179,12 +179,20 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setAttribute(inp, "placeholder", "New task...")
   # Round-4: pin the input field's height so the placeholder span
   # does not vertically dominate; let the input flex horizontally.
+  # Round-5: ``width: fill`` greedily took the whole wrapper row
+  # before the Add Task button got its 84 px allocation, which
+  # clipped the button to a thin sliver at the right edge. Replace
+  # ``fill`` with an explicit width that leaves room for the button
+  # (the editor cell canvas is 800 px wide; the wrapper's outer
+  # padding + gap leaves ~770 px of inner row width, so 660 px keeps
+  # the button (84) + gap (8) clear at the right edge with a
+  # comfortable margin).
   r.setStyle(inp, "background", "rgb(34, 35, 46)")
   r.setStyle(inp, "padding", "8")
   r.setStyle(inp, "border-radius", "4")
   r.setStyle(inp, "flex-direction", "row")
   r.setStyle(inp, "cross_align", "center")
-  r.setStyle(inp, "width", "fill")
+  r.setStyle(inp, "width", "660")
   r.setStyle(inp, "height", "36")
   s.inputNode = inp
   r.appendChild(wrapper, inp)
@@ -219,16 +227,20 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setAttribute(addBtn, "type", "submit")
   r.setTextContent(addBtn, "Add Task")
   # Round-4: pin width/height so the CTA reads as a real button (not a
-  # full-width band). 96×36 is roughly content-width for "Add Task" at
-  # 14 px bold + 16 px horizontal padding.
+  # full-width band). Round-5: the prior 96 px width clipped the
+  # button against the right edge because the input row's ``width:
+  # fill`` claimed the whole wrapper before the button got positioned;
+  # shrink the button to 84 px and reduce horizontal padding so the
+  # "Add Task" label fits cleanly inside the pill and the pill sits
+  # comfortably inside the wrapper's right edge with the 8 px gap.
   r.setStyle(addBtn, "background", "rgb(124, 122, 237)")
-  r.setStyle(addBtn, "padding", "8")
+  r.setStyle(addBtn, "padding", "6")
   r.setStyle(addBtn, "border-radius", "6")
   r.setStyle(addBtn, "flex-direction", "row")
   r.setStyle(addBtn, "cross_align", "center")
   r.setStyle(addBtn, "main_align", "center")
-  r.setStyle(addBtn, "width", "96")
-  r.setStyle(addBtn, "height", "36")
+  r.setStyle(addBtn, "width", "84")
+  r.setStyle(addBtn, "height", "32")
   r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
   s.addBtn = addBtn
   r.appendChild(wrapper, addBtn)
@@ -252,11 +264,13 @@ proc filterBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   # Round-4: pin a row height so the chips do not auto-grow into a
   # 50%-of-canvas band. cross_align=center keeps the chips centred
   # vertically inside the row.
+  # Round-5: tighten further so the chip strip is shorter than the
+  # task rows (was reading as slightly taller than the 36 px rows).
   r.setStyle(wrapper, "flex-direction", "row")
   r.setStyle(wrapper, "gap", "8")
   r.setStyle(wrapper, "padding", "0")
   r.setStyle(wrapper, "cross_align", "center")
-  r.setStyle(wrapper, "height", "32")
+  r.setStyle(wrapper, "height", "28")
 
   for fm in [fmAll, fmActive, fmCompleted]:
     let btn = r.createElement("button")
@@ -266,14 +280,16 @@ proc filterBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
     # inactive treatment; the selection effect flips to indigo +
     # white on the active chip so `All` is visibly distinguishable
     # from `Active` / `Completed`.
+    # Round-5: shrink the chip a touch (24 px tall) so the filter
+    # strip reads as visibly shorter than the 36 px task rows.
     r.setStyle(btn, "background", "rgb(34, 35, 46)")
-    r.setStyle(btn, "padding", "6")
-    r.setStyle(btn, "border-radius", "14")
+    r.setStyle(btn, "padding", "4")
+    r.setStyle(btn, "border-radius", "12")
     r.setStyle(btn, "flex-direction", "row")
     r.setStyle(btn, "cross_align", "center")
     r.setStyle(btn, "main_align", "center")
-    r.setStyle(btn, "width", "82")
-    r.setStyle(btn, "height", "28")
+    r.setStyle(btn, "width", "78")
+    r.setStyle(btn, "height", "24")
     r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
     r.appendChild(wrapper, btn)
     # Visible label as a span child so the raster paints it. The
@@ -442,7 +458,11 @@ proc summaryBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   let icon = r.createElement("span")
   r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
   r.setAttribute(icon, ElementKindAttr, "vector-symbol")
-  r.setTextContent(icon, "v")
+  # Round-4: replace the placeholder ``v`` glyph (which read as an
+  # unmoored caret/typo at the bottom-left of the summary) with the
+  # Unicode check mark. The web cell omits this leaf entirely, which
+  # is why the asymmetry was only visible on the non-web backends.
+  r.setTextContent(icon, "✓")
   r.setStyle(icon, "color", "rgb(124, 122, 237)")
   r.setStyle(icon, "font-size", "12")
   r.appendChild(summaryNode, icon)

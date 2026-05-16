@@ -253,12 +253,33 @@ when defined(android) or defined(mockJni):
     r.setStyle(row, "border-radius", "8")
     r.setStyle(row, "padding", "12")
 
+    # Round-4 fix: replace the ASCII `[ ]` / `[x]` brackets with a
+    # styled rounded-square Material-checkbox shape. The Android
+    # renderer doesn't auto-map `<input type="checkbox">` to a real
+    # `CheckBox` view (the tag map sends `input` to `EditText`, which
+    # would render a text caret), so we keep the `<button>` element —
+    # which maps to `MaterialButton` — and paint it as a 20 x 20 dp
+    # rounded square: indigo fill + white check glyph when completed,
+    # transparent fill + neutral-muted outline-coloured border when
+    # not. The textual glyph is a single Unicode check (✓, U+2713) when
+    # on, empty when off; together with the 4 dp corner radius this
+    # reads as a native Material checkbox at a glance.
     let toggleBtn = r.createElement("button")
-    let marker = if t.completed: "[x]" else: "[ ]"
-    r.setTextContent(toggleBtn, marker)
+    if t.completed:
+      r.setTextContent(toggleBtn, "\xE2\x9C\x93")  # "✓"
+    else:
+      r.setTextContent(toggleBtn, "")
     r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
-    # Neutral toggle button — accent stays reserved for the Add CTA.
-    r.setStyle(toggleBtn, "color", onSurface)
+    r.setStyle(toggleBtn, "width", "20")
+    r.setStyle(toggleBtn, "height", "20")
+    r.setStyle(toggleBtn, "border-radius", "4")
+    r.setStyle(toggleBtn, "font-size", "14")
+    if t.completed:
+      r.setStyle(toggleBtn, "background-color", accentIndigo)
+      r.setStyle(toggleBtn, "color", "#ffffff")
+    else:
+      r.setStyle(toggleBtn, "background-color", surfaceCard)
+      r.setStyle(toggleBtn, "color", mutedText)
     r.appendChild(row, toggleBtn)
 
     let label = r.createElement("span")
@@ -347,7 +368,10 @@ when defined(android) or defined(mockJni):
     let icon = r.createElement("span")
     r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
     r.setAttribute(icon, ElementKindAttr, "vector-symbol")
-    r.setTextContent(icon, "v")
+    # Round-4: replace the placeholder ``v`` glyph with the Unicode
+    # check mark so the summary's affordance reads as a "tasks
+    # completed" indicator instead of an unmoored caret/typo.
+    r.setTextContent(icon, "✓")
     # Round-3 fix: the chevron now uses the on-surface text color
     # (was previously inheriting the accent indigo via the title-bar
     # cascade). The accent stays reserved for the Add CTA + active

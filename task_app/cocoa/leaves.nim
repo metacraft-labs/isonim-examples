@@ -356,7 +356,10 @@ when defined(macosx):
     let icon = r.createElement("span")
     r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
     r.setAttribute(icon, ElementKindAttr, "vector-symbol")
-    r.setTextContent(icon, "v")
+    # Round-4: replace the placeholder ``v`` glyph with the Unicode
+    # check mark so the summary's affordance reads as a "tasks
+    # completed" indicator instead of an unmoored caret/typo.
+    r.setTextContent(icon, "✓")
     r.appendChild(summaryNode, icon)
 
     summaryNode

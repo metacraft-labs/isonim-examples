@@ -49,26 +49,34 @@ when defined(macosx):
     # F-packet shape stays comparable.
     r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
     r.setAttribute(node, ElementKindAttr, "row")
-    # M-EVP-14 round-3: each item row gets a real fixed slice inside
-    # the group container (~52 px). Without this, the prior heuristic
-    # split the group's body height equally among header + N items,
-    # squeezing each item down to single-digit pixels and losing all
-    # of the toggle / stepper / popup widgets in the captured raster.
-    # The label sits above the widget vertically; the wrapper itself
-    # stacks vertically by default.
-    r.setAttribute(node, "data-fixed-height", "52")
+    # M-EVP-14 round-4: bump the row's fixed slice to ~64 px so the
+    # label / description / widget triplet inside each row can each
+    # claim a real vertical band (round-3 sized the row at 52 px and
+    # the equal-flex split left ~17 px per child, so the AppKit
+    # widgets ended up as full-width single-pixel strips). Round-4
+    # also adds explicit ``data-fixed-height`` hints on each child
+    # leaf below so the row's three slices line up as
+    # ``[label 20 px] [description flex] [widget 24 px]``.
+    r.setAttribute(node, "data-fixed-height", "64")
     node
 
   proc labelLeaf*(r: CocoaRenderer; text: string): CocoaElement =
     let node = r.createElement("label")
     r.setAttribute(node, "class", "settings-label")
     r.setTextContent(node, text)
+    # M-EVP-14 round-4: pin the primary label to a fixed vertical
+    # band so it doesn't soak up the row's height share and squeeze
+    # the widget below to a sliver.
+    r.setAttribute(node, "data-fixed-height", "20")
     node
 
   proc descriptionLeaf*(r: CocoaRenderer; text: string): CocoaElement =
     let node = r.createElement("span")
     r.setAttribute(node, "class", "settings-description")
     r.setTextContent(node, text)
+    # M-EVP-14 round-4: the description is the row's flex child;
+    # leaving it unsized so it absorbs any leftover vertical slack
+    # without starving the widget below.
     node
 
   # ----------------------------------------------------------------------------
@@ -79,6 +87,13 @@ when defined(macosx):
                    itemId: string): CocoaElement =
     let node = r.createElement("input")
     r.setAttribute(node, "type", "checkbox")
+    # M-EVP-14 round-4: pin the toggle widget to AppKit's natural
+    # NSSwitch / NSButton (checkbox) height so the layout pass
+    # reserves a real vertical band instead of compressing the
+    # widget into a single-pixel strip (which is what the round-3
+    # equal-flex split left after label + description + widget all
+    # took 17 px each inside a 52 px row).
+    r.setAttribute(node, "data-fixed-height", "24")
     let captured = vmRef
     let id = itemId
     let rCaptured = r
@@ -120,6 +135,13 @@ when defined(macosx):
     r.setAttribute(host, "data-step", $stepValue)
     if suffix.len > 0:
       r.setAttribute(host, "data-suffix", suffix)
+    # M-EVP-14 round-4: pin the number-stepper widget to AppKit's
+    # natural NSTextField + NSStepper composite height. Lay the
+    # input and suffix out horizontally inside the host so the
+    # stepper's input bezel + suffix glyph sit side by side instead
+    # of stacking vertically and halving each other's slice.
+    r.setAttribute(host, "data-layout", "horizontal")
+    r.setAttribute(host, "data-fixed-height", "24")
 
     let inputNode = r.createElement("input")
     r.setAttribute(inputNode, "type", "number")
@@ -156,6 +178,9 @@ when defined(macosx):
       let suffixNode = r.createElement("span")
       r.setAttribute(suffixNode, "class", "settings-number-suffix")
       r.setTextContent(suffixNode, suffix)
+      # M-EVP-14 round-4: trailing suffix sits in a narrow band so the
+      # input bezel claims the row's remaining horizontal slice.
+      r.setAttribute(suffixNode, "data-fixed-width", "32")
       r.appendChild(host, suffixNode)
 
     host
@@ -169,6 +194,13 @@ when defined(macosx):
     let host = r.createElement("div")
     r.setAttribute(host, "class", "settings-choice")
     r.setAttribute(host, "data-options", options.join("|"))
+    # M-EVP-14 round-4: pin the choice (NSPopUpButton) widget to its
+    # natural AppKit height so the layout pass doesn't compress it
+    # into a single-pixel strip. The host itself is a thin wrapper
+    # around the live <select>; the inner select view consumes the
+    # full slice via the default vertical-stack split (single child
+    # → flex eats everything).
+    r.setAttribute(host, "data-fixed-height", "24")
 
     let selectNode = r.createElement("select")
     let captured = vmRef

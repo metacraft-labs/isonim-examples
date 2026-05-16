@@ -106,26 +106,52 @@ when defined(android) or defined(mockJni):
 
   proc toggleLeaf*(r: AndroidRenderer; vmRef: SettingsVM;
                    itemId: string): AndroidElement =
-    ## Round-3 fix: render the toggle as a styled M3 switch *track*.
+    ## Round-4 fix: drop the flat-pill "OFF"/"ON" label rectangle the
+    ## round-3 leaf rendered (the reviewer flagged it as not reading
+    ## like an M3 switch) and build a real M3 switch shape: an outer
+    ## pill *track* (52 x 32 dp, 16 dp radius) plus an inner round
+    ## *thumb* (24 dp circle) that lives at the leading edge when off
+    ## and the trailing edge when on.  No more inline text; the thumb
+    ## position is the affordance.
     ##
-    ## The element keeps `type="checkbox"` so the cross-renderer parity
-    ## driver (`tests/test_settings_parity_across_renderers.nim`'s
-    ## `androidToggleOf`) still resolves it as the row's last child.
-    ## We also keep a `<button>` tag (mapped to `MaterialButton` by the
-    ## Android renderer) so on the device the styled background is
-    ## drawn as a clickable, visible widget — `<input>` (mapped to
-    ## `EditText`) would have shown a text caret instead.
-    let node = r.createElement("button")
+    ## The element switches from `<button>` to `<div>` (mapped to
+    ## `LinearLayout`) so it can host the thumb child.  The
+    ## `type="checkbox"` attribute moves with it — the cross-renderer
+    ## parity driver (`tests/test_settings_parity_across_renderers.nim`'s
+    ## `androidToggleOf`) walks the row's last child and matches on
+    ## `getAttribute(last, "type") == "checkbox"`, so the contract is
+    ## preserved.  `setOnClickListener` works on any `View`, so the
+    ## click handler keeps firing into the same code path.
+    let node = r.createElement("div")
     r.setAttribute(node, "type", "checkbox")
     r.setAttribute(node, "class", "settings-toggle")
-    # M3 switch track metric — 60 x 32 dp, 16 dp radius (full pill).
-    # The 52 dp width round-1 used clipped the inline "OFF" label on
-    # the device.
-    r.setStyle(node, "width", "60")
+    # M3 switch track metric — 52 x 32 dp pill.
+    r.setStyle(node, "width", "52")
     r.setStyle(node, "height", "32")
     r.setStyle(node, "border-radius", "16")
-    r.setStyle(node, "color", "#ffffff")
-    r.setStyle(node, "font-size", "12")
+    # Horizontal layout so the thumb child can be pushed to the
+    # leading / trailing edge via flex-grow on a sibling spacer.
+    r.setStyle(node, "flex-direction", "row")
+
+    # Two spacers + a thumb.  When OFF, the trailing spacer takes all
+    # the slack and the thumb sits at the leading edge; when ON, the
+    # leading spacer takes the slack and the thumb sits at the
+    # trailing edge.  We toggle the spacer widths by toggling their
+    # `flex-grow` weights inside the render effect below.
+    let leadSpacer = r.createElement("div")
+    r.appendChild(node, leadSpacer)
+
+    let thumb = r.createElement("div")
+    # M3 thumb metric — 24 dp circle, indigo when on / muted when off.
+    r.setStyle(thumb, "width", "24")
+    r.setStyle(thumb, "height", "24")
+    r.setStyle(thumb, "border-radius", "12")
+    r.setStyle(thumb, "background-color", "#ffffff")
+    r.appendChild(node, thumb)
+
+    let trailSpacer = r.createElement("div")
+    r.appendChild(node, trailSpacer)
+
     let captured = vmRef
     let id = itemId
     let rCaptured = r
@@ -136,11 +162,15 @@ when defined(android) or defined(mockJni):
       if value:
         rCaptured.setAttribute(node, "checked", "checked")
         rCaptured.setStyle(node, "background-color", onTrackIndigo)
-        rCaptured.setTextContent(node, "ON")
+        # Thumb to the trailing edge.
+        rCaptured.setStyle(leadSpacer, "flex-grow", "1")
+        rCaptured.setStyle(trailSpacer, "flex-grow", "0")
       else:
         rCaptured.removeAttribute(node, "checked")
         rCaptured.setStyle(node, "background-color", offTrackGrey)
-        rCaptured.setTextContent(node, "OFF")
+        # Thumb to the leading edge.
+        rCaptured.setStyle(leadSpacer, "flex-grow", "0")
+        rCaptured.setStyle(trailSpacer, "flex-grow", "1")
     r.addEventListener(node, "click", proc() =
       let current = rCaptured.getAttribute(node, "data-value") == "true"
       discard captured.setToggle(id, not current))
@@ -395,14 +425,35 @@ when defined(android) or defined(mockJni):
   # ----------------------------------------------------------------------------
 
   proc groupContainerLeaf*(r: AndroidRenderer): AndroidElement =
+    ## Round-4 fix: wrap the group in its own M3 *surface card* so the
+    ## catalogue reads as a stack of discrete cards rather than a flat
+    ## run of headers.  Each group now gets the same neutral surface
+    ## fill, 12 dp rounded corners, 4 dp elevation, and 12 dp interior
+    ## padding the task_app rows already use.  The leaves only emit
+    ## the styling; the MainActivity `applyStyle` handler interprets
+    ## `elevation` via `View.elevation` (a real M3 shadow), with the
+    ## GradientDrawable corner radius drawing the rounded surface.
     let node = r.createElement("section")
     r.setAttribute(node, "class", "settings-group")
     r.setAttribute(node, ComponentPathAttr, SettingsGroupPath)
     r.setAttribute(node, ElementKindAttr, "group")
+    r.setStyle(node, "background-color", surfaceCard)
+    r.setStyle(node, "border-radius", "12")
+    r.setStyle(node, "padding", "12")
+    r.setStyle(node, "elevation", "4")
     node
 
   proc groupHeaderLeaf*(r: AndroidRenderer; label, description: string):
                        AndroidElement =
+    ## Round-4 fix: the round-3 review still flagged the header
+    ## typography as eating ~30 % of the preview before any item was
+    ## visible. The h2 tag maps to TextView with no default font-size,
+    ## but Android's TextView default sp (~14) plus the `<h2>` semantic
+    ## hint at large defaults — the leaf now sets `font-size` to a
+    ## tight M3 `titleMedium` (16 sp) explicitly and drops the
+    ## description size to 11 sp (M3 `labelSmall`).  The header host's
+    ## vertical padding shrinks from 8 dp to 4 dp so the row no longer
+    ## squats over the group's items.
     let host = r.createElement("header")
     r.setAttribute(host, "class", "settings-group-header")
     r.setAttribute(host, "data-label", label)
@@ -410,14 +461,12 @@ when defined(android) or defined(mockJni):
     r.setAttribute(host, ElementKindAttr, "group-header")
     if description.len > 0:
       r.setAttribute(host, "data-description", description)
-    # Round-3 fix: give the group header a touch of visual weight (16
-    # sp label + 8 dp vertical padding) so the catalogue reads as a
-    # series of groups rather than a flat run of items.
-    r.setStyle(host, "padding", "8")
+    r.setStyle(host, "padding", "4")
 
     let h2 = r.createElement("h2")
     r.setAttribute(h2, "class", "settings-group-header-label")
     r.setTextContent(h2, label)
+    # M3 titleMedium = 16 sp.
     r.setStyle(h2, "font-size", "16")
     r.setStyle(h2, "color", onSurface)
     r.appendChild(host, h2)
@@ -426,7 +475,9 @@ when defined(android) or defined(mockJni):
       let p = r.createElement("p")
       r.setAttribute(p, "class", "settings-group-header-description")
       r.setTextContent(p, description)
-      r.setStyle(p, "font-size", "12")
+      # M3 labelSmall = 11 sp — keeps the secondary line subordinate
+      # to the title.
+      r.setStyle(p, "font-size", "11")
       r.setStyle(p, "color", mutedText)
       r.appendChild(host, p)
 

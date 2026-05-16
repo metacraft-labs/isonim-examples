@@ -107,10 +107,20 @@ proc taskInput*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   ## here and width=30 (inner padded with single spaces, outer 34) on
   ## the list — the resulting 32 vs 34 mismatch was the visible
   ## "input box doesn't align with the list" gap reviewers flagged.
+  # Round-4: prepend a single leading space to the placeholder so the
+  # hint text does not touch the input frame's left border. The
+  # underlying InputWidget renders the placeholder verbatim inside
+  # ``│ … │`` walls with no interior padding of its own, so the
+  # leading space is the simplest way to add visual breathing room
+  # without modifying the widget. Once the user types, the value
+  # text replaces the placeholder and inherits the same offset only
+  # if they happen to start with whitespace — for non-empty values
+  # we keep the raw input so the cursor lines up with the first
+  # character of the user's text.
   let s = leavesFor(vm)
   let inp = newInput(r,
     value = vm.inputText.val,
-    placeholder = "New task...",
+    placeholder = " New task...",
     width = 32,
     border = bsRound,
     onChange = makeInputChangeHandler(vm),
@@ -340,7 +350,7 @@ proc summaryBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   # matching ``skVectorSymbol`` story.
   #
   # M-EVP-14 round-3 polish: the icon span's visible text is repurposed
-  # as a single check glyph (`v`) padded inside a minimal-width frame —
+  # as a single check glyph padded inside a minimal-width frame —
   # specifically a one-character text node so the compositor (a) emits
   # exactly one row for the icon (keeping the cell-region non-zero so
   # the cross-renderer manifest walker still includes
@@ -348,8 +358,16 @@ proc summaryBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   # a single tiny glyph instead of an unframed multi-character word.
   # The component-path + ``vector-symbol`` kind annotations stay on the
   # span so the editor's dblclick → vector-editor path still resolves.
+  #
+  # Round-4: the prior placeholder was the bare letter ``v``, which
+  # read as an unmoored caret/typo at the bottom-left of the summary
+  # bar on the GPUI / Freya / Cocoa / Android cells (the web cell
+  # omits this leaf entirely, hence the cross-backend asymmetry).
+  # Repurposing the text as a Unicode check mark keeps the leaf
+  # semantically meaningful (it now reads as the "tasks completed"
+  # indicator) without growing the rendered cell region.
   let icon = r.createElement("span")
   r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
   r.setAttribute(icon, ElementKindAttr, "vector-symbol")
-  r.appendChild(icon, r.createTextNode("v"))
+  r.appendChild(icon, r.createTextNode("✓"))
   r.appendChild(summaryRef, icon)
