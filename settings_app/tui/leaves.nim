@@ -84,6 +84,11 @@ proc itemContainerLeaf*(r: TerminalRenderer): TerminalNode =
   # manifest the launcher emits can resolve clicks back to a story.
   r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
   r.setAttribute(node, ElementKindAttr, "row")
+  # Opt the container into the compositor's inline-row layout mode so
+  # the row renders as ``Label  …  [widget]`` on a single line, with
+  # any description span on its own row below (compositor.nim's
+  # `walkLayoutImpl` honours ``data-tui-row="inline"``).
+  r.setAttribute(node, "data-tui-row", "inline")
   node
 
 proc labelLeaf*(r: TerminalRenderer; text: string): TerminalNode =
