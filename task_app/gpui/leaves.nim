@@ -267,24 +267,24 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   else:
     r.setStyle(row, "color", "#e8e9f0")
 
-  # Round-3 review: the leading `[ ]` / `[x]` toggle glyph was being
-  # visually missed in screenshots (muted dark-on-dark fill). Pin
-  # explicit pill geometry and a brighter off-state fill so the
-  # completion control is unambiguously visible at the row's leading
-  # edge — the brief requires `[toggle] [title] [×]` in horizontal flex.
-  let toggleBtn = r.createElement("button")
-  let marker = if t.completed: "[x]" else: "[ ]"
-  r.setTextContent(toggleBtn, marker)
+  # Round-5 review: GPUI's idiom expectation is "flat surface + rounded
+  # corners", not ASCII brackets. Drop the `[ ]` / `[x]` text marker and
+  # render the toggle as a small (~14 px) stroked square: indigo when
+  # on, neutral when off, with a ✓ glyph inside the on-state. The GPUI
+  # shim does honour textContent on a filled div, so the check-mark
+  # paints inside the square once flipped.
+  let toggleBtn = r.createElement("div")
   if t.completed:
     r.setStyle(toggleBtn, "background", "#7c7aed")
     r.setStyle(toggleBtn, "color", "#ffffff")
+    r.setTextContent(toggleBtn, "✓")
   else:
     r.setStyle(toggleBtn, "background", "#3a3a52")
     r.setStyle(toggleBtn, "color", "#e8e9f0")
-  r.setStyle(toggleBtn, "width", "24")
-  r.setStyle(toggleBtn, "height", "24")
-  r.setStyle(toggleBtn, "padding", "4")
-  r.setStyle(toggleBtn, "border-radius", "4")
+    r.setTextContent(toggleBtn, "")
+  r.setStyle(toggleBtn, "width", "14")
+  r.setStyle(toggleBtn, "height", "14")
+  r.setStyle(toggleBtn, "border-radius", "3")
   r.setStyle(toggleBtn, "cursor", "pointer")
   r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
   r.appendChild(row, toggleBtn)

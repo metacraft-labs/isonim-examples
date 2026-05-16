@@ -249,8 +249,32 @@ when defined(macosx):
     r.setAttribute(node, ElementKindAttr, "group")
     node
 
-  proc groupHeaderLeaf*(r: CocoaRenderer; label, description: string):
-                       CocoaElement =
+  proc groupHeaderLeaf*(r: CocoaRenderer; label, description: string;
+                        isFirst: bool = true): CocoaElement =
+    ## Round-5 review: group headers previously rendered at the same
+    ## visible weight as item labels (system NSTextField default ~13 px
+    ## regular), so the eye had to count rows to find a group boundary.
+    ## Three changes:
+    ##
+    ##   1. Set ``font-weight: 600`` on the header label. The current
+    ##      Cocoa adapter silently drops this style key, but the leaf
+    ##      now carries forward-compatible intent; once
+    ##      ``isonim-cocoa/src/.../renderer.nim`` honours it (a
+    ##      one-line ``boldSystemFontOfSize:`` wiring on top of the
+    ##      existing ``setFontSize`` AppKit helper), the label will
+    ##      render in a semibold weight on the device.
+    ##   2. Bump the label's ``font-size`` so the header reads visibly
+    ##      heavier than the item labels even *before* the font-weight
+    ##      wiring lands — font-size is already plumbed end-to-end
+    ##      through ``setFontSize`` (uses ``NSFont systemFontOfSize:``).
+    ##      A header at 15 px reads as a "title" band relative to the
+    ##      ~13 px body labels below.
+    ##   3. For every non-first group header, bump the header's fixed
+    ##      band from 44 px → 52 px. The adapter reserves the extra
+    ##      8 px as effective top-of-section spacing (the header itself
+    ##      keeps its visual content centred via its own padding) so
+    ##      the group boundary reads as a deliberate gap rather than a
+    ##      seamless row run.
     let host = r.createElement("header")
     r.setAttribute(host, "class", "settings-group-header")
     r.setAttribute(host, "data-label", label)
@@ -259,13 +283,22 @@ when defined(macosx):
     # M-EVP-14 round-3: pin the header to a fixed height so the
     # group-container layout reserves its slice up front and lets
     # the per-item rows below claim the remaining vertical space.
-    r.setAttribute(host, "data-fixed-height", "44")
+    # Round-5: non-first headers get ~8 px extra band as inter-group
+    # spacing.
+    if isFirst:
+      r.setAttribute(host, "data-fixed-height", "44")
+    else:
+      r.setAttribute(host, "data-fixed-height", "52")
     if description.len > 0:
       r.setAttribute(host, "data-description", description)
 
     let h2 = r.createElement("h2")
     r.setAttribute(h2, "class", "settings-group-header-label")
     r.setTextContent(h2, label)
+    # Round-5 visual hierarchy: semibold + slightly larger so the
+    # header label is unambiguously heavier than the body item labels.
+    r.setStyle(h2, "font-weight", "600")
+    r.setStyle(h2, "font-size", "15")
     r.appendChild(host, h2)
 
     if description.len > 0:

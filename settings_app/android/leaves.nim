@@ -87,8 +87,15 @@ when defined(android) or defined(mockJni):
     r.setAttribute(node, "class", "settings-label")
     r.setTextContent(node, text)
     # M3 bodyLarge for the primary label; tinted to the on-surface
-    # neutral so it pops against the dark card background.
+    # neutral so it pops against the dark card background.  Round-5:
+    # add an explicit medium-weight hint so the label reads as the
+    # row's title relative to the description below.  The Android
+    # NimBridge currently drops ``font-weight`` (no
+    # ``Paint.setTypeface(Typeface.create(_, MEDIUM))`` wiring on the
+    # TextView side yet), but the leaf carries forward-compatible
+    # intent.
     r.setStyle(node, "font-size", "16")
+    r.setStyle(node, "font-weight", "500")
     r.setStyle(node, "color", onSurface)
     node
 
@@ -96,7 +103,17 @@ when defined(android) or defined(mockJni):
     let node = r.createElement("span")
     r.setAttribute(node, "class", "settings-description")
     r.setTextContent(node, text)
-    r.setStyle(node, "font-size", "12")
+    # Round-5 review: M3 spec says summary text is ``bodyMedium`` (14 sp,
+    # regular weight) on ``colorOnSurfaceVariant``.  The round-4 size of
+    # 12 sp ran the description too thin against the 16 sp label; the
+    # M3-correct treatment is 14 sp + ``onSurfaceVariant`` (the muted-
+    # text token) at regular weight (``font-weight: 400``).  Explicitly
+    # setting ``font-weight: 400`` is forward-compatible: the Android
+    # NimBridge currently drops it, but the leaf documents the M3
+    # bodyMedium intent so the description never inherits the label's
+    # medium weight if the upstream wiring lands.
+    r.setStyle(node, "font-size", "14")
+    r.setStyle(node, "font-weight", "400")
     r.setStyle(node, "color", mutedText)
     node
 

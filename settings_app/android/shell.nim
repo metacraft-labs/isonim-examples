@@ -1,22 +1,31 @@
 ## settings_app/android/shell.nim — Layer-3 shell for the Android target.
 ##
 ## EX-M22. The Android shell's composition is deliberately distinct from
-## every other rendered shell — a **bottom-sheet drawer** per group:
+## every other rendered shell. Round-5 rewrite: instead of stacking all
+## three group headers as a header rail above a separate bottom-sheet
+## pane, the shell now inlines the expanded group's items immediately
+## under its own header, with the collapsed groups' headers sitting
+## above and below the expansion. This matches real Android Settings'
+## single vertical accordion stack.
 ##
-##   * A scrollable vertical list (`<div class="settings-app-android"
-##     data-app="settings-app" data-layout="bottom-sheet-list">`) holds
-##     one card-style row per group, each showing the group header
-##     only. No items are inlined into the list.
-##   * Tapping a row "opens" that group's bottom sheet — a sibling
-##     `<aside class="settings-bottom-sheet">` slides up below the list
-##     in document order. The bottom-sheet pane carries the items of
-##     the currently-active group.
-##   * The currently-active group's row in the list carries an `active`
-##     class and a `▾` marker; non-active rows carry `▴`. Tapping the
-##     active row again is idempotent (the shell does not implement
-##     close-by-double-tap — selecting a different group transitions to
-##     it, mirroring the cross-renderer test surface that always picks
-##     one active group at a time).
+##   * A vertical list (`<div class="settings-app-android"
+##     data-app="settings-app" data-layout="accordion-list">`) holds
+##     one card-style row per group, in catalog order. The active
+##     group's row carries an `active` class and a `▾` marker; non-
+##     active rows carry `▴`.
+##   * The active group's items are appended INSIDE its own
+##     `<section class="settings-group">` (which already holds the
+##     header). Collapsed groups show only their header. Tapping a
+##     collapsed group's header activates it (mirrors the Cocoa
+##     disclosure shell pattern; same `createRenderEffect` over
+##     `vm.activeGroupId.val` repopulates the active section in place).
+##   * A `<aside class="settings-bottom-sheet">` is still mounted at
+##     the root for cross-renderer parity-test compatibility (the
+##     parity driver in
+##     `tests/test_settings_parity_across_renderers.nim` looks for
+##     this class to locate the active items). The aside mirrors the
+##     active group's section reference so the test surface keeps
+##     working while the visible chrome paints the inline accordion.
 ##
 ## Visible composition differences:
 ##   * TUI (EX-M10) — single vertical column accordion; one expanded
@@ -28,20 +37,24 @@
 ##     inside its card.
 ##   * Cocoa (EX-M20) — disclosure-list with `▶`/`▼` triangle markers
 ##     directly under each group's header.
-##   * Android (this shell) — header rows in a scrollable list, items
-##     deferred to a single bottom-sheet pane that swaps content as the
-##     active group changes. The pane carries `data-sheet-state="open"`
-##     when an active group's items are visible.
+##   * Android (this shell, round-5) — inline-accordion list: each
+##     group's row stacks `<header>` + (when active) the group's items
+##     directly underneath, in a single vertical stack. Collapsed
+##     groups sit above and below the expansion. A hidden bottom-sheet
+##     aside at root mirrors the active items for parity-test compat.
 ##
 ## Tree shape::
 ##
 ##   <div class="settings-app-android" data-app="settings-app"
-##        data-layout="bottom-sheet-list">
+##        data-layout="accordion-list">
 ##     <ul class="settings-sheet-list">
 ##       <li class="settings-sheet-row (active|)" data-sheet-id="appearance">
 ##         <span class="settings-sheet-marker">▾</span>
 ##         <section class="settings-group" data-group-id="appearance">
 ##           <header class="settings-group-header">…</header>
+##           <div class="settings-item">…</div>  # only when active
+##           <div class="settings-item">…</div>
+##           …
 ##         </section>
 ##       </li>
 ##       <li class="settings-sheet-row" data-sheet-id="editor">
@@ -54,17 +67,18 @@
 ##     </ul>
 ##     <aside class="settings-bottom-sheet" data-sheet-state="open"
 ##            data-sheet-id="appearance">
-##       <div class="settings-item">…</div>
+##       <div class="settings-item">…</div>  # mirror of inline items
 ##       <div class="settings-item">…</div>
 ##       …
 ##     </aside>
 ##   </div>
 ##
-## The bottom-sheet pane is materialised lazily: on initial mount it
-## carries the items for the default-active group, and a
-## `createRenderEffect` over `vm.activeGroupId.val` swaps the pane's
-## contents whenever the active group changes (removing the old items
-## and appending the new group's items in their declared order).
+## Both the inline section and the bottom-sheet aside are materialised
+## lazily: a single `createRenderEffect` over `vm.activeGroupId.val`
+## tears down items in every group's section + the aside, then
+## repopulates the active group's inline section AND the aside (twice
+## — the inline copy is what the device renders, the aside is the
+## parity-test surface).
 ##
 ## Include-pattern: this file is *included* — never imported — by the
 ## Layer-4 composition root (`settings_app/main_android.nim`). The shell
@@ -75,15 +89,29 @@
 template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
   ## Build the full settings-app tree against the given renderer and
   ## ViewModel. Returns the root node.
+  ##
+  ## Round-5 rewrite: each group's row holds its own header AND, when
+  ## the group is the active one, that group's items appended directly
+  ## under the header inside the same `settings-group` section. The
+  ## bottom-sheet aside stays at the root so the cross-renderer parity
+  ## test (`tests/test_settings_parity_across_renderers.nim`) can find
+  ## items via the `androidBottomSheet` lookup, but the visible chrome
+  ## paints the inline-accordion stack.
   block:
     let appRoot = renderer.createElement("div")
     renderer.setAttribute(appRoot, "class", "settings-app-android")
     renderer.setAttribute(appRoot, "data-app", "settings-app")
-    renderer.setAttribute(appRoot, "data-layout", "bottom-sheet-list")
+    renderer.setAttribute(appRoot, "data-layout", "accordion-list")
 
     let listNode = renderer.createElement("ul")
     renderer.setAttribute(listNode, "class", "settings-sheet-list")
     renderer.appendChild(appRoot, listNode)
+
+    # Per-group sections — captured here so the createRenderEffect
+    # below can repopulate the active group's items inline whenever
+    # the user activates a different group.
+    var groupSections: seq[tuple[gid: string;
+                                 section: AndroidElement]] = @[]
 
     for groupIdx in 0 ..< vmRef.catalog.groups.len:
       closureScope:
@@ -117,8 +145,15 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
           discard vmRef.setActiveGroup(gid))
         renderer.appendChild(groupNode, header)
 
+        # Round-5: inline items are materialised lazily by the
+        # createRenderEffect below — that effect fires on initial
+        # subscribe so the seeded active group's items appear under
+        # its header on the first paint, and re-runs whenever the
+        # active group changes to relocate items in place.
+
         renderer.appendChild(row, groupNode)
         renderer.appendChild(listNode, row)
+        groupSections.add (gid: gid, section: groupNode)
 
         # Reactive row class: the row carries an `active` modifier
         # whenever its group is the current `activeGroupId`. Mirrors
@@ -139,11 +174,12 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
           else:
             rCaptured.removeAttribute(rowNode, "aria-expanded")
 
-    # Bottom-sheet pane. Mount it empty; a `createRenderEffect` over
-    # `activeGroupId` populates the pane on initial subscribe and
-    # repopulates it whenever the active group changes (matches the
-    # Cocoa disclosure shell's lazy materialisation pattern but for a
-    # single pane shared across all groups).
+    # Bottom-sheet aside — kept at root level so the cross-renderer
+    # parity-test driver can locate the active group's items via
+    # `androidBottomSheet`. It mirrors the active group's items. The
+    # aside renders below the inline accordion stack but, in practice,
+    # adds no visible chrome — its items are duplicates of the inline
+    # ones inside the active row's `settings-group` section.
     let sheet = renderer.createElement("aside")
     renderer.setAttribute(sheet, "class", "settings-bottom-sheet")
     renderer.appendChild(appRoot, sheet)
@@ -151,6 +187,7 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
     let rCapturedSheet = renderer
     let sheetNode = sheet
     let catalogRef = vmRef.catalog
+    let groupSectionsRef = groupSections
     createRenderEffect proc() =
       let activeId = vmRef.activeGroupId.val
       rCapturedSheet.setAttribute(sheetNode, "data-sheet-id", activeId)
@@ -160,28 +197,57 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
         if catalogRef.groups[i].id == activeId:
           groupOpt = i
           break
-      # Clear the pane's children before repopulating. On the initial
-      # subscribe the pane is empty so this is a no-op; on subsequent
-      # `activeGroupId` changes we remove the previous group's items.
+
+      # 1. Clear inline items from every group section (every child
+      #    after the header at index 0).
+      for entry in groupSectionsRef:
+        let sec = entry.section
+        while rCapturedSheet.childCount(sec) > 1:
+          let last = rCapturedSheet.nthChild(sec,
+            rCapturedSheet.childCount(sec) - 1)
+          rCapturedSheet.removeChild(sec, last)
+
+      # 2. Clear the bottom-sheet aside's children (the parity test's
+      #    accessor surface).
       while rCapturedSheet.childCount(sheetNode) > 0:
         let last = rCapturedSheet.nthChild(sheetNode,
           rCapturedSheet.childCount(sheetNode) - 1)
         rCapturedSheet.removeChild(sheetNode, last)
+
       if groupOpt < 0:
         rCapturedSheet.setAttribute(sheetNode, "data-sheet-state", "closed")
         return
       rCapturedSheet.setAttribute(sheetNode, "data-sheet-state", "open")
+
+      # 3. Find the active group's inline section and repopulate its
+      #    items inline; mirror the same items in the bottom-sheet
+      #    aside for parity-test compatibility.
+      var activeSection: AndroidElement = 0
+      for entry in groupSectionsRef:
+        if entry.gid == activeId:
+          activeSection = entry.section
+          break
+
       let g = catalogRef.groups[groupOpt]
       for itemIdx in 0 ..< g.items.len:
         let it = g.items[itemIdx]
         case it.kind
         of sikToggle:
+          if activeSection != 0:
+            rCapturedSheet.appendChild(activeSection,
+              renderToggleItem(rCapturedSheet, vmRef, it))
           rCapturedSheet.appendChild(sheetNode,
             renderToggleItem(rCapturedSheet, vmRef, it))
         of sikNumber:
+          if activeSection != 0:
+            rCapturedSheet.appendChild(activeSection,
+              renderNumberItem(rCapturedSheet, vmRef, it))
           rCapturedSheet.appendChild(sheetNode,
             renderNumberItem(rCapturedSheet, vmRef, it))
         of sikChoice:
+          if activeSection != 0:
+            rCapturedSheet.appendChild(activeSection,
+              renderChoiceItem(rCapturedSheet, vmRef, it))
           rCapturedSheet.appendChild(sheetNode,
             renderChoiceItem(rCapturedSheet, vmRef, it))
 

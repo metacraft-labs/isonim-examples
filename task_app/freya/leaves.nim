@@ -276,13 +276,19 @@ proc filterBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
     let btn = r.createElement("button")
     r.setTextContent(btn, $fm)
     r.setAttribute(btn, "data-filter", $fm)
-    # Round-4: chip-shaped pill (~80×28). Baseline bg/text are the
-    # inactive treatment; the selection effect flips to indigo +
-    # white on the active chip so `All` is visibly distinguishable
-    # from `Active` / `Completed`.
-    # Round-5: shrink the chip a touch (24 px tall) so the filter
-    # strip reads as visibly shorter than the 36 px task rows.
-    r.setStyle(btn, "background", "rgb(34, 35, 46)")
+    # Round-4: chip-shaped pill (~80×28). Round-5 follow-up: the
+    # reactive selection effect didn't always paint over the baseline
+    # `rgb(34, 35, 46)` before the first F-packet was captured, so the
+    # three chips read with identical dark fill in the captured frame.
+    # Apply the active-state styling synchronously at construction
+    # time (matching the Cocoa treatment) so the seeded `All` chip is
+    # already indigo on the first paint; the reactive effect below
+    # then keeps it correct under user-driven filter changes.
+    let initiallyActive = vm.filter.val == fm
+    if initiallyActive:
+      r.setStyle(btn, "background", "rgb(124, 122, 237)")
+    else:
+      r.setStyle(btn, "background", "rgb(34, 35, 46)")
     r.setStyle(btn, "padding", "4")
     r.setStyle(btn, "border-radius", "12")
     r.setStyle(btn, "flex-direction", "row")
@@ -292,12 +298,17 @@ proc filterBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
     r.setStyle(btn, "height", "24")
     r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
     r.appendChild(wrapper, btn)
-    # Visible label as a span child so the raster paints it. The
-    # selection effect updates the span's colour reactively so the
-    # chip text contrasts against either the dark or indigo fill.
+    # Visible label as a span child so the raster paints it. Synchronously
+    # paint the active treatment colour so the seeded label reads white
+    # on the indigo chip on the very first frame; the effect below keeps
+    # it consistent across filter changes.
+    let initialLabelColor =
+      if initiallyActive: "rgb(255, 255, 255)" else: "rgb(160, 162, 176)"
+    let initialLabelWeight = if initiallyActive: "bold" else: "normal"
     let labelSpan = addTextSpan(r, btn, $fm,
-                                color = "rgb(160, 162, 176)",
-                                fontSize = "13", fontWeight = "normal")
+                                color = initialLabelColor,
+                                fontSize = "13",
+                                fontWeight = initialLabelWeight)
     makeFilterSelectionEffect(r, vm, btn, labelSpan, fm)
     s.filterButtons.add btn
 

@@ -97,7 +97,13 @@ suite "EX-M3: GPUI leaves drive the canonical core through the real shim":
     check row0 != nil
     check getAttribute(row0, "data-task-id") == "1"
     check "buy milk" in textContent(row0)
-    check "[ ]" in textContent(row0)
+    # Round-5: GPUI's toggle is now a stroked square; off-state has no
+    # textContent inside (✓ appears only when completed). Earlier round
+    # asserted `"[ ]"` against the ASCII bracket marker; that idiom
+    # was replaced per the reviewer's "flat surface + rounded corners,
+    # not ASCII brackets" note. The off-state probe is now: row text
+    # does NOT contain the ✓ glyph.
+    check "✓" notin textContent(row0)
     # Summary reads "3 of 3 remaining".
     check "3 of 3 remaining" in textContent(s.summaryNode)
 
@@ -111,12 +117,13 @@ suite "EX-M3: GPUI leaves drive the canonical core through the real shim":
     check vm.tasks.data.val[0].completed == true
     check vm.activeCount == 2
     check vm.completedCount == 1
-    # After re-render, the matching row carries the [x] marker and the
-    # "completed" class.
+    # After re-render, the matching row carries the ✓ glyph (round-5
+    # stroked-square toggle replaces the prior `[x]` text marker) and
+    # the "completed" class.
     let row0After = nthChild(s.listNode, 0)
     check row0After != nil
     check getAttribute(row0After, "class") == "completed"
-    check "[x]" in textContent(row0After)
+    check "✓" in textContent(row0After)
     check "2 of 3 remaining" in textContent(s.summaryNode)
 
     # ── 3. Switch filter to Active via the second filter button.
@@ -129,11 +136,11 @@ suite "EX-M3: GPUI leaves drive the canonical core through the real shim":
     check getAttribute(s.filterButtons[1], "class") == "selected"
     check getAttribute(s.filterButtons[2], "class") == ""
     check getAttribute(s.filterButtons[1], "aria-pressed") == "true"
-    # Every visible row is active (no [x] marker).
+    # Every visible row is active (no ✓ glyph in the stroked-square
+    # toggle).
     for i in 0 ..< childCount(s.listNode):
       let row = nthChild(s.listNode, i)
-      check "[x]" notin textContent(row)
-      check "[ ]" in textContent(row)
+      check "✓" notin textContent(row)
 
     # ── 4. Switch filter to Completed; only the toggled task shows.
     fireEvent(s.filterButtons[2], "click")
@@ -141,7 +148,7 @@ suite "EX-M3: GPUI leaves drive the canonical core through the real shim":
     check vm.visibleTasks.len == 1
     check childCount(s.listNode) == 1
     let onlyRow = nthChild(s.listNode, 0)
-    check "[x]" in textContent(onlyRow)
+    check "✓" in textContent(onlyRow)
     check "buy milk" in textContent(onlyRow)
     check getAttribute(s.filterButtons[2], "class") == "selected"
 

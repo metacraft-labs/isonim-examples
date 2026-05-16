@@ -101,7 +101,12 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
         let groupNode = groupContainerLeaf(renderer)
         renderer.setAttribute(groupNode, "data-group-id", gid)
 
-        let header = groupHeaderLeaf(renderer, g.label, g.description)
+        # Round-5: pass ``isFirst`` so the leaf can add ~8 px extra
+        # vertical band above every non-first header (top-of-section
+        # spacing) — the first header sits flush with the catalog's
+        # top edge.
+        let header = groupHeaderLeaf(renderer, g.label, g.description,
+                                     isFirst = groupIdx == 0)
         renderer.setAttribute(header, "data-focusable", "true")
         renderer.setAttribute(header, "data-group-id", gid)
         renderer.addEventListener(header, "click", proc() =

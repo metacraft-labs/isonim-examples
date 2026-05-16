@@ -233,6 +233,26 @@ when defined(android) or defined(mockJni):
       r.setStyle(btn, "height", "36")
       r.setStyle(btn, "flex-grow", "1")
       r.setStyle(btn, "border-radius", "18")
+      # Round-5 fix: paint the active-chip treatment synchronously at
+      # construction time. The reactive `makeFilterSelectionEffect`
+      # below subscribes to `vm.filter.val` and overrides this for any
+      # subsequent filter change — but on first paint, before the
+      # effect's `createRenderEffect` callback fires on the device,
+      # the chip would otherwise render with the default MaterialButton
+      # treatment (transparent fill + faint outline) which read in the
+      # captured frame as if the *second* chip (Active) was somehow
+      # the selected one. Setting bg/color synchronously based on
+      # `vm.filter.val == fm` matches the Cocoa/Freya pattern and
+      # makes `All` visibly indigo on the seeded state's first frame.
+      let initiallyActive = vm.filter.val == fm
+      if initiallyActive:
+        r.setAttribute(btn, "class", "selected")
+        r.setAttribute(btn, "aria-pressed", "true")
+        r.setStyle(btn, "background-color", accentIndigo)
+        r.setStyle(btn, "color", "#ffffff")
+      else:
+        r.setStyle(btn, "background-color", surfaceCard)
+        r.setStyle(btn, "color", accentIndigo)
       makeFilterSelectionEffect(r, vm, btn, fm)
       r.appendChild(wrapper, btn)
       s.filterButtons.add btn
