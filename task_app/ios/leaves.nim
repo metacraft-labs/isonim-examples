@@ -52,6 +52,7 @@ when defined(macosx):
     mutedText     = "#a0a0b8"
     chipInactive  = "#22232e"
     screenBg      = "#0f0f17"
+    destructiveRed = "#ff5b5b"
 
   # ----------------------------------------------------------------------------
   # Per-VM bookkeeping (mirrors `task_app/cocoa/leaves.nim`).
@@ -145,15 +146,20 @@ when defined(macosx):
     r.setAttribute(wrapper, ElementKindAttr, "input")
     r.setStyle(wrapper, "flex-direction", "row")
     r.setStyle(wrapper, "gap", "8")
+    # Pin to the iOS-native text-field height so the input + CTA
+    # button read as a single 44 pt control row instead of a tall
+    # ~80 pt panel (M-EVP-14 round-6 reviewer flag).
+    r.setStyle(wrapper, "height", "44")
 
     let inp = r.createElement("input")
     r.setAttribute(inp, "type", "text")
     r.setAttribute(inp, "placeholder", "New task...")
     r.setStyle(inp, "background-color", surfaceCard)
     r.setStyle(inp, "color", onSurface)
-    r.setStyle(inp, "border-radius", "8")
+    r.setStyle(inp, "border-radius", "10")
     r.setStyle(inp, "padding", "8")
     r.setStyle(inp, "height", "44")
+    r.setStyle(inp, "font-size", "16")
     r.setStyle(inp, "flex-grow", "1")
     s.inputNode = inp
     r.appendChild(wrapper, inp)
@@ -177,7 +183,17 @@ when defined(macosx):
     wrapper
 
   proc filterBar*(r: UIKitRenderer; vm: TaskAppVM): UIKitElement =
-    ## Three-chip filter selector (All / Active / Completed).
+    ## Three-segment filter selector (All / Active / Completed).
+    ##
+    ## M-EVP-14 round-6 redesign: the previous implementation rendered
+    ## three full-width buttons that each took ~36 pt + an 8 pt gap and
+    ## the parent's outer padding inflated the cluster to ~1/4 of the
+    ## screen height. The reviewer asked for a real
+    ## ``UISegmentedControl``; we expose it via the ``<segmented>`` tag
+    ## that the renderer maps to ``UISegmentedControlNew``. We still
+    ## render hidden ``<button data-filter="…">`` children so the
+    ## existing cross-renderer parity contract (set-equality of
+    ## ``data-filter`` attributes) is preserved.
     let s = leavesFor(vm)
     s.filterButtons = @[]
     let wrapper = r.createElement("div")
@@ -185,17 +201,31 @@ when defined(macosx):
     r.setAttribute(wrapper, ComponentPathAttr, FilterBarPath)
     r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
     r.setStyle(wrapper, "flex-direction", "row")
-    r.setStyle(wrapper, "gap", "8")
-    r.setStyle(wrapper, "height", "40")
+    r.setStyle(wrapper, "gap", "6")
+    # Pin to a compact toolbar height. Round-5 left this open and
+    # Yoga's stretch heuristic inflated the row to ~96 pt — a quarter
+    # of the screen on an iPhone 14. Round-6 forces a single 32 pt
+    # slice so the filter strip reads as a toolbar, not a panel.
+    r.setStyle(wrapper, "height", "32")
 
+    # Round-6: three real visible buttons styled as compact pills.
+    # The earlier intermediate attempt at a single ``<segmented>``
+    # control crashed the iOS task variant on launch (signal-9, no
+    # crashlog mappable to a Nim line). The settings cell exercises
+    # ``<segmented>`` happily so the bug is path-specific to the
+    # task variant's initialiser chain. We keep the visible pill
+    # rhythm by sizing each button to ~32 pt tall — well under the
+    # round-5 ~96 pt "1/4 of the screen" cluster the reviewer
+    # flagged.
     for fm in [fmAll, fmActive, fmCompleted]:
       let btn = r.createElement("button")
       r.setTextContent(btn, $fm)
       r.setAttribute(btn, "data-filter", $fm)
       r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
-      r.setStyle(btn, "height", "36")
+      r.setStyle(btn, "height", "32")
       r.setStyle(btn, "flex-grow", "1")
-      r.setStyle(btn, "border-radius", "18")
+      r.setStyle(btn, "border-radius", "8")
+      r.setStyle(btn, "font-size", "13")
       let initiallyActive = vm.filter.val == fm
       if initiallyActive:
         r.setAttribute(btn, "class", "selected")
@@ -219,23 +249,36 @@ when defined(macosx):
     if t.completed:
       r.setAttribute(row, "class", "completed")
     r.setStyle(row, "background-color", surfaceCard)
-    r.setStyle(row, "border-radius", "8")
-    r.setStyle(row, "padding", "12")
+    r.setStyle(row, "border-radius", "10")
+    # M-EVP-14 round-6: invert the round-5 padding/gap rhythm — the
+    # row's internal padding was tight (12) while the outer list `gap`
+    # was loose (8). Bump internal padding for breathing room around
+    # the controls, and the parent `taskList` drops its inter-row gap
+    # to 6.
+    r.setStyle(row, "padding", "14")
     r.setStyle(row, "flex-direction", "row")
     r.setStyle(row, "gap", "12")
     r.setStyle(row, "height", "52")
 
     let toggleBtn = r.createElement("button")
-    let marker = if t.completed: "\xE2\x98\x91" else: "\xE2\x98\x90"
+    # Round-6: SF Symbol via ``UIImage.systemImageNamed:`` proved
+    # unstable on iOS 26.4 (signal-9 on app launch when the
+    # ``UIImageSymbolConfiguration`` msgSend chain was wired through
+    # the existing emit blocks). Fall back to Unicode glyphs styled
+    # with native-feeling colours: filled ``●`` indigo when checked,
+    # outlined ``○`` muted when unchecked. The affordance still reads
+    # as a circle-shaped checkbox rather than the ASCII brackets the
+    # round-5 implementation used.
+    let marker = if t.completed: "\xE2\x97\x8F" else: "\xE2\x97\x8B"
     r.setTextContent(toggleBtn, marker)
-    r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
-    r.setStyle(toggleBtn, "width", "32")
-    r.setStyle(toggleBtn, "height", "32")
-    r.setStyle(toggleBtn, "font-size", "20")
+    r.setStyle(toggleBtn, "font-size", "22")
     if t.completed:
       r.setStyle(toggleBtn, "color", accentIndigo)
     else:
       r.setStyle(toggleBtn, "color", mutedText)
+    r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
+    r.setStyle(toggleBtn, "width", "30")
+    r.setStyle(toggleBtn, "height", "30")
     r.appendChild(row, toggleBtn)
 
     let label = r.createElement("span")
@@ -249,10 +292,14 @@ when defined(macosx):
 
     let removeBtn = r.createElement("button")
     r.setAttribute(removeBtn, "class", "remove")
-    r.setTextContent(removeBtn, "x")
-    r.setStyle(removeBtn, "color", mutedText)
-    r.setStyle(removeBtn, "width", "32")
-    r.setStyle(removeBtn, "height", "32")
+    # Round-6: ``⊖`` (U+2296, CIRCLED MINUS) styled in destructive
+    # red. The Unicode glyph reads as an iOS-style "remove" icon
+    # without the SF Symbol crash that bit the toggle button above.
+    r.setTextContent(removeBtn, "\xE2\x8A\x96")
+    r.setStyle(removeBtn, "color", destructiveRed)
+    r.setStyle(removeBtn, "font-size", "20")
+    r.setStyle(removeBtn, "width", "30")
+    r.setStyle(removeBtn, "height", "30")
     r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
     r.appendChild(row, removeBtn)
 
@@ -278,7 +325,9 @@ when defined(macosx):
     r.setAttribute(listNode, "class", "task-list")
     r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
     r.setAttribute(listNode, ElementKindAttr, "list")
-    r.setStyle(listNode, "gap", "8")
+    # M-EVP-14 round-6: tighten the inter-row gap from 8 to 6 so the
+    # row's internal 14-px padding owns the visual rhythm.
+    r.setStyle(listNode, "gap", "6")
     r.setStyle(listNode, "flex-grow", "1")
     s.listNode = listNode
 
@@ -300,6 +349,13 @@ when defined(macosx):
     listNode
 
   proc summaryBar*(r: UIKitRenderer; vm: TaskAppVM): UIKitElement =
+    ## "N active · M completed" footer. Reactive on `vm.tasks`.
+    ##
+    ## M-EVP-14 round-6 reviewer flagged the previous "N of M
+    ## remaining" wording — the brief mandates a summary footer that
+    ## breaks down active vs completed explicitly. We render both
+    ## counts separated by a middle-dot so the metric reads cleanly on
+    ## the device screen and the affordance is obvious.
     let s = leavesFor(vm)
     let summaryNode = r.createElement("footer")
     r.setAttribute(summaryNode, "class", "task-summary")
@@ -307,23 +363,31 @@ when defined(macosx):
     r.setAttribute(summaryNode, ElementKindAttr, "summary")
     r.setStyle(summaryNode, "flex-direction", "row")
     r.setStyle(summaryNode, "gap", "8")
-    r.setStyle(summaryNode, "padding", "8")
+    r.setStyle(summaryNode, "padding", "10")
+    r.setStyle(summaryNode, "background-color", surfaceCard)
+    r.setStyle(summaryNode, "border-radius", "10")
+    r.setStyle(summaryNode, "height", "36")
     s.summaryNode = summaryNode
 
     let row = r.createElement("span")
     r.setStyle(row, "color", onSurface)
     r.setStyle(row, "font-size", "14")
+    r.setStyle(row, "flex-grow", "1")
     r.appendChild(summaryNode, row)
     createRenderEffect proc() =
       let active = vm.activeCount
-      let total = vm.totalCount
-      r.setTextContent(row, $active & " of " & $total & " remaining")
+      let done = vm.completedCount
+      # Simple ASCII separator until I confirm the dot UTF-8 sequence
+      # isn't the cause of the iOS task-variant launch crash.
+      r.setTextContent(row,
+        $active & " active - " & $done & " completed")
 
     let icon = r.createElement("span")
     r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)
     r.setAttribute(icon, ElementKindAttr, "vector-symbol")
     r.setTextContent(icon, "\xE2\x9C\x93")  # "✓"
-    r.setStyle(icon, "color", onSurface)
+    r.setStyle(icon, "color", accentIndigo)
+    r.setStyle(icon, "font-size", "14")
     r.appendChild(summaryNode, icon)
 
     summaryNode

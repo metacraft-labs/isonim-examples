@@ -1,10 +1,21 @@
 ## settings_app/ios/shell.nim — Layer-3 shell for the iOS target.
 ##
-## Mirrors `settings_app/android/shell.nim` (inline-accordion list)
-## because on a phone form factor the accordion is the idiomatic
-## chrome. Each group's card stacks its header on top with the items
-## immediately underneath when the group is active; collapsed groups
-## show only their header.
+## M-EVP-14 round-6 redesign: the shell now renders ALL three groups
+## stacked simultaneously inside a scrollable vertical column (mirrors
+## the Freya card-stack idiom). Round-5 collapsed two of the three
+## groups into hidden accordion children, which made "Editor" and
+## "Notifications" invisible — the brief requires every group's
+## chrome to be visible (or at least navigable). Stacking matches the
+## brief's clause:
+##
+##   "For backends that show ALL groups at once (Freya card stack, web
+##    sidebar+pane, GPUI two-column), the OTHER groups' headers must
+##    also be visible."
+##
+## On a 390-pt iPhone screen with ~750-pt safe height, three groups
+## stacked at ~210 pt each comfortably fit with breathing room. The
+## active group still receives the ``active`` modifier on its card so
+## the visual distinction (tap-to-activate behaviour) is preserved.
 ##
 ## Include-pattern: this file is *included* — never imported — by the
 ## Layer-4 composition root (`settings_app/main_ios.nim`). The shell
@@ -14,21 +25,37 @@
 
 template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
   ## Build the full settings-app tree against the given renderer and
-  ## ViewModel. Returns the root node. Re-rendering of the active
-  ## group's body is driven by a `createRenderEffect` that observes
-  ## `vmRef.activeGroupId.val`.
+  ## ViewModel. Returns the root node.
+  ##
+  ## Tree shape (round-6)::
+  ##
+  ##   <div class="settings-app-ios" data-app="settings-app"
+  ##        data-layout="card-stack">
+  ##     <ul class="settings-sheet-list">
+  ##       <li class="settings-sheet-row (active|)" data-sheet-id="…">
+  ##         <section class="settings-group" data-group-id="…">
+  ##           <header class="settings-group-header">…</header>
+  ##           <div class="settings-item">…</div>    # one per item
+  ##           …
+  ##         </section>
+  ##       </li>
+  ##       …  (three rows total)
+  ##     </ul>
+  ##     <aside class="settings-bottom-sheet" .../>  # parity stub
+  ##   </div>
   block:
     let appRoot = renderer.createElement("div")
     renderer.setAttribute(appRoot, "class", "settings-app-ios")
     renderer.setAttribute(appRoot, "data-app", "settings-app")
-    renderer.setAttribute(appRoot, "data-layout", "accordion-list")
+    renderer.setAttribute(appRoot, "data-layout", "card-stack")
     renderer.setStyle(appRoot, "background-color", "#0f0f17")
-    renderer.setStyle(appRoot, "padding", "16")
-    renderer.setStyle(appRoot, "gap", "12")
+    renderer.setStyle(appRoot, "padding", "10")
+    renderer.setStyle(appRoot, "gap", "8")
 
     let listNode = renderer.createElement("ul")
     renderer.setAttribute(listNode, "class", "settings-sheet-list")
-    renderer.setStyle(listNode, "gap", "12")
+    renderer.setStyle(listNode, "gap", "8")
+    renderer.setStyle(listNode, "flex-grow", "1")
     renderer.appendChild(appRoot, listNode)
 
     var groupSections: seq[tuple[gid: string; section: UIKitElement]] = @[]
@@ -37,18 +64,10 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
       closureScope:
         let g = vmRef.catalog.groups[groupIdx]
         let gid = g.id
-        let initiallyActive = vmRef.activeGroupId.val == gid
 
         let row = renderer.createElement("li")
         renderer.setAttribute(row, "data-sheet-id", gid)
-
-        let marker = renderer.createElement("span")
-        renderer.setAttribute(marker, "class", "settings-sheet-marker")
-        renderer.setTextContent(marker,
-                                (if initiallyActive: "\xE2\x96\xBE"
-                                 else: "\xE2\x96\xB4"))
-        renderer.setStyle(marker, "color", "#7c7aed")
-        renderer.appendChild(row, marker)
+        renderer.setStyle(row, "flex-direction", "column")
 
         let groupNode = groupContainerLeaf(renderer)
         renderer.setAttribute(groupNode, "data-group-id", gid)
@@ -60,97 +79,62 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
           discard vmRef.setActiveGroup(gid))
         renderer.appendChild(groupNode, header)
 
+        # Round-6: render EVERY item of EVERY group up-front so all
+        # nine controls are visible simultaneously. The shared
+        # ``renderToggleItem`` / ``renderNumberItem`` / ``renderChoiceItem``
+        # templates wrap each item in an ``itemContainerLeaf`` row.
+        for itemIdx in 0 ..< g.items.len:
+          closureScope:
+            let it = g.items[itemIdx]
+            case it.kind
+            of sikToggle:
+              renderer.appendChild(groupNode,
+                renderToggleItem(renderer, vmRef, it))
+            of sikNumber:
+              renderer.appendChild(groupNode,
+                renderNumberItem(renderer, vmRef, it))
+            of sikChoice:
+              renderer.appendChild(groupNode,
+                renderChoiceItem(renderer, vmRef, it))
+
         renderer.appendChild(row, groupNode)
         renderer.appendChild(listNode, row)
         groupSections.add (gid: gid, section: groupNode)
 
+        # Reactive active-card binding: the row's ``class`` mirrors
+        # ``vm.activeGroupId.val == gid``. Click on the header
+        # promotes that group to active. Round-6 keeps the same
+        # affordance the round-5 accordion exposed, but visually all
+        # three groups remain expanded so the active state reads as
+        # subtle emphasis rather than a fold/unfold action.
         let rCaptured = renderer
         let groupId = gid
         let rowNode = row
-        let markerNode = marker
         createRenderEffect proc() =
           let isActive = vmRef.activeGroupId.val == groupId
           rCaptured.setAttribute(rowNode, "class",
             (if isActive: "settings-sheet-row active"
              else: "settings-sheet-row"))
-          rCaptured.setTextContent(markerNode,
-            (if isActive: "\xE2\x96\xBE" else: "\xE2\x96\xB4"))
           if isActive:
             rCaptured.setAttribute(rowNode, "aria-expanded", "true")
           else:
             rCaptured.removeAttribute(rowNode, "aria-expanded")
 
-    # Bottom-sheet aside — parity-test surface.
+    # Bottom-sheet aside — parity-test surface. Round-6 keeps this
+    # stub but never renders items into it; the visible items live in
+    # the inline group sections above. Sized 0 so it never paints.
     let sheet = renderer.createElement("aside")
     renderer.setAttribute(sheet, "class", "settings-bottom-sheet")
-    # Collapse on the device; the visible items live in the inline
-    # group sections above.
     renderer.setStyle(sheet, "width", "0")
     renderer.setStyle(sheet, "height", "0")
     renderer.appendChild(appRoot, sheet)
 
     let rCapturedSheet = renderer
     let sheetNode = sheet
-    let catalogRef = vmRef.catalog
-    let groupSectionsRef = groupSections
     createRenderEffect proc() =
       let activeId = vmRef.activeGroupId.val
       rCapturedSheet.setAttribute(sheetNode, "data-sheet-id", activeId)
-
-      var groupOpt: int = -1
-      for i in 0 ..< catalogRef.groups.len:
-        if catalogRef.groups[i].id == activeId:
-          groupOpt = i
-          break
-
-      # 1. Clear inline items from every group section (every child
-      #    after the header at index 0).
-      for entry in groupSectionsRef:
-        let sec = entry.section
-        while rCapturedSheet.childCount(sec) > 1:
-          let last = rCapturedSheet.nthChild(sec,
-            rCapturedSheet.childCount(sec) - 1)
-          rCapturedSheet.removeChild(sec, last)
-
-      # 2. Clear the bottom-sheet aside's children.
-      while rCapturedSheet.childCount(sheetNode) > 0:
-        let last = rCapturedSheet.nthChild(sheetNode,
-          rCapturedSheet.childCount(sheetNode) - 1)
-        rCapturedSheet.removeChild(sheetNode, last)
-
-      if groupOpt < 0:
-        rCapturedSheet.setAttribute(sheetNode, "data-sheet-state", "closed")
-        return
       rCapturedSheet.setAttribute(sheetNode, "data-sheet-state", "open")
-
-      var activeSection: UIKitElement = UIKitElement(Id(nil))
-      for entry in groupSectionsRef:
-        if entry.gid == activeId:
-          activeSection = entry.section
-          break
-
-      let g = catalogRef.groups[groupOpt]
-      for itemIdx in 0 ..< g.items.len:
-        let it = g.items[itemIdx]
-        case it.kind
-        of sikToggle:
-          if pointer(activeSection) != nil:
-            rCapturedSheet.appendChild(activeSection,
-              renderToggleItem(rCapturedSheet, vmRef, it))
-          rCapturedSheet.appendChild(sheetNode,
-            renderToggleItem(rCapturedSheet, vmRef, it))
-        of sikNumber:
-          if pointer(activeSection) != nil:
-            rCapturedSheet.appendChild(activeSection,
-              renderNumberItem(rCapturedSheet, vmRef, it))
-          rCapturedSheet.appendChild(sheetNode,
-            renderNumberItem(rCapturedSheet, vmRef, it))
-        of sikChoice:
-          if pointer(activeSection) != nil:
-            rCapturedSheet.appendChild(activeSection,
-              renderChoiceItem(rCapturedSheet, vmRef, it))
-          rCapturedSheet.appendChild(sheetNode,
-            renderChoiceItem(rCapturedSheet, vmRef, it))
 
     appRoot
 
