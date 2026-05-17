@@ -359,6 +359,12 @@ when defined(macosx):
     ## the 366-pt content width (390 - 12*2 outer padding), so the
     ## trailing segment doesn't get squeezed off-row.
     r.setStyle(seg, "width", "200")
+    # Wave K2 round-10: darken the selected segment fill so it lifts
+    # off the system-white track in light mode and reads cleanly on
+    # the demo's dark surface in dark mode. `background-color` is
+    # mapped to `-setSelectedSegmentTintColor:` for `uekSegmented`
+    # in the renderer.
+    r.setStyle(seg, "background-color", offTrackGrey)
 
     let segNode = seg
     let segOptions = options
@@ -459,12 +465,16 @@ when defined(macosx):
 
     let h2 = r.createElement("h2")
     r.setAttribute(h2, "class", "settings-group-header-label")
-    r.setTextContent(h2, label)
-    # Largest typography on the cell — strictly larger than label
-    # (14 pt) and the description (10 pt).
-    r.setStyle(h2, "font-size", "16")
-    r.setStyle(h2, "font-weight", "700")
-    r.setStyle(h2, "color", onSurface)
+    # Wave K2 round-10: iOS Settings-app grouped-table caption style —
+    # uppercased, ~13 pt, muted secondary-label colour. The previous
+    # bold black "Appearance" / "Editor" / "Notifications" read as a
+    # generic page heading; UIKit's grouped UITableView convention is
+    # an uppercase muted caption that frames the cells below it.
+    r.setTextContent(h2, label.toUpperAscii())
+    r.setStyle(h2, "font-size", "13")
+    r.setStyle(h2, "font-weight", "500")
+    r.setStyle(h2, "color", "#a0a2b0")
+    r.setStyle(h2, "letter-spacing", "0.5")
     r.appendChild(host, h2)
 
     # Round-6: drop the per-group descriptive subtitle when stacking

@@ -26,7 +26,7 @@
 ## across both mobile renderers.
 
 when defined(macosx):
-  import std/hashes
+  import std/[hashes, strutils]
   import isonim/core/signals
   import isonim/core/computation  # createRenderEffect
   import isonim/dsl/components    # forEachKeyed
@@ -193,15 +193,17 @@ when defined(macosx):
   proc filterBar*(r: UIKitRenderer; vm: TaskAppVM): UIKitElement =
     ## Three-segment filter selector (All / Active / Completed).
     ##
-    ## M-EVP-14 round-6 redesign: the previous implementation rendered
-    ## three full-width buttons that each took ~36 pt + an 8 pt gap and
-    ## the parent's outer padding inflated the cluster to ~1/4 of the
-    ## screen height. The reviewer asked for a real
-    ## ``UISegmentedControl``; we expose it via the ``<segmented>`` tag
-    ## that the renderer maps to ``UISegmentedControlNew``. We still
-    ## render hidden ``<button data-filter="…">`` children so the
-    ## existing cross-renderer parity contract (set-equality of
-    ## ``data-filter`` attributes) is preserved.
+    ## Wave K2 round-10: replace the three hand-rolled pills with a
+    ## real ``UISegmentedControl`` — the iOS-idiom expectation. The
+    ## ``<segmented>`` tag maps to ``UISegmentedControlNew`` (same path
+    ## the settings cell exercises for the Theme picker). The earlier
+    ## intermediate attempt at this crashed the task variant on launch
+    ## but the bug turned out to be the SF-Symbol toggle button, which
+    ## is now a ``<switch>`` — so the path is safe.
+    ##
+    ## Parity contract preserved: we still emit one zero-sized
+    ## ``<button data-filter="…">`` per filter mode so cross-renderer
+    ## probes still see the set of filter options.
     let s = leavesFor(vm)
     s.filterButtons = @[]
     let wrapper = r.createElement("div")
@@ -209,41 +211,66 @@ when defined(macosx):
     r.setAttribute(wrapper, ComponentPathAttr, FilterBarPath)
     r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
     r.setStyle(wrapper, "flex-direction", "row")
-    r.setStyle(wrapper, "gap", "6")
-    # Pin to a compact toolbar height. Round-5 left this open and
-    # Yoga's stretch heuristic inflated the row to ~96 pt — a quarter
-    # of the screen on an iPhone 14. Round-6 forces a single 32 pt
-    # slice so the filter strip reads as a toolbar, not a panel.
+    r.setStyle(wrapper, "gap", "0")
+    # Pin to a compact 32-pt toolbar height — matches the iOS HIG
+    # segmented-control default and reclaims the vertical rhythm the
+    # reviewer flagged on the three-pill layout.
     r.setStyle(wrapper, "height", "32")
 
-    # Round-6: three real visible buttons styled as compact pills.
-    # The earlier intermediate attempt at a single ``<segmented>``
-    # control crashed the iOS task variant on launch (signal-9, no
-    # crashlog mappable to a Nim line). The settings cell exercises
-    # ``<segmented>`` happily so the bug is path-specific to the
-    # task variant's initialiser chain. We keep the visible pill
-    # rhythm by sizing each button to ~32 pt tall — well under the
-    # round-5 ~96 pt "1/4 of the screen" cluster the reviewer
-    # flagged.
-    for fm in [fmAll, fmActive, fmCompleted]:
+    let modes = [fmAll, fmActive, fmCompleted]
+    var labels: seq[string] = @[]
+    for fm in modes: labels.add($fm)
+
+    var initialIdx = 0
+    for i, fm in modes:
+      if vm.filter.val == fm:
+        initialIdx = i
+        break
+
+    let seg = r.createElement("segmented")
+    r.setAttribute(seg, "segments", labels.join(","))
+    r.setAttribute(seg, "selectedIndex", $initialIdx)
+    r.setStyle(seg, "height", "32")
+    r.setStyle(seg, "flex-grow", "1")
+    # Lift the selected segment with a darker indigo fill so it
+    # stands out against the system white track in light mode and
+    # against the demo's dark surface in dark mode. Mapped to
+    # `-setSelectedSegmentTintColor:` for `uekSegmented` in the
+    # renderer's `background-color` handler.
+    r.setStyle(seg, "background-color", accentIndigo)
+
+    let rCaptured = r
+    let segNode = seg
+    let vmCaptured = vm
+    let segModes = @modes
+    r.addEventListener(seg, "click", proc() =
+      let raw = rCaptured.getAttribute(segNode, "selectedIndex")
+      let idx = try: parseInt(raw) except: 0
+      if idx >= 0 and idx < segModes.len:
+        vmCaptured.setFilter(segModes[idx]))
+
+    createRenderEffect proc() =
+      let current = vmCaptured.filter.val
+      var idx = 0
+      for i, fm in segModes:
+        if fm == current:
+          idx = i
+          break
+      rCaptured.setAttribute(segNode, "selectedIndex", $idx)
+
+    r.appendChild(wrapper, seg)
+
+    # Parity contract: one zero-sized ``<button data-filter>`` per
+    # filter mode so cross-renderer probes still see the option set.
+    for fm in modes:
       let btn = r.createElement("button")
-      r.setTextContent(btn, $fm)
+      r.setAttribute(btn, "class", "filter-pill-stub")
       r.setAttribute(btn, "data-filter", $fm)
+      r.setTextContent(btn, $fm)
+      r.setStyle(btn, "width", "0")
+      r.setStyle(btn, "height", "0")
+      r.setStyle(btn, "display", "none")
       r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
-      r.setStyle(btn, "height", "32")
-      r.setStyle(btn, "flex-grow", "1")
-      r.setStyle(btn, "border-radius", "8")
-      r.setStyle(btn, "font-size", "13")
-      let initiallyActive = vm.filter.val == fm
-      if initiallyActive:
-        r.setAttribute(btn, "class", "selected")
-        r.setAttribute(btn, "aria-pressed", "true")
-        r.setStyle(btn, "background-color", accentIndigo)
-        r.setStyle(btn, "color", "#ffffff")
-      else:
-        r.setStyle(btn, "background-color", chipInactive)
-        r.setStyle(btn, "color", accentIndigo)
-      makeFilterSelectionEffect(r, vm, btn, fm)
       r.appendChild(wrapper, btn)
       s.filterButtons.add btn
 
