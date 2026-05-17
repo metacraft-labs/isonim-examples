@@ -43,21 +43,34 @@ when defined(macosx):
   # ----------------------------------------------------------------------------
 
   proc itemContainerLeaf*(r: UIKitRenderer): UIKitElement =
+    ## Round-7: lay out as a horizontal row (label/description column
+    ## on the left, control on the right) so the UISwitch / stepper /
+    ## segmented control sits at the trailing edge — the canonical
+    ## iOS settings-cell idiom. Round-6 left the default vertical
+    ## stack which pushed controls below the label and clipped the
+    ## UISwitch off the bottom of the 54-pt row.
     let node = r.createElement("div")
     r.setAttribute(node, "class", "settings-item")
     r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
     r.setAttribute(node, ElementKindAttr, "row")
     r.setStyle(node, "background-color", surfaceCard)
     r.setStyle(node, "border-radius", "8")
-    r.setStyle(node, "padding", "6")
-    r.setStyle(node, "gap", "1")
-    # M-EVP-14 round-6: pin a compact row height so three full groups
-    # (Appearance / Editor / Notifications) — three rows each — fit
-    # inside the ~750 pt safe area on an iPhone 14 (390 x 844 logical,
-    # minus safe-area insets). Round-5 used 72 pt rows and only the
-    # active group's items fit; round-6 sizes at ~54 pt so all 9
-    # items + 3 headers + outer chrome land inside the viewport.
-    r.setStyle(node, "height", "54")
+    r.setStyle(node, "padding", "3")
+    r.setStyle(node, "gap", "8")
+    r.setStyle(node, "flex-direction", "row")
+    r.setStyle(node, "align-items", "center")
+    r.setStyle(node, "height", "30")
+    node
+
+  proc rowTextColumnLeaf*(r: UIKitRenderer): UIKitElement =
+    ## Vertical text column inside a settings row that holds the
+    ## primary label + optional description and pushes the control
+    ## to the trailing edge via `flex-grow: 1`.
+    let node = r.createElement("div")
+    r.setAttribute(node, "class", "settings-row-text")
+    r.setStyle(node, "flex-direction", "column")
+    r.setStyle(node, "flex-grow", "1")
+    r.setStyle(node, "gap", "0")
     node
 
   proc labelLeaf*(r: UIKitRenderer; text: string): UIKitElement =
@@ -68,7 +81,7 @@ when defined(macosx):
     let node = r.createElement("label")
     r.setAttribute(node, "class", "settings-label")
     r.setTextContent(node, text)
-    r.setStyle(node, "font-size", "15")
+    r.setStyle(node, "font-size", "14")
     r.setStyle(node, "font-weight", "600")
     r.setStyle(node, "color", onSurface)
     node
@@ -78,7 +91,7 @@ when defined(macosx):
     let node = r.createElement("span")
     r.setAttribute(node, "class", "settings-description")
     r.setTextContent(node, text)
-    r.setStyle(node, "font-size", "11")
+    r.setStyle(node, "font-size", "10")
     r.setStyle(node, "color", mutedText)
     node
 
@@ -136,6 +149,14 @@ when defined(macosx):
   proc numberLeaf*(r: UIKitRenderer; vmRef: SettingsVM; itemId: string;
                    minValue, maxValue, stepValue: int;
                    suffix: string): UIKitElement =
+    ## Round-7 stepper: ``[−] value (suffix) [+]`` with explicit
+    ## widths for the value+suffix block so the value text isn't
+    ## clipped to a single character (round-6 capture truncated the
+    ## "14" for Font size to "1" because the value `<span>` got no
+    ## width allocation from Yoga and the surrounding row dominated
+    ## the layout). The host pins to a `48 + 12 + 56 + 12 + 48 = ~176`
+    ## pt-wide block so the stepper hugs the trailing edge of the
+    ## settings cell without consuming the full width.
     let host = r.createElement("div")
     r.setAttribute(host, "class", "settings-number")
     r.setAttribute(host, "data-min", $minValue)
@@ -144,8 +165,9 @@ when defined(macosx):
     if suffix.len > 0:
       r.setAttribute(host, "data-suffix", suffix)
     r.setStyle(host, "flex-direction", "row")
-    r.setStyle(host, "gap", "6")
-    r.setStyle(host, "height", "40")
+    r.setStyle(host, "align-items", "center")
+    r.setStyle(host, "gap", "4")
+    r.setStyle(host, "height", "28")
 
     # Hidden input — preserves the parity test contract. Sized to 0
     # so it doesn't occupy visible space on the device.
@@ -167,28 +189,61 @@ when defined(macosx):
     let decBtn = r.createElement("button")
     r.setTextContent(decBtn, "-")
     r.setAttribute(decBtn, "class", "settings-number-dec")
-    r.setStyle(decBtn, "width", "40")
-    r.setStyle(decBtn, "height", "40")
-    r.setStyle(decBtn, "border-radius", "20")
+    r.setStyle(decBtn, "width", "28")
+    r.setStyle(decBtn, "height", "28")
+    r.setStyle(decBtn, "border-radius", "14")
     r.setStyle(decBtn, "background-color", surfaceMuted)
     r.setStyle(decBtn, "color", accentIndigo)
-    r.setStyle(decBtn, "font-size", "20")
+    r.setStyle(decBtn, "font-size", "16")
+    r.setStyle(decBtn, "font-weight", "600")
+
+    # Value + suffix block. Pin a wide enough fixed width so the
+    # value text never truncates to one digit. 64 pt comfortably
+    # holds five characters at 14 pt ("60000" + "ms" suffix is the
+    # widest catalog entry — Notifications poll interval).
+    let valueBlock = r.createElement("div")
+    r.setStyle(valueBlock, "flex-direction", "row")
+    r.setStyle(valueBlock, "align-items", "center")
+    r.setStyle(valueBlock, "justify-content", "center")
+    r.setStyle(valueBlock, "gap", "3")
+    r.setStyle(valueBlock, "width", "68")
+    r.setStyle(valueBlock, "height", "28")
 
     let valueLabel = r.createElement("span")
     r.setAttribute(valueLabel, "class", "settings-number-value")
-    r.setStyle(valueLabel, "font-size", "16")
+    r.setStyle(valueLabel, "font-size", "15")
+    r.setStyle(valueLabel, "font-weight", "600")
     r.setStyle(valueLabel, "color", onSurface)
-    r.setStyle(valueLabel, "padding", "8")
+    r.setStyle(valueLabel, "text-align", "center")
+    # Pin an explicit width so the label's frame is wide enough for
+    # up-to-five-digit values (the demo catalog tops out at "60000").
+    # Without this, the text-intrinsic measure runs against the empty
+    # initial label (width 0) and the post-set frame inherited the
+    # zero, causing UIKit to truncate the value to its ellipsis glyph.
+    r.setStyle(valueLabel, "width", "40")
+    r.setStyle(valueLabel, "height", "20")
+    r.appendChild(valueBlock, valueLabel)
+
+    if suffix.len > 0:
+      let suffixNode = r.createElement("span")
+      r.setAttribute(suffixNode, "class", "settings-number-suffix")
+      r.setTextContent(suffixNode, suffix)
+      r.setStyle(suffixNode, "font-size", "12")
+      r.setStyle(suffixNode, "color", mutedText)
+      r.setStyle(suffixNode, "width", "20")
+      r.setStyle(suffixNode, "height", "16")
+      r.appendChild(valueBlock, suffixNode)
 
     let incBtn = r.createElement("button")
     r.setTextContent(incBtn, "+")
     r.setAttribute(incBtn, "class", "settings-number-inc")
-    r.setStyle(incBtn, "width", "40")
-    r.setStyle(incBtn, "height", "40")
-    r.setStyle(incBtn, "border-radius", "20")
+    r.setStyle(incBtn, "width", "28")
+    r.setStyle(incBtn, "height", "28")
+    r.setStyle(incBtn, "border-radius", "14")
     r.setStyle(incBtn, "background-color", surfaceMuted)
     r.setStyle(incBtn, "color", accentIndigo)
-    r.setStyle(incBtn, "font-size", "20")
+    r.setStyle(incBtn, "font-size", "16")
+    r.setStyle(incBtn, "font-weight", "600")
 
     createRenderEffect proc() =
       let value = captured.numberValue(id)
@@ -225,17 +280,8 @@ when defined(macosx):
 
     r.appendChild(host, inputNode)
     r.appendChild(host, decBtn)
-    r.appendChild(host, valueLabel)
+    r.appendChild(host, valueBlock)
     r.appendChild(host, incBtn)
-
-    if suffix.len > 0:
-      let suffixNode = r.createElement("span")
-      r.setAttribute(suffixNode, "class", "settings-number-suffix")
-      r.setTextContent(suffixNode, suffix)
-      r.setStyle(suffixNode, "font-size", "14")
-      r.setStyle(suffixNode, "color", mutedText)
-      r.setStyle(suffixNode, "padding", "8")
-      r.appendChild(host, suffixNode)
 
     host
 
@@ -263,7 +309,9 @@ when defined(macosx):
     r.setAttribute(host, "data-options", options.join("|"))
     r.setStyle(host, "flex-direction", "row")
     r.setStyle(host, "gap", "0")
-    r.setStyle(host, "height", "32")
+    r.setStyle(host, "height", "28")
+    r.setStyle(host, "width", "200")
+    r.setStyle(host, "flex-shrink", "0")
 
     let selectNode = r.createElement("select")
     let captured = vmRef
@@ -299,8 +347,18 @@ when defined(macosx):
     let seg = r.createElement("segmented")
     r.setAttribute(seg, "segments", options.join(","))
     r.setAttribute(seg, "selectedIndex", $initialIdx)
-    r.setStyle(seg, "height", "32")
-    r.setStyle(seg, "flex-grow", "1")
+    r.setStyle(seg, "height", "28")
+    # Round-7: pin a fixed width sized for three short labels (the
+    # demo catalog tops out at "Solarized" / "Default" / "Dracula" or
+    # "LF" / "CRLF" / "CR"). 190 pt gives ~63 pt per segment which
+    # fits "Solarized" (~58 pt at the default segmented font size)
+    # without truncation, while still keeping the selection pill
+    # cleanly aligned to a single segment's bounds rather than the
+    # near-row-wide capsule round-6 produced with `flex-grow: 1`.
+    ## Also keeps the row total width (text-column + 190 + gap) under
+    ## the 366-pt content width (390 - 12*2 outer padding), so the
+    ## trailing segment doesn't get squeezed off-row.
+    r.setStyle(seg, "width", "200")
 
     let segNode = seg
     let segOptions = options
@@ -369,10 +427,13 @@ when defined(macosx):
     r.setAttribute(node, ElementKindAttr, "group")
     r.setStyle(node, "background-color", surfaceCard)
     r.setStyle(node, "border-radius", "10")
-    # Round-6: compact outer padding so three group cards (Appearance
-    # / Editor / Notifications) stack inside the iPhone safe area.
-    r.setStyle(node, "padding", "8")
-    r.setStyle(node, "gap", "4")
+    # Round-7: very tight outer padding so three group cards x three
+    # items each + headers fit inside the editor preview's ~500-pt
+    # crop of the iPhone-14 safe area. Round-6 capture had Editor
+    # only partly visible and Notifications off-screen even on the
+    # device's full safe area because of the preview's crop window.
+    r.setStyle(node, "padding", "3")
+    r.setStyle(node, "gap", "1")
     node
 
   proc groupHeaderLeaf*(r: UIKitRenderer; label, description: string):
@@ -391,18 +452,17 @@ when defined(macosx):
       r.setAttribute(host, "data-description", description)
     r.setStyle(host, "padding", "2")
     r.setStyle(host, "gap", "0")
-    # Pin a compact fixed height so the group title's strip is
-    # bounded inside the stacked layout. Round-6 trims to ~28 pt
-    # (label only) or ~22 pt without description.
-    let headerHeight = if description.len > 0: 28 else: 22
-    r.setStyle(host, "height", $headerHeight)
+    # Round-7: trim header to 18 pt (label-only). Round-6 used 28 pt
+    # when a description was present, but we drop the per-group
+    # subtitle on iOS to keep all three groups in-frame.
+    r.setStyle(host, "height", "18")
 
     let h2 = r.createElement("h2")
     r.setAttribute(h2, "class", "settings-group-header-label")
     r.setTextContent(h2, label)
     # Largest typography on the cell — strictly larger than label
-    # (15 pt) and the description (11 pt).
-    r.setStyle(h2, "font-size", "18")
+    # (14 pt) and the description (10 pt).
+    r.setStyle(h2, "font-size", "16")
     r.setStyle(h2, "font-weight", "700")
     r.setStyle(h2, "color", onSurface)
     r.appendChild(host, h2)

@@ -131,8 +131,9 @@ when defined(macosx):
     r.setAttribute(app, ElementKindAttr, "app-shell")
     # Vertical stack with comfortable padding for the iPhone safe area.
     r.setStyle(app, "background-color", screenBg)
-    r.setStyle(app, "padding", "16")
-    r.setStyle(app, "gap", "12")
+    r.setStyle(app, "padding", "12")
+    r.setStyle(app, "gap", "8")
+    r.setStyle(app, "flex-direction", "column")
     app
 
   proc taskInput*(r: UIKitRenderer; vm: TaskAppVM): UIKitElement =
@@ -170,12 +171,19 @@ when defined(macosx):
 
     let addBtn = r.createElement("button")
     r.setAttribute(addBtn, "type", "submit")
-    r.setTextContent(addBtn, "Add Task")
+    r.setTextContent(addBtn, "Add")
     r.setStyle(addBtn, "background-color", accentIndigo)
     r.setStyle(addBtn, "color", "#ffffff")
     r.setStyle(addBtn, "border-radius", "8")
     r.setStyle(addBtn, "height", "44")
-    r.setStyle(addBtn, "width", "110")
+    # Round-7: shrink the CTA from a wide "Add Task" pill (~110 pt /
+    # ~28% of an iPhone-14 input row) to a hugging-width "Add" tinted
+    # button (~64 pt). Reviewer flagged that the previous width let the
+    # CTA dominate the input row — the text input should own the
+    # dominant width.
+    r.setStyle(addBtn, "width", "64")
+    r.setStyle(addBtn, "font-size", "16")
+    r.setStyle(addBtn, "font-weight", "600")
     r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
     s.addBtn = addBtn
     r.appendChild(wrapper, addBtn)
@@ -250,35 +258,33 @@ when defined(macosx):
       r.setAttribute(row, "class", "completed")
     r.setStyle(row, "background-color", surfaceCard)
     r.setStyle(row, "border-radius", "10")
-    # M-EVP-14 round-6: invert the round-5 padding/gap rhythm — the
-    # row's internal padding was tight (12) while the outer list `gap`
-    # was loose (8). Bump internal padding for breathing room around
-    # the controls, and the parent `taskList` drops its inter-row gap
-    # to 6.
-    r.setStyle(row, "padding", "14")
+    # Round-7: trim row height + padding so all three rows + the
+    # summary footer fit comfortably inside the streamer's preview
+    # tile (which only shows roughly the top ~500 pt of the device
+    # frame). Round-6's 52-pt rows pushed the summary off-screen in
+    # the editor preview even though the device itself rendered it.
+    r.setStyle(row, "padding", "10")
     r.setStyle(row, "flex-direction", "row")
-    r.setStyle(row, "gap", "12")
-    r.setStyle(row, "height", "52")
+    r.setStyle(row, "align-items", "center")
+    r.setStyle(row, "gap", "10")
+    r.setStyle(row, "height", "44")
 
-    let toggleBtn = r.createElement("button")
-    # Round-6: SF Symbol via ``UIImage.systemImageNamed:`` proved
-    # unstable on iOS 26.4 (signal-9 on app launch when the
-    # ``UIImageSymbolConfiguration`` msgSend chain was wired through
-    # the existing emit blocks). Fall back to Unicode glyphs styled
-    # with native-feeling colours: filled ``●`` indigo when checked,
-    # outlined ``○`` muted when unchecked. The affordance still reads
-    # as a circle-shaped checkbox rather than the ASCII brackets the
-    # round-5 implementation used.
-    let marker = if t.completed: "\xE2\x97\x8F" else: "\xE2\x97\x8B"
-    r.setTextContent(toggleBtn, marker)
-    r.setStyle(toggleBtn, "font-size", "22")
+    # Round-7: swap the Unicode ``○`` / ``●`` glyph button for a
+    # native ``UISwitch`` (mapped from the ``<switch>`` tag the
+    # settings cell already exercises happily). Reviewer flagged the
+    # Unicode glyph as the weakest affordance on the cell and asked
+    # for a real iOS control. UISwitch is the safer route than
+    # ``uiButtonSetSFSymbol`` whose msgSend chain bit the task variant
+    # on launch in earlier rounds.
+    let toggleBtn = r.createElement("switch")
+    r.setAttribute(toggleBtn, "type", "checkbox")
     if t.completed:
-      r.setStyle(toggleBtn, "color", accentIndigo)
-    else:
-      r.setStyle(toggleBtn, "color", mutedText)
+      r.setAttribute(toggleBtn, "checked", "true")
+    # Pin the intrinsic UISwitch frame (51 x 31 pt) so Yoga reserves
+    # the natural-control footprint instead of stretching the switch.
+    r.setStyle(toggleBtn, "width", "51")
+    r.setStyle(toggleBtn, "height", "31")
     r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
-    r.setStyle(toggleBtn, "width", "30")
-    r.setStyle(toggleBtn, "height", "30")
     r.appendChild(row, toggleBtn)
 
     let label = r.createElement("span")
@@ -325,10 +331,12 @@ when defined(macosx):
     r.setAttribute(listNode, "class", "task-list")
     r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
     r.setAttribute(listNode, ElementKindAttr, "list")
-    # M-EVP-14 round-6: tighten the inter-row gap from 8 to 6 so the
-    # row's internal 14-px padding owns the visual rhythm.
+    # Round-7: keep `gap` tight but drop `flex-grow: 1` — when the
+    # list grew to fill the column, the summary footer was pushed
+    # below the streamer's visible viewport. Letting the list size
+    # to its content keeps the footer in-frame; the parent column
+    # has plenty of slack on a 750-pt safe-area height.
     r.setStyle(listNode, "gap", "6")
-    r.setStyle(listNode, "flex-grow", "1")
     s.listNode = listNode
 
     var placeholder: UIKitElement = UIKitElement(Id(nil))
@@ -362,11 +370,23 @@ when defined(macosx):
     r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
     r.setAttribute(summaryNode, ElementKindAttr, "summary")
     r.setStyle(summaryNode, "flex-direction", "row")
+    r.setStyle(summaryNode, "align-items", "center")
     r.setStyle(summaryNode, "gap", "8")
-    r.setStyle(summaryNode, "padding", "10")
+    r.setStyle(summaryNode, "padding", "8")
     r.setStyle(summaryNode, "background-color", surfaceCard)
     r.setStyle(summaryNode, "border-radius", "10")
     r.setStyle(summaryNode, "height", "36")
+    # Round-7: pin `flex-shrink: 0` so the parent column never crushes
+    # the footer to 0 height under cross-axis stretch. Round-6 capture
+    # showed the footer missing from the streamed frame even though it
+    # was in the tree — most likely Yoga shrunk it under the column's
+    # default `flex-shrink: 1`. Belt-and-braces: also pin a width so
+    # the layout-engine never reports the summary as 0-wide (which
+    # would cause `applyLayout`'s `if layout.width > 0` guard in the
+    # iOS composition root to skip the `setFrame:` push and leave the
+    # UIView at its default zero frame — invisible).
+    r.setStyle(summaryNode, "flex-shrink", "0")
+    r.setStyle(summaryNode, "width", "366")  # 390 - 12*2 outer padding
     s.summaryNode = summaryNode
 
     let row = r.createElement("span")
