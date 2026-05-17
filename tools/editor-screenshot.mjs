@@ -848,15 +848,31 @@ async function waitForTcpPort(port, host, timeoutMs) {
 // bundle). If `xcrun devicectl` itself fails (device unplugged, no
 // Xcode CLI tools, …) we silently fall through to the existing probe
 // path so the unreachable-device placeholder still fires.
-async function ensureIosStreamAppRunning() {
+async function ensureIosStreamAppRunning(demoSlug = "task") {
   const deviceId =
     process.env.ISONIM_IOS_DEVICE_ID
     ?? "688D4B24-9EDF-51E3-B343-F351DE814897";
   const bundleId =
     process.env.ISONIM_IOS_BUNDLE_ID ?? "com.metacraft.isonim.cocoa.stream";
+  // M-EVP-14 iOS demo wiring. The Stream app's
+  // FrameStreamingViewController dispatches between three Nim entry
+  // points based on the `ISONIM_DEMO` environment variable:
+  //
+  //   - `task`     → `isonim_task_start` (seeded TaskAppVM demo)
+  //   - `settings` → `isonim_settings_start` (SettingsVM demo)
+  //   - anything else → legacy `isonim_start` (Branded scene fallback)
+  //
+  // We always terminate any pre-existing instance so the env var
+  // dispatch is honoured on every launch (otherwise iOS would
+  // surface the prior instance which captured the previous env).
+  const envObj = { ISONIM_DEMO: demoSlug };
+  const envArg = JSON.stringify(envObj);
   try {
     await execAsync(
-      `xcrun devicectl device process launch --device ${deviceId} ${bundleId}`,
+      `xcrun devicectl device process launch --device ${deviceId} ` +
+      `--terminate-existing ` +
+      `--environment-variables '${envArg}' ` +
+      `${bundleId}`,
       { timeout: 15_000 },
     );
   } catch (e) {
@@ -1039,11 +1055,15 @@ async function startLauncher(backend, projectRoot, opts = {}) {
   // burn its full budget. Probing here saves ~25 s per iOS cell and
   // lets us write a clear placeholder text the user can act on.
   if (backend === "ios") {
-    // First: ask the device to foreground the Stream app. This is a
-    // best-effort warm-up — failures fall through to the probe so the
-    // existing "iOS device asleep" placeholder still triggers when the
-    // iPhone is truly unreachable (unplugged, paired-host-only, …).
-    await ensureIosStreamAppRunning();
+    // First: ask the device to foreground the Stream app with the
+    // right demo entry point in its environment. We pass the demo
+    // slug (default `task`) through so the on-device Swift VC's
+    // env-var dispatch picks the matching Nim composition root —
+    // M-EVP-14 demo integration. Failures fall through to the probe
+    // so the existing "iOS device asleep" placeholder still triggers
+    // when the iPhone is truly unreachable.
+    const demoSlug = opts.demo ?? "task";
+    await ensureIosStreamAppRunning(demoSlug);
     const probe = await probeIosDevice();
     if (!probe.ok) {
       return { ok: false, reason: probe.reason };
