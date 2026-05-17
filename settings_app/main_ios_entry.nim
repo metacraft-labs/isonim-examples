@@ -35,6 +35,16 @@ when defined(macosx):
   var iosSettingsSafeAreaTop {.global.}: float = 59.0
   var iosSettingsSafeAreaBottom {.global.}: float = 34.0
 
+  # As in `task_app/main_ios.nim`: hoist the long-lived state out of
+  # the per-call closure into module-level globals. The Stream app
+  # keeps the rendered tree alive for the entire session and any user
+  # interaction re-enters the VM long after `isonim_settings_start`
+  # has returned, so the engine + VM + layout closure must outlive
+  # the C-ABI call.
+  var iosSettingsEngine {.global.}: LayoutEngine
+  var iosSettingsVm {.global.}: SettingsVM
+  var iosSettingsApplyLayout {.global.}: proc() {.closure.}
+
   proc isonim_settings_start(rootView: pointer;
                              width, height, saTop, saBottom: cdouble)
       {.exportc, cdecl, dynlib.} =
@@ -55,10 +65,11 @@ when defined(macosx):
       # this block must outlive this call so the Stream app continues
       # to re-render when SettingsVM signals change.
       discard repr(dispose)
-      let engine = newLayoutEngine()
+      iosSettingsEngine = newLayoutEngine()
       let catalog = buildDemoSettingsCatalog()
-      let settingsVm = newSettingsVM(catalog)
-      let rendered = settings_app.runSettingsApp(settingsVm, engine)
+      iosSettingsVm = newSettingsVM(catalog)
+      let rendered =
+        settings_app.runSettingsApp(iosSettingsVm, iosSettingsEngine)
       iosSettingsRenderedRoot = Id(rendered)
 
       let safeWidth = iosSettingsScreenWidth
@@ -66,8 +77,9 @@ when defined(macosx):
         iosSettingsScreenHeight - iosSettingsSafeAreaTop - iosSettingsSafeAreaBottom
       let setFrameSel = sel("setFrame:")
       let rootHandle = cast[int64](cast[pointer](rendered))
+      let engine = iosSettingsEngine
 
-      proc applyLayout() =
+      iosSettingsApplyLayout = proc() =
         engine.calculateLayout(safeWidth, safeHeight)
         for (handle, layout) in engine.allLayouts():
           if layout.width > 0 and layout.height > 0 and handle != rootHandle:
@@ -78,13 +90,15 @@ when defined(macosx):
                            height: CGFloat(layout.height)))
             msgSendVoidCGRect(view, setFrameSel, rect)
 
-      applyLayout()
+      iosSettingsApplyLayout()
 
       # Reactive layout: re-run when the active group flips or any
       # of the per-group items' values change. The createRenderEffect
       # inside the shell handles structural rebuilds; this effect
       # re-flushes layout after the structural change so the device
       # sees the new geometry.
+      let settingsVm = iosSettingsVm
+      let applyLayout = iosSettingsApplyLayout
       createRenderEffect proc() =
         discard settingsVm.activeGroupId.val
         applyLayout()
@@ -94,6 +108,13 @@ when defined(macosx):
                size: CGSize(width: iosSettingsScreenWidth,
                             height: safeHeight)))
       uiAddSubview(iosSettingsRootView, iosSettingsRenderedRoot)
+      # Force an immediate UIKit layout pass on the host view so the
+      # very first `drawHierarchy(in:afterScreenUpdates:false)` capture
+      # in `FrameStreamingViewController.tick` already includes the
+      # just-attached settings subtree instead of the bare background
+      # colour the host UIView paints by default.
+      uiSetNeedsLayout(iosSettingsRootView)
+      uiLayoutIfNeeded(iosSettingsRootView)
 
   when isMainModule:
     createRoot proc(dispose: proc()) =
