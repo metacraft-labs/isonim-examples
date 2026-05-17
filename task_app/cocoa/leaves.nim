@@ -266,7 +266,20 @@ when defined(macosx):
       r.setAttribute(row, "class", "completed")
 
     let toggleBtn = r.createElement("button")
-    let marker = if t.completed: "[x]" else: "[ ]"
+    # Round-6 fix: the previous ``[ ]`` / ``[x]`` ASCII brackets
+    # rendered as literal text inside the NSButton bezel, which the
+    # reviewer flagged as non-Aqua ("looks like a code-fence in a
+    # native row"). The cocoa renderer surface doesn't expose
+    # ``setButtonType:NSSwitchButton`` (would give us the real Aqua
+    # checkbox bezel), and swapping the tag to ``<switch>`` /
+    # ``ekSwitch`` (NSSwitch) widens the control + drops the click
+    # handler shape the existing tests rely on. The minimum-risk fix
+    # is to use the Unicode ballot-box glyphs as the button label:
+    # ``☐`` (U+2610) and ``☑`` (U+2611) paint as proper square
+    # checkbox affordances inside the same NSButton bezel, matching
+    # the round-4 ``✓`` precedent in ``summaryBar`` and the Aqua
+    # "native-controls" expectation in the task-app brief.
+    let marker = if t.completed: "☑" else: "☐"
     r.setTextContent(toggleBtn, marker)
     # Pin the toggle glyph to a small leading width so the title
     # label can claim the row's central horizontal slice.

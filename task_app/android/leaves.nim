@@ -61,6 +61,15 @@ when defined(android) or defined(mockJni):
     surfaceCard  = "#1d1d28"  # neutral row / chip surface
     onSurface    = "#e6e6f0"  # default text on a dark surface
     mutedText    = "#a0a0b8"
+    # Round-6 fix: inactive filter chips use a transparent-ish
+    # near-background fill instead of `surfaceCard`. The MaterialButton
+    # state-list shading was layering an additional violet tint on top
+    # of `#1d1d28`, making the two inactive chips read as
+    # "half-selected" next to the active indigo one. `#22232e` sits
+    # neutrally between the screen background and the row cards, and
+    # combined with the indigo outline + indigo label it now reads as
+    # a true outlined chip.
+    chipInactiveBg = "#22232e"
 
   # ----------------------------------------------------------------------------
   # Per-VM bookkeeping (mirrors `tui/leaves.nim`, `web/leaves.nim`,
@@ -121,6 +130,13 @@ when defined(android) or defined(mockJni):
     ## indigo text only, so the accent reads as "this one is selected"
     ## instead of bathing the whole row.
     ##
+    ## Round-6 fix: inactive chips drop further to `chipInactiveBg`
+    ## (`#22232e`) and pick up a 1-dp indigo outline so they read as
+    ## true outlined chips. The previous `surfaceCard` fill combined
+    ## with MaterialButton's state-list tint produced a "dark-violet
+    ## wedge" that the round-6 reviewer flagged as making two chips
+    ## look emphasised at once.
+    ##
     ## The legacy `class="selected"` attribute is preserved so the
     ## existing tests (`tests/test_android_leaves_android_only.nim`)
     ## keep passing.
@@ -130,13 +146,17 @@ when defined(android) or defined(mockJni):
         r.setAttribute(btn, "aria-pressed", "true")
         r.setStyle(btn, "background-color", accentIndigo)
         r.setStyle(btn, "color", "#ffffff")
+        # Active chip: no outline (the filled indigo is the cue).
+        r.setStyle(btn, "border-color", accentIndigo)
       else:
         r.setAttribute(btn, "class", "")
         r.removeAttribute(btn, "aria-pressed")
-        # Outlined chip on the neutral card surface — indigo only as
-        # the chip *label* color, not as a fill or tint.
-        r.setStyle(btn, "background-color", surfaceCard)
+        # Outlined chip on the near-background surface — indigo only
+        # as the chip *label* and 1-dp outline, no fill tint.
+        r.setStyle(btn, "background-color", chipInactiveBg)
         r.setStyle(btn, "color", accentIndigo)
+        r.setStyle(btn, "border-width", "1")
+        r.setStyle(btn, "border-color", accentIndigo)
 
   # ----------------------------------------------------------------------------
   # Layer-1 leaf procs — invoked by views.nim
@@ -250,9 +270,15 @@ when defined(android) or defined(mockJni):
         r.setAttribute(btn, "aria-pressed", "true")
         r.setStyle(btn, "background-color", accentIndigo)
         r.setStyle(btn, "color", "#ffffff")
+        r.setStyle(btn, "border-color", accentIndigo)
       else:
-        r.setStyle(btn, "background-color", surfaceCard)
+        # Round-6 fix: outlined inactive chip (indigo border, indigo
+        # text, near-background fill) so it reads as unselected next
+        # to the filled-indigo active chip.
+        r.setStyle(btn, "background-color", chipInactiveBg)
         r.setStyle(btn, "color", accentIndigo)
+        r.setStyle(btn, "border-width", "1")
+        r.setStyle(btn, "border-color", accentIndigo)
       makeFilterSelectionEffect(r, vm, btn, fm)
       r.appendChild(wrapper, btn)
       s.filterButtons.add btn
