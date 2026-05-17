@@ -24,11 +24,14 @@
 // expectation, the tool throws and exits non-zero. This stops silent
 // "stale state" PNGs from making it into the v5-style visual review.
 
-import { execSync, spawn } from "child_process";
+import { execSync, exec, spawn } from "child_process";
 import { mkdirSync, rmSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { promisify } from "util";
 import net from "net";
+
+const execAsync = promisify(exec);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
@@ -830,6 +833,50 @@ async function waitForTcpPort(port, host, timeoutMs) {
   return false;
 }
 
+// iOS auto-launch.
+//
+// iOS aggressively suspends/terminates apps. After ~30 s backgrounded,
+// the Stream app's NWListener stops accepting and the launcher's
+// probe sees nothing. `xcrun devicectl device process launch` brings
+// the app to the foreground programmatically — the same thing a user
+// would do by tapping the icon. We invoke it BEFORE the existing probe
+// so the probe (and the launcher's own configured-endpoint connect)
+// actually has a live NWListener to talk to.
+//
+// Override the device id via `ISONIM_IOS_DEVICE_ID`. Override the
+// bundle id via `ISONIM_IOS_BUNDLE_ID` (defaults to the Stream app's
+// bundle). If `xcrun devicectl` itself fails (device unplugged, no
+// Xcode CLI tools, …) we silently fall through to the existing probe
+// path so the unreachable-device placeholder still fires.
+async function ensureIosStreamAppRunning() {
+  const deviceId =
+    process.env.ISONIM_IOS_DEVICE_ID
+    ?? "688D4B24-9EDF-51E3-B343-F351DE814897";
+  const bundleId =
+    process.env.ISONIM_IOS_BUNDLE_ID ?? "com.metacraft.isonim.cocoa.stream";
+  try {
+    await execAsync(
+      `xcrun devicectl device process launch --device ${deviceId} ${bundleId}`,
+      { timeout: 15_000 },
+    );
+  } catch (e) {
+    // devicectl exits non-zero when the device isn't connected, isn't
+    // paired, or the bundle id is wrong. None of those are fatal here:
+    // the probe below will placeholder cleanly, and a user who *can*
+    // reach the iPhone via the existing manual-tap path is unblocked.
+    console.warn(
+      `==> iOS auto-launch failed (${e.message ?? e}); falling back to probe.`,
+    );
+    return false;
+  }
+  // Give the NWListener a beat to bind on the device side. The app
+  // takes ~1-2 s to come to foreground from a suspended state plus
+  // another ~0.5-1 s to re-bind the listener; 3 s covers both with
+  // headroom and is still inside the 30 s frame-paint budget.
+  await new Promise((r) => setTimeout(r, 3_000));
+  return true;
+}
+
 // iOS-specific reachability probe.
 //
 // The pipeline keeps timing out at the 30 s frame-paint wait when the
@@ -992,6 +1039,11 @@ async function startLauncher(backend, projectRoot, opts = {}) {
   // burn its full budget. Probing here saves ~25 s per iOS cell and
   // lets us write a clear placeholder text the user can act on.
   if (backend === "ios") {
+    // First: ask the device to foreground the Stream app. This is a
+    // best-effort warm-up — failures fall through to the probe so the
+    // existing "iOS device asleep" placeholder still triggers when the
+    // iPhone is truly unreachable (unplugged, paired-host-only, …).
+    await ensureIosStreamAppRunning();
     const probe = await probeIosDevice();
     if (!probe.ok) {
       return { ok: false, reason: probe.reason };

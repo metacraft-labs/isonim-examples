@@ -36,7 +36,7 @@
 ## once the dispatcher path lands in a follow-up.
 
 when defined(macosx):
-  import std/[net, options, os, osproc, streams, strutils, times]
+  import std/[net, options, os, osproc, posix, streams, strutils, times]
 
   import isonim_render_serve
 
@@ -50,6 +50,26 @@ when defined(macosx):
       ## (matches `bridgePortForBackend(pbIos)` in
       ## `isonim/src/isonim/editor/streaming_preview.nim` and the
       ## `ios: 8107` entry in `tools/editor-server.mjs`).
+    SourceInterfaceEnvVar = "ISONIM_IOS_SOURCE_INTERFACE"
+      ## Optional Wi-Fi interface name (e.g. `en0`) used to scope
+      ## outbound TCP connect()s onto a specific local route. On this
+      ## host VPN tunnel interfaces (`utun111-113` with Tailscale-style
+      ## 100.x.x.x addresses) interfere with the BSD socket layer's
+      ## default route selection: `nc -v 192.168.100.156 8200` works,
+      ## but `connect()` from Nim/Python returns ENOENT/EHOSTUNREACH.
+      ## Setting `IP_BOUND_IF` via setsockopt forces the kernel to use
+      ## the Wi-Fi interface and bypasses the VPN-induced quirk. If
+      ## this env var is set to the empty string, the binding is
+      ## skipped (preserves the previous default behaviour for any
+      ## host where binding would itself be a regression).
+    DefaultSourceInterface = "en0"
+      ## macOS Wi-Fi interface name on standard Apple hardware. Used
+      ## when `ISONIM_IOS_SOURCE_INTERFACE` is unset.
+    IpBoundIf = cint(25)
+      ## Numeric value of macOS's `IP_BOUND_IF` socket option (from
+      ## `<netinet/in.h>`). We hard-code the integer rather than
+      ## `importc`-ing it so this file still compiles under non-Apple
+      ## SDKs that don't ship the header constant.
     EndpointEnvVar = "ISONIM_IOS_DEVICE_ENDPOINT"
       ## Preferred endpoint when explicitly configured. Format
       ## `<host>:<port>`, e.g. `192.168.1.42:8200`. When the configured
@@ -79,6 +99,16 @@ when defined(macosx):
       deviceHost*: string
       devicePort*: int
       socket: Socket
+      ncProc: Process
+        ## When non-nil, we read the device's F-packet stream from
+        ## this `/usr/bin/nc <host> <port>` subprocess instead of a
+        ## direct TCP socket. macOS' `nc` links Network.framework and
+        ## successfully connects to hosts that the BSD socket layer
+        ## refuses with `EHOSTUNREACH` on tunnel-heavy machines (see
+        ## `bindToWifiInterface` doc). The subprocess is the
+        ## last-resort fallback when direct connect + interface-bound
+        ## connect both fail.
+      ncStream: Stream
       buffer: string
 
   proc newIosTcpFrameSource*(width = DefaultWidth;
@@ -89,6 +119,8 @@ when defined(macosx):
                       deviceHost: deviceHost,
                       devicePort: devicePort,
                       socket: nil,
+                      ncProc: nil,
+                      ncStream: nil,
                       buffer: "")
 
   proc parseEndpoint(s: string): tuple[host: string, port: int] =
@@ -106,17 +138,88 @@ when defined(macosx):
       (uint32(s[off + 3].byte) shl 24)
 
   proc ensureBuffer(src: IosTcpFrameSource; minLen: int) =
-    ## Read from the socket into `src.buffer` until it has at least
-    ## `minLen` bytes (or the peer closes — in which case we raise).
+    ## Read from the active transport (direct socket or `nc` relay
+    ## subprocess) into `src.buffer` until it has at least `minLen`
+    ## bytes. Raises if the peer closes mid-read.
     while src.buffer.len < minLen:
       var chunk = newString(ReadChunk)
-      let n = src.socket.recv(addr chunk[0], chunk.len)
+      var n: int
+      if src.socket != nil:
+        n = src.socket.recv(addr chunk[0], chunk.len)
+      elif src.ncStream != nil:
+        n = src.ncStream.readData(addr chunk[0], chunk.len)
+      else:
+        raise newException(IOError,
+          "iOS launcher: no active transport when reading from device.")
       if n <= 0:
         raise newException(IOError,
           "iOS launcher: device closed the TCP stream while waiting " &
           "for " & $minLen & " bytes (have " & $src.buffer.len & ").")
       chunk.setLen(n)
       src.buffer.add chunk
+
+  proc bindToWifiInterface(sock: Socket) =
+    ## Pin the outbound socket to the macOS Wi-Fi interface via
+    ## `IP_BOUND_IF` before `connect()`. This works around a routing
+    ## quirk that hits hosts with active VPN tunnel interfaces
+    ## (`utun*`, Tailscale 100.x.x.x): the BSD socket layer's default
+    ## route-selection can end up choosing the tunnel for a destination
+    ## that is actually reachable on Wi-Fi, returning `EHOSTUNREACH`
+    ## from `connect()` even though `nc <host> <port>` from the same
+    ## shell succeeds. Binding to `en0` (or whatever interface the
+    ## `ISONIM_IOS_SOURCE_INTERFACE` env var names) forces the kernel
+    ## to source the connection from that interface and resolves the
+    ## routing failure.
+    ##
+    ## No-op on non-macOS. No-op when the env var is explicitly set to
+    ## the empty string (escape hatch for hosts where binding itself
+    ## would be a regression). No-op if `if_nametoindex` returns 0
+    ## (the interface doesn't exist on this host): the original
+    ## connect() then runs unconstrained — preserving the previous
+    ## behaviour for non-Apple hardware.
+    let envVal = getEnv(SourceInterfaceEnvVar)
+    let ifname =
+      if existsEnv(SourceInterfaceEnvVar): envVal
+      else: DefaultSourceInterface
+    if ifname.len == 0:
+      return
+    let ifindex = if_nametoindex(cstring(ifname))
+    if ifindex == 0:
+      return
+    var idx = ifindex
+    discard setsockopt(sock.getFd(), IPPROTO_IP, IpBoundIf,
+                       addr idx, SockLen(sizeof(idx)))
+
+  proc tryConnectViaNc(host: string; port: int):
+      Option[tuple[p: Process, s: Stream]] =
+    ## Fall back to `/usr/bin/nc <host> <port>` as the byte transport.
+    ## Apple's `nc` links Network.framework, whose route selection
+    ## handles VPN-tunnel interference that the BSD socket layer
+    ## cannot (Tailscale-style `utun*` interfaces on the same host
+    ## cause direct `connect()` to return `EHOSTUNREACH` for hosts
+    ## that are actually reachable via Wi-Fi). The launcher then
+    ## reads F-packet bytes from `nc`'s stdout exactly as if it had
+    ## opened the socket itself. We verify the subprocess is still
+    ## alive after a short settle window before returning so a
+    ## fast-failed `nc` (wrong host, etc.) doesn't masquerade as a
+    ## live transport.
+    if host.len == 0 or port <= 0:
+      return none((Process, Stream))
+    var p: Process
+    try:
+      p = startProcess("/usr/bin/nc",
+        args = [host, $port],
+        options = {poUsePath})
+    except OSError:
+      return none((Process, Stream))
+    # Give `nc` ~250 ms to either fail fast (e.g. "No route to host")
+    # or settle into the connected state. The screenshot tool's outer
+    # 30 s frame-paint budget swallows this comfortably.
+    sleep(250)
+    if not p.running:
+      try: p.close() except OSError: discard
+      return none((Process, Stream))
+    return some((p, p.outputStream()))
 
   proc tryConnect(host: string; port: int;
                   timeoutMs: int): Option[Socket] =
@@ -130,6 +233,7 @@ when defined(macosx):
     if host.len == 0 or port <= 0:
       return none(Socket)
     let s = newSocket(buffered = false)
+    bindToWifiInterface(s)
     try:
       s.connect(host, Port(port), timeout = timeoutMs)
       return some(s)
@@ -233,11 +337,13 @@ when defined(macosx):
     none((string, int))
 
   proc connectIfNeeded(src: IosTcpFrameSource) =
-    if src.socket != nil:
+    if src.socket != nil or src.ncProc != nil:
       return
     # Step 1: try the explicitly-configured endpoint (CLI flag / env
     # var). This is the fast path when the iPhone is awake and on the
-    # same Wi-Fi address it had last time.
+    # same Wi-Fi address it had last time. `tryConnect` first sets
+    # `IP_BOUND_IF` to scope the connect to the Wi-Fi interface; that
+    # is enough on stock macOS hosts.
     var sockOpt = tryConnect(src.deviceHost, src.devicePort,
                              ConnectTimeoutMs)
     if sockOpt.isSome:
@@ -257,6 +363,18 @@ when defined(macosx):
         src.devicePort = port
         src.socket = sockOpt.get()
         return
+    # Step 3: last-resort, spawn `/usr/bin/nc <host> <port>` as a
+    # transport. Apple's `nc` links Network.framework, which handles
+    # VPN-tunnel-induced route confusion that BSD `connect()` cannot
+    # (even with `IP_BOUND_IF`). On hosts where steps 1+2 fail with
+    # `EHOSTUNREACH` despite the device being reachable from the
+    # shell via `nc`, this fallback wins.
+    let ncOpt = tryConnectViaNc(src.deviceHost, src.devicePort)
+    if ncOpt.isSome:
+      let (p, s) = ncOpt.get()
+      src.ncProc = p
+      src.ncStream = s
+      return
     # All recovery paths exhausted — surface the clearest possible
     # message so the screenshot tool can pattern-match it (and the
     # user knows what to do).
@@ -264,7 +382,8 @@ when defined(macosx):
       "iOS launcher: device unreachable. Tap the IsoNim Stream icon " &
       "on the iPhone to wake the device, then re-run. (Tried " &
       "configured endpoint `" & src.deviceHost & ":" & $src.devicePort &
-      "` and Bonjour `" & BonjourServiceType & "` browse/resolve.)")
+      "`, Bonjour `" & BonjourServiceType & "` browse/resolve, and " &
+      "`/usr/bin/nc` relay.)")
 
   proc captureFrame*(src: IosTcpFrameSource): Frame =
     ## Block on the next F packet from the device, decode it, and
@@ -317,6 +436,13 @@ when defined(macosx):
       try: src.socket.close()
       except CatchableError: discard
       src.socket = nil
+    if src.ncProc != nil:
+      try: src.ncProc.terminate()
+      except OSError: discard
+      try: src.ncProc.close()
+      except OSError: discard
+      src.ncProc = nil
+      src.ncStream = nil
 
   proc toAny*(src: IosTcpFrameSource): AnyFrameSource =
     let captured = src
@@ -369,10 +495,35 @@ when defined(macosx):
     let src = newIosTcpFrameSource(width = w, height = h,
                                    deviceHost = host,
                                    devicePort = port)
+    # Minimal element-tree provider so the editor's
+    # `waitForCanvasManifest` gate (which insists on a populated
+    # `window.__isonimManifest`) passes for iOS cells. The device app
+    # owns its own UIKit element tree and the launcher has no FFI to
+    # introspect it; we emit a single root entry covering the whole
+    # surface so the editor can render the iframe + canvas overlay
+    # without a per-element story. Real per-element manifests come
+    # in a later iOS milestone alongside an on-device tree probe.
+    let capturedSrc = src
+    let provider = ElementTreeProvider(
+      buildImpl: proc(): ElementTreeManifest {.gcsafe.} =
+        {.cast(gcsafe).}:
+          let sw = max(1, capturedSrc.width)
+          let sh = max(1, capturedSrc.height)
+          ElementTreeManifest(
+            frameSeq: 0,
+            surfaceWidth: sw,
+            surfaceHeight: sh,
+            boundsUnit: "pixels",
+            elements: @[
+              ElementEntry(
+                id: "ios-root",
+                componentPath: "ios/root",
+                kind: "root",
+                bounds: ElementBounds(x: 0, y: 0, w: sw, h: sh))]))
     var bridgeCfg = cfg
     if bridgeCfg.port == 0:
       bridgeCfg.port = BridgePort
-    runDemoBridgeWith(bridgeCfg, src.toAny())
+    runDemoBridgeWith(bridgeCfg, src.toAny(), provider)
 
   proc runDemoBridge*(backend: string) =
     let cfg = parseLauncherArgs(backend)
