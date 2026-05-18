@@ -158,6 +158,75 @@ the brief *as expressed through the backend's native conventions*.
   disclosure-arrow rows for choices, segmented controls or stepper
   for numbers. Dynamic Island / status bar at top is not a defect.
 
+## Preview-Pane Render Quality (Pixel-Level)
+
+Independent of content + idiom, the rendered backend frame must look
+**production-ready in the preview pane at its captured scale**. The
+screenshot tool captures the full 1920×1080 editor; the preview pane
+inside it is a smaller rectangle (~800×500 typical). The launcher
+produces its native-resolution pixels (e.g. 800×600 for desktop
+backends, 1170×2532 for the iPhone) and the editor's `<canvas>`
+scales those pixels to fit the preview rect via CSS.
+
+**Check each cell against the following pixel-level dimensions.** Any
+failure here caps the score even if Content + Idiom are flawless.
+
+1. **Aspect ratio preserved** — the demo's UI is NOT horizontally or
+   vertically stretched. UISwitch pills are oval (not deformed
+   circles); cards are rectangular at their intended proportions;
+   text characters keep their native width-to-height ratio. If
+   aspect is wrong: score ≤ 6.
+
+2. **Letterbox/pillarbox handling** — when the backend's aspect ratio
+   doesn't match the preview rect (always the case for the iPhone
+   portrait frame in a wider preview), the canvas should letterbox
+   cleanly with the bands visually framed (visible border / shadow
+   separating demo content from pane chrome). If the letterbox bands
+   blend invisibly into the surrounding pane so the demo's edges are
+   ambiguous: -1.
+
+3. **Scaling artifacts** — text and UI edges should be crisp at the
+   capture resolution. Watch for:
+   - Bilinear blur (looks "soft", description text hard to read)
+   - Nearest-neighbour jaggies (visible staircase on diagonals)
+   - Halos around high-contrast edges (especially around accent-
+     filled segmented control selection pills)
+   - Moiré patterns in repeated elements
+   Heavy downscale ratios (e.g. iPhone 5× downscale) need extra
+   scrutiny. If the demo is hard to read because of scaling blur or
+   jaggies: -2.
+
+4. **Color fidelity to the brief palette**:
+   - Accent indigo should be in the ballpark of `#7c7aed` (medium-
+     bright violet-blue). NOT pink, NOT teal, NOT washed-out gray.
+     Compare against the editor chrome's own accent — if the demo's
+     accent looks materially different, -1.
+   - Backgrounds should be deep dark (`#0f0f14` to `#22232e`),
+     NOT muddy brown, NOT navy blue, NOT pure black.
+   - Primary text near-white (`#e8e9f0` to `#ffffff`).
+   - Muted/secondary text should be visibly dimmer than primary —
+     the description / caption tier should READ as secondary.
+
+5. **Sub-pixel alignment** — controls on the same row share a
+   baseline; toggle pills on different rows align to a consistent
+   trailing edge; segmented control pills are clamped to their
+   cell boundaries (the selection pill width must equal
+   `bounds.width / segmentCount`, not bleed past one cell). If
+   elements look "almost aligned but not quite": -1.
+
+6. **Anti-aliasing quality** — vector elements (UISwitch pills,
+   segmented control rounded corners, stepper buttons) have smooth
+   curves at the capture resolution; text glyph edges are
+   subpixel-rendered or properly anti-aliased. Crispiness should
+   be at the level of a real production iOS / Android / Web app
+   screenshot, not a rough "renderer test" image.
+
+7. **No stretched UI controls** — UISwitch pills aren't deformed
+   ovals; segmented control cells aren't stretched; stepper
+   buttons keep their circular/rounded shape. The launcher's
+   native render should look the same proportionally as it does
+   at full resolution.
+
 ## Cross-Backend Consistency Contract
 
 - **Information equivalence is non-negotiable.** Every required item
@@ -200,17 +269,31 @@ Both scores use the same scale:
 - **10** — Production-ready showcase settings page. All required
   items present, perfect composition, native-idiomatic widgets,
   accent usage spot-on, hierarchical typography crisp, three-group
-  navigation immediately obvious. Could ship as a Polaris /
-  Material 3 / iOS Settings reference.
-- **9** — Excellent. One minor polish miss (a slightly tight gap,
-  a description not styled distinctly enough). Content perfect.
-- **7-8** — Solid. All items present and aesthetically pleasant
-  but missing polish: descriptions blend into labels, accent
-  missing, controls look default-styled.
-- **5-6** — Functional but rough. Content present but visually
-  flat. Spacing inconsistencies, no accent, generic widgets.
-- **4 or below** — Missing items, unreadable controls, or
-  unnavigable groups. Triggers an immediate fix before re-scoring.
+  navigation immediately obvious, **AND the rendered pixels are
+  crisp at preview-pane scale: correct aspect ratio, palette-true
+  colors, no visible blur, segmented-control pill bounds clamped
+  to one cell, sub-pixel alignment intact**. Could ship as a
+  Polaris / Material 3 / iOS Settings reference.
+- **9** — Excellent. One minor polish miss OR one mild render-
+  quality nit (e.g. slight blur from downscale). Content perfect.
+- **7-8** — Solid content / native widgets but render quality is
+  visibly imperfect: noticeable bilinear blur, slightly off-palette
+  colors, sub-pixel alignment drift, OR descriptions blend into
+  labels, accent missing.
+- **5-6** — Functional but rough. Content present but render or
+  composition is visibly compromised: stretched widgets, wrong
+  colors, poor alignment, generic default-styles look. The image
+  would NOT be confused with a real production Settings screen.
+- **4 or below** — Missing items, unreadable controls, unnavigable
+  groups, OR the render is so distorted/blurry that it fails the
+  "production app screenshot" bar entirely. Triggers immediate
+  fix before re-scoring.
+
+**Important: a cell can only score 10/10 if it passes BOTH the
+Content/Idiom checks AND every dimension of the Preview-Pane Render
+Quality section above.** Don't grade content perfection in isolation
+— the user judges these PNGs the way they'd judge a real product
+screenshot in a design-system gallery.
 
 ## How to Report
 
@@ -236,7 +319,11 @@ cocoa, android, ios. Each section must include:
 - **Findings on the app rendering** — bulleted list of concrete
   issues in the preview pane. Concrete: "the Font size number
   widget has no visible spinner buttons; users can't tell it's
-  editable".
+  editable". **Explicitly comment on each Render Quality
+  dimension** (aspect ratio, letterbox, scaling artifacts, color
+  fidelity, sub-pixel alignment, anti-aliasing, segmented-control
+  pill bounds, widget stretching). If a dimension looks fine, say
+  "render: aspect ✓, colors ✓, etc."; don't omit.
 - **Quickest path to app 10/10** — one or two targeted edits
   (paths in `~/metacraft/isonim-examples/settings_app/<backend>/
   leaves.nim` if you can guess them; otherwise component name).

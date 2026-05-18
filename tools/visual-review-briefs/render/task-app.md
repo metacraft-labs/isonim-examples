@@ -158,6 +158,72 @@ feel will and should differ.
   acceptable). System status bar / Dynamic Island visible at the
   top — part of the framebuffer, not a defect.
 
+## Preview-Pane Render Quality (Pixel-Level)
+
+Independent of content + idiom, the rendered backend frame must look
+**production-ready in the preview pane at its captured scale**. The
+screenshot tool captures the full 1920×1080 editor; the preview pane
+inside it is a smaller rectangle (~800×500 typical). The launcher
+produces its native-resolution pixels (e.g. 800×600 for desktop
+backends, 1170×2532 for the iPhone) and the editor's `<canvas>`
+scales those pixels to fit the preview rect via CSS.
+
+**Check each cell against the following pixel-level dimensions.** Any
+failure here caps the score even if Content + Idiom are flawless.
+
+1. **Aspect ratio preserved** — the demo's UI is NOT horizontally or
+   vertically stretched. Circles look round (not oval); square cards
+   look square (not stretched into rectangles); text characters keep
+   their native width-to-height ratio. If aspect is wrong: score ≤ 6.
+
+2. **Letterbox/pillarbox handling** — when the backend's aspect ratio
+   doesn't match the preview rect (always the case for the iPhone
+   portrait frame in a wider preview), the canvas should letterbox
+   cleanly with the bands visually framed (visible border / shadow
+   separating demo content from pane chrome). If the letterbox bands
+   blend invisibly into the surrounding pane so the demo's edges are
+   ambiguous: -1.
+
+3. **Scaling artifacts** — text and UI edges should be crisp at the
+   capture resolution. Watch for:
+   - Bilinear blur (looks "soft", text hard to read at preview scale)
+   - Nearest-neighbour jaggies (visible staircase on diagonals)
+   - Halos around high-contrast edges
+   - Moiré patterns in repeated elements
+   Heavy downscale ratios (e.g. iPhone 5× downscale) need extra
+   scrutiny. If the demo is hard to read because of scaling blur or
+   jaggies: -2.
+
+4. **Color fidelity to the brief palette**:
+   - Accent indigo should be in the ballpark of `#7c7aed` (medium-
+     bright violet-blue). NOT pink, NOT teal, NOT washed-out gray.
+     Compare visually against the editor chrome's own accent — if
+     the demo's accent looks materially different from the chrome's,
+     -1.
+   - Backgrounds should be deep dark (`#0f0f14` to `#22232e`),
+     NOT muddy brown, NOT navy blue, NOT pure black.
+   - Primary text near-white (`#e8e9f0` to `#ffffff`),
+     NOT mid-gray, NOT yellow-tinted, NOT pure off-white that
+     blends into the surface.
+
+5. **Sub-pixel alignment** — controls on the same row share a
+   baseline; cards in a vertical stack share a left edge; toggle/
+   text/remove glyphs in a row don't visibly drift up/down by 1-2
+   pixels. If elements look "almost aligned but not quite": -1.
+
+6. **Anti-aliasing quality** — vector elements (buttons, rounded
+   chips, pill toggles) have smooth curves at the capture
+   resolution; text glyph edges are subpixel-rendered or properly
+   anti-aliased. Crispiness should be at the level of a real
+   production iOS / Android / Web app screenshot, not a rough
+   "renderer test" image.
+
+7. **No stretched UI controls** — buttons aren't visually wider
+   than their content margin allows; toggles aren't deformed ovals;
+   chips don't have stretched corner radii. The launcher's native
+   render should look the same proportionally as it does at full
+   resolution.
+
 ## Cross-Backend Consistency Contract
 
 - **Information equivalence is non-negotiable.** Every required item
@@ -197,20 +263,34 @@ inside the preview pane.
 
 Both scores use the same scale:
 
-- **10** — Production-ready showcase. Every required element present,
-  perfectly composed, native-idiomatic, accent usage spot-on,
-  typography hierarchy crisp, spacing balanced, no visual mistakes.
-  Could ship as a design-system example.
-- **9** — Excellent. One minor polish issue. Content perfect.
-- **7-8** — Solid. All required content present and aesthetically
-  pleasant, but lacks polish: typography hierarchy muted, spacing
-  rhythm off, accent missing or overused.
-- **5-6** — Functional but rough. Content present but visually flat
-  or noisy. Spacing inconsistencies, missing accent, generic
-  default-styles look.
+- **10** — Production-ready showcase. Every required element
+  present, perfectly composed, native-idiomatic, accent usage
+  spot-on, typography hierarchy crisp, spacing balanced, **AND
+  the rendered pixels are crisp at preview-pane scale: correct
+  aspect ratio, palette-true colors, no visible blur, no
+  alignment drift, no stretched controls**. Could ship as a
+  design-system example.
+- **9** — Excellent. One minor polish issue OR one mild render-
+  quality nit (e.g. slight blur from aggressive downscale).
+  Content perfect.
+- **7-8** — Solid content / native idiom but render quality is
+  visibly imperfect: noticeable bilinear blur, slightly off-palette
+  colors, sub-pixel alignment drift, OR a polish gap (typography
+  hierarchy muted, spacing rhythm off, accent missing or overused).
+- **5-6** — Functional but rough. Content present but render or
+  composition is visibly compromised: stretched UI, wrong colors,
+  poor alignment, generic default-styles look. The image would NOT
+  be confused with a real production app screenshot.
 - **4 or below** — One or more required items missing, unreadable,
-  or replaced by a placeholder. Triggers an immediate fix before
-  re-scoring.
+  replaced by a placeholder, OR the render is so distorted/blurry
+  that it fails the "production app screenshot" bar entirely.
+  Triggers an immediate fix before re-scoring.
+
+**Important: a cell can only score 10/10 if it passes BOTH the
+Content/Idiom checks AND every dimension of the Preview-Pane Render
+Quality section above.** Don't grade content perfection in isolation
+— the user judges these PNGs the way they'd judge a real product
+screenshot in a design-system gallery.
 
 ## How to Report
 
@@ -235,7 +315,11 @@ cocoa, android, ios. Each section must include:
 - **Findings on the app rendering** — bulleted list of specific
   issues in the preview pane. Be concrete: not "spacing feels off"
   but "the input row's bottom margin is roughly 4 px while the row
-  gap between task cards is 10 px — pick one rhythm".
+  gap between task cards is 10 px — pick one rhythm". **Explicitly
+  comment on each Render Quality dimension** (aspect ratio,
+  letterbox, scaling artifacts, color fidelity, sub-pixel
+  alignment, anti-aliasing, control stretching). If a dimension
+  looks fine, say "render: aspect ✓, colors ✓, etc."; don't omit.
 - **Quickest path to app 10/10** — one or two targeted edits
   (paths in `~/metacraft/isonim-examples/task_app/<backend>/
   leaves.nim` if you can guess them; otherwise component name).
