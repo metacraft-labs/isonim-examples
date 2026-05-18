@@ -774,11 +774,28 @@ const TUI_BRIDGE_PORT = 8102; // legacy pixel TUI (kept for the canvas-*
                               // views that still spawn the old `tui`
                               // binary).
 
+// No-stretch rule: software backends emit frames at the size we
+// pass via `--width`/`--height`. The target matches the rough
+// rendered size of the preview pane in the 1920x1080 wide-viewport
+// capture (3:2 aspect, clean numbers). The editor's canvas-mount CSS
+// now renders frames at intrinsic pixel size (no CSS scaling), so
+// the launcher-emitted size determines what the strict reviewer
+// reads. Real-device backends (iOS) ignore the flags for the frame
+// source (the iPhone renders at its own resolution); we pass them
+// anyway since the launcher parses them harmlessly and the
+// no-stretch CSS letterboxes the device-native frame inside the
+// pane.
+const DEFAULT_SOFTWARE_WIDTH = 1080;
+const DEFAULT_SOFTWARE_HEIGHT = 720;
+
 const BACKEND_LAUNCHERS = {
   // Slot name → { bin, port, requireMacos, requireEnv, requireAdb,
-  //               extraArgs, displayName, chipLabel }
+  //               extraArgs, displayName, chipLabel, width, height }
+  // `width`/`height` are passed to the launcher via `--width`/`--height`.
+  // Omitted for `tui`/`tui-term` (xterm.js cell grid, not pixel size).
   web: {
     bin: "isonim-examples-web", port: 8101, chipLabel: "Web",
+    width: DEFAULT_SOFTWARE_WIDTH, height: DEFAULT_SOFTWARE_HEIGHT,
   },
   // `tui` is the canonical render-category slot; we always boot
   // `isonim-examples-tui-term` (the post-RS-M13 D/M/P xterm.js
@@ -793,13 +810,16 @@ const BACKEND_LAUNCHERS = {
   },
   gpui: {
     bin: "isonim-examples-gpui", port: 8103, chipLabel: "GPUI",
+    width: DEFAULT_SOFTWARE_WIDTH, height: DEFAULT_SOFTWARE_HEIGHT,
   },
   freya: {
     bin: "isonim-examples-freya", port: 8104, chipLabel: "Freya",
+    width: DEFAULT_SOFTWARE_WIDTH, height: DEFAULT_SOFTWARE_HEIGHT,
   },
   cocoa: {
     bin: "isonim-examples-cocoa", port: 8105, chipLabel: "Cocoa",
     requireMacos: true,
+    width: DEFAULT_SOFTWARE_WIDTH, height: DEFAULT_SOFTWARE_HEIGHT,
   },
   // The Android launcher requires `adb` on PATH and a connected
   // device; without one it refuses to start. The screenshot tool
@@ -807,15 +827,20 @@ const BACKEND_LAUNCHERS = {
   android: {
     bin: "isonim-examples-android", port: 8106, chipLabel: "Android",
     requireAdb: true,
+    width: DEFAULT_SOFTWARE_WIDTH, height: DEFAULT_SOFTWARE_HEIGHT,
   },
   // The iOS launcher needs the iPhone's Stream-app listener address
   // in `ISONIM_IOS_DEVICE_ENDPOINT=<host>:<port>`. The known dev
   // device today is `192.168.100.156:8200`; users can override.
+  // `--width`/`--height` are passed for CLI uniformity but the iOS
+  // frame source uses the iPhone's native resolution; the no-stretch
+  // CSS will letterbox/crop the device-native frame at 1:1.
   ios: {
     bin: "isonim-examples-ios", port: 8107, chipLabel: "iOS",
     requireMacos: true,
     requireEnv: "ISONIM_IOS_DEVICE_ENDPOINT",
     envDefault: "192.168.100.156:8200",
+    width: DEFAULT_SOFTWARE_WIDTH, height: DEFAULT_SOFTWARE_HEIGHT,
   },
 };
 
@@ -1151,6 +1176,14 @@ async function startLauncher(backend, projectRoot, opts = {}) {
     "--demo=" + demo,
     "--fps", "8",
   ];
+  // No-stretch rule: pass through the per-backend pixel size so the
+  // launcher emits frames at the size we want the editor to render
+  // 1:1 (the canvas-mount CSS no longer scales the canvas). Skipped
+  // for the TUI backends (cell grid, not pixels).
+  if (typeof spec.width === "number" && typeof spec.height === "number") {
+    args.push("--width", String(spec.width));
+    args.push("--height", String(spec.height));
+  }
   const staticDir = join(projectRoot, "..", "isonim-render-serve", "static");
   if (existsSync(staticDir)) {
     args.push("--static", staticDir);
