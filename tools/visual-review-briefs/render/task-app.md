@@ -377,6 +377,45 @@ honestly — past rounds drifted to leniency and missed real defects.
 8. **No anchoring to prior scores**. Previous reviewer rounds gave
    inflated scores. Treat this as a fresh review.
 
+9. **MANDATORY native-resolution crop before scoring text content**.
+   The captured PNG is 1920×1080 but most reviewer image tools
+   display it as a small thumbnail where small text anti-aliases
+   into illegible / wrong-glyph readings. Past rounds had a real
+   reviewer call the cocoa task summary "0 of 0 remaining" when
+   the actual rendered text was "3 of 3 remaining" — only a
+   thumbnail-scale anti-aliasing artifact.
+
+   **Before scoring any text-based content (summary counts,
+   filter labels, item descriptions, stepper digits, segmented
+   choice text)**, crop the relevant region at native resolution
+   using `sips`:
+
+   ```sh
+   # General form: sips -c <height> <width> --cropOffset <x> <y> <src> --out <dst>
+   # IMPORTANT: keep every crop UNDER 2000 px on EACH axis. Tools that
+   # consume the cropped PNG will reject larger images. Tight regional
+   # crops (≤ 1500×900) are the right size for verifying a single row /
+   # widget / chip cluster.
+   #
+   # Example — crop the summary footer of the cocoa task cell
+   # (1920×1080 capture, summary region is roughly the bottom-third of
+   # the preview pane which itself sits at x≈100, y≈80, w≈1080, h≈720).
+   sips -c 60 400 --cropOffset 120 700 \
+     /Users/zahary/metacraft/isonim-examples/screenshots/render/task-app-cocoa.png \
+     --out /tmp/task-app-cocoa-summary.png
+   ```
+
+   Then `Read` the cropped file with the image-aware Read tool.
+   This shows you the actual pixels at the resolution the user
+   sees them in the editor preview pane (not the 5× downscaled
+   thumbnail your tool may default to).
+
+   If after cropping the text is STILL illegible, that is a real
+   render-quality defect — flag it. Conversely, if you see "X of Y"
+   at thumbnail scale but native crop reveals it's correct, DO NOT
+   penalize the cell — the underlying rendering is fine. Use crops
+   liberally; better one extra `sips` call than a misread.
+
 ## How to Report
 
 Begin with an **Editor Chrome** section that applies to all 7 cells

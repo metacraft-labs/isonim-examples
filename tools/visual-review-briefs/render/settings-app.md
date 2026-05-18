@@ -359,6 +359,43 @@ honestly — past rounds drifted to leniency and missed real defects.
 8. **No anchoring to prior scores**. Previous reviewer rounds gave
    inflated scores. Treat this as a fresh review.
 
+9. **MANDATORY native-resolution crop before scoring text content**.
+   The captured PNG is 1920×1080 but most reviewer image tools
+   display it as a small thumbnail where small text anti-aliases
+   into illegible / wrong-glyph readings. Past rounds had a real
+   reviewer call the cocoa task summary "0 of 0 remaining" when the
+   actual rendered text was "3 of 3 remaining" — only a
+   thumbnail-scale anti-aliasing artifact.
+
+   **Before scoring any text-based content (item labels,
+   descriptions, segmented choice options, stepper digits, "Default"
+   pill text)**, crop the relevant region at native resolution using
+   `sips`:
+
+   ```sh
+   # General form: sips -c <height> <width> --cropOffset <x> <y> <src> --out <dst>
+   # IMPORTANT: keep every crop UNDER 2000 px on EACH axis. Tools that
+   # consume the cropped PNG will reject larger images. Tight regional
+   # crops (≤ 1500×900) are the right size for verifying a single row /
+   # widget / chip cluster.
+   #
+   # Example — crop the Theme segmented control region in settings-app-gpui
+   sips -c 80 600 --cropOffset 600 200 \
+     /Users/zahary/metacraft/isonim-examples/screenshots/render/settings-app-gpui.png \
+     --out /tmp/settings-app-gpui-theme.png
+   ```
+
+   Then `Read` the cropped file. This shows the actual pixels at
+   the resolution a designer would see them in the editor preview
+   pane (not the 5× downscaled thumbnail your tool may default to).
+
+   If after cropping the text is STILL illegible / accent still
+   reads wrong / segmented pill still missing, that's a real
+   render-quality defect — flag it. Conversely, if a thumbnail
+   reading like "white selection pill" turns out to be a saturated
+   indigo at native crop, DO NOT penalize the cell. Use crops
+   liberally; better one extra `sips` call than a misread.
+
 ## How to Report
 
 Begin with an **Editor Chrome** section that applies to all 7 cells
