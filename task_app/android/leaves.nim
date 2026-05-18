@@ -267,6 +267,16 @@ when defined(android) or defined(mockJni):
     r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
     r.setStyle(wrapper, "flex-direction", "row")
     r.setStyle(wrapper, "gap", "8")
+    # Wave U-2: pin the chip strip's main-axis width so the three chips
+    # share a bounded row. The round-13 reviewer flagged the previous
+    # `flex-grow:1` shape as "All stretched to row-width; Active /
+    # Completed clipped off-frame to the right" — without an explicit
+    # main-axis size on the wrapper the Android LinearLayout fell back
+    # to content-hugging width for two of the three children while
+    # letting the first one ride the parent's leftover slack. Pinning
+    # a 392-dp wrapper (3 × 120 + 2 × gap=8 + 16 trailing reserve) keeps
+    # every chip inside the captured frame.
+    r.setStyle(wrapper, "width", "392")
 
     for fm in [fmAll, fmActive, fmCompleted]:
       let btn = r.createElement("button")
@@ -275,8 +285,13 @@ when defined(android) or defined(mockJni):
       r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
       # M3 chip metrics: 36 dp height, equal share of the row.
       # Round-10: padding + font tuned so "Completed" fits.
+      # Wave U-2: pin a fixed 120-dp chip width instead of flex-grow.
+      # `flex-grow:1` under the Android adapter's LinearLayout backing
+      # made the first child consume the row while the rest clipped
+      # off-frame (round-13 reviewer). A content-hugging 120-dp width
+      # easily fits "Completed" at 13 sp without truncation.
       r.setStyle(btn, "height", "36")
-      r.setStyle(btn, "flex-grow", "1")
+      r.setStyle(btn, "width", "120")
       r.setStyle(btn, "border-radius", "18")
       r.setStyle(btn, "padding", "4")
       r.setStyle(btn, "font-size", "13")
