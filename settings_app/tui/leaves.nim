@@ -98,9 +98,17 @@ proc labelLeaf*(r: TerminalRenderer; text: string): TerminalNode =
   node
 
 proc descriptionLeaf*(r: TerminalRenderer; text: string): TerminalNode =
+  ## Description spans render dim (SGR `\x1b[2m`) in addition to italic
+  ## so the eye reads them as secondary text underneath the louder label
+  ## row. Round-7 polish: in a monospace terminal at preview-pane scale
+  ## the description otherwise carries the same visual weight as the
+  ## label and the reviewer cannot bracket "label + widget" from
+  ## "description" at a glance. Dim provides the contrast italic alone
+  ## doesn't — italic styling is unreliable in many terminals.
   let node = r.createElement("span")
   r.setAttribute(node, "class", "settings-description")
   r.setStyle(node, "italic", "true")
+  r.setStyle(node, "dim", "true")
   r.appendChild(node, r.createTextNode(text))
   node
 
@@ -124,6 +132,11 @@ proc toggleLeaf*(r: TerminalRenderer; vmRef: SettingsVM;
   let host = r.createElement("div")
   r.setAttribute(host, "class", "settings-toggle")
   r.setAttribute(host, "data-value", (if initialValue: "on" else: "off"))
+  # Round-7 polish: render the inline widget glyph (`[ ]` / `[x]`) bold
+  # so it lifts off the leader-dot pattern in the inline row. Without
+  # this every widget glyph reads with the same weight as the dots and
+  # the binding between label and widget is visually muted.
+  r.setStyle(host, "bold", "true")
   r.appendChild(host, widget.node)
   # Per-item subscription. Compare against the widget's current value
   # to skip the re-render path when the change originated from the
@@ -181,6 +194,11 @@ proc numberLeaf*(r: TerminalRenderer; vmRef: SettingsVM; itemId: string;
   r.setAttribute(host, "data-step", $stepValue)
   if suffix.len > 0:
     r.setAttribute(host, "data-suffix", suffix)
+  # Round-7 polish: bold inline stepper glyph (`[- 14pt -]`) — same
+  # rationale as `settings-toggle`. Style is on the host because the
+  # inline-row path resolves the widget glyph's style from the host
+  # node (the leaf div whose `data-value` we read).
+  r.setStyle(host, "bold", "true")
 
   # Inline stepper presentation. Appended FIRST so the rasteriser
   # surfaces the `[- value (suffix) -]` glyph row at the top of the
@@ -270,6 +288,9 @@ proc choiceLeaf*(r: TerminalRenderer; vmRef: SettingsVM; itemId: string;
   r.setAttribute(host, "class", "settings-choice")
   r.setAttribute(host, "data-value", initialValue)
   r.setAttribute(host, "data-options", options.join("|"))
+  # Round-7 polish: bold inline cycler glyph (`< Default >`) — same
+  # rationale as `settings-toggle`.
+  r.setStyle(host, "bold", "true")
 
   # Inline cycler presentation. Appended FIRST so the `< value >`
   # glyph surfaces above the multi-row OptionList in the rasterised
@@ -364,6 +385,12 @@ proc groupHeaderLeaf*(r: TerminalRenderer; label, description: string):
   if description.len > 0:
     let descRow = r.createElement("div")
     r.setStyle(descRow, "italic", "true")
+    # Round-7 polish: dim the group header's own description so the
+    # tier "group label > group description > item rows" reads
+    # cleanly. The bold + dim combination resolves to `\x1b[1;2m`
+    # which terminals collapse to dim (bold loses) — exactly the
+    # secondary-tier look we want.
+    r.setStyle(descRow, "dim", "true")
     r.setAttribute(descRow, "class", "settings-group-header-description")
     r.appendChild(descRow, r.createTextNode(description))
     r.appendChild(host, descRow)
