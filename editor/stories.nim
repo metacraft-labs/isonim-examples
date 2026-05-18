@@ -508,9 +508,17 @@ html, body {
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
-body { padding: 32px; overflow-y: auto; }
+body {
+  padding: 32px;
+  overflow-y: auto;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
 .app {
   max-width: 720px;
+  width: 100%;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -853,7 +861,7 @@ func renderSettingsEditorHtml(): string =
   <div class="group-title">Editor</div>
   <div class="row">
     <div class="row-label">
-      <div class="row-title">Tabs to spaces</div>
+      <div class="row-title">Insert spaces for tabs</div>
       <div class="row-hint">Convert tab keypresses to soft tabs on commit</div>
     </div>
     <div class="toggle on"></div>
