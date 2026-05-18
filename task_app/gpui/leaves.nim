@@ -376,6 +376,19 @@ proc taskList*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   # Wave-Q: 10-px row gap so rows visibly separate as cards.
   r.setStyle(listNode, "gap", "10")
   r.setStyle(listNode, "padding", "0")
+  # M-EVP-14 Wave Z' (Z'-3): cap the list width so rows hug content +
+  # padding rather than spanning the full pane. The Wave Z reviewer
+  # flagged "task rows span almost the entire pane width". The GPUI
+  # shim's `apply_styles_to_div` (gpui_app.rs) only honours `width`
+  # (px or 100%/full), `height`, `bg`, `padding`, `margin`, `gap`,
+  # `flex_direction`, `items` (align-items), and `justify` — it
+  # silently drops `max-width` and `align-self`. Pin an explicit
+  # `width: 700` so the list column reads at ~700 px instead of
+  # spanning the full ~1080 px preview pane. The list sits
+  # left-aligned under the input row (which still uses width 100%);
+  # the visual rhythm becomes "wide input row → narrower list" which
+  # is the typical task-app idiom (cf. cocoa / freya).
+  r.setStyle(listNode, "width", "700")
   s.listNode = listNode
 
   var placeholder: GpuiElement = nil
