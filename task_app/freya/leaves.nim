@@ -492,7 +492,10 @@ proc taskList*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   # row-card backgrounds touch the shell's outer padding.
   r.setStyle(listNode, "flex-direction", "column")
   # Wave-Q: 10-px row gap so rows visibly separate as cards.
-  r.setStyle(listNode, "gap", "10")
+  # M-EVP-14 Wave Z' (Z'-4): bump to 14 so the three task rows visibly
+  # separate as discrete cards (the round-Z reviewer flagged the
+  # 10-px gap as too tight — the rows blurred into a stacked band).
+  r.setStyle(listNode, "gap", "14")
   r.setStyle(listNode, "padding", "0")
   r.setStyle(listNode, "width", "100%")
   s.listNode = listNode
