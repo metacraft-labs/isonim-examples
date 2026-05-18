@@ -83,24 +83,30 @@ proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
   # leaf via the same attribute lookup. The visible chrome is now an
   # explicit div pill + thumb instead of a `<input type=checkbox>`.
   r.setAttribute(node, "type", "checkbox")
-  r.setStyle(node, "width", "36")
-  r.setStyle(node, "height", "20")
-  r.setStyle(node, "border-radius", "10")
+  # Wave U-4: bump the pill from 36x20 → 48x26 + thumb from 16x16 →
+  # 22x22. The round-13 reviewer flagged the round-10 28x16 / round-11
+  # 36x20 pills as "completely absent from the active rows" at the
+  # editor's preview scale. The new 48x26 surface is the same form
+  # factor as the iOS UISwitch (51x31 dpi-adjusted) so the toggle
+  # reads as a tangible affordance even when the cell is downscaled.
+  r.setStyle(node, "width", "48")
+  r.setStyle(node, "height", "26")
+  r.setStyle(node, "border-radius", "13")
   r.setStyle(node, "padding", "2")
   r.setStyle(node, "flex-direction", "row")
   r.setStyle(node, "align-items", "center")
   r.setStyle(node, "cursor", "pointer")
 
   # Inner thumb — a circle that visibly anchors the on/off state on
-  # top of the track background. 16x16 leaves a 2px gutter on each
-  # axis inside the 20-tall pill so the circle reads as a discrete
-  # element rather than spanning the full pill height. A 1px white
-  # border on the OFF state lifts the thumb off the muted-grey pill
-  # background even when the cell is rendered at preview scale.
+  # top of the track background. The 22x22 thumb leaves a 2px gutter
+  # on each axis inside the 26-tall pill so the circle reads as a
+  # discrete element rather than spanning the full pill height. A 1px
+  # white border on the OFF state lifts the thumb off the muted-grey
+  # pill background even when the cell is rendered at preview scale.
   let thumb = r.createElement("div")
-  r.setStyle(thumb, "width", "16")
-  r.setStyle(thumb, "height", "16")
-  r.setStyle(thumb, "border-radius", "8")
+  r.setStyle(thumb, "width", "22")
+  r.setStyle(thumb, "height", "22")
+  r.setStyle(thumb, "border-radius", "11")
   r.setStyle(thumb, "background", "#ffffff")
   r.setStyle(thumb, "border", "1")
   r.setStyle(thumb, "border-color", "#15151c")
