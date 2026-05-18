@@ -256,12 +256,16 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   # (row + toggle + label + remove) carried 8 px padding on top of the
   # row's own padding. Drop padding so the row settles closer to the
   # body-text band and stops dominating the list visually.
+  # M-EVP-14 Wave-Q row-card refinement: padding 10→14, border-radius
+  # 6→10 so rows read as discrete cards in the strict-reviewer pass
+  # (previously the small radius + tight padding made rows blur into
+  # the canvas).
   r.setStyle(row, "background", "#1d1d28")
-  r.setStyle(row, "padding", "10")
+  r.setStyle(row, "padding", "14")
   r.setStyle(row, "gap", "10")
   r.setStyle(row, "flex-direction", "row")
   r.setStyle(row, "align-items", "center")
-  r.setStyle(row, "border-radius", "6")
+  r.setStyle(row, "border-radius", "10")
   if t.completed:
     r.setStyle(row, "color", "#6e7080")
   else:
@@ -340,7 +344,8 @@ proc taskList*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
   r.setAttribute(listNode, ElementKindAttr, "list")
   r.setStyle(listNode, "flex-direction", "column")
-  r.setStyle(listNode, "gap", "6")
+  # Wave-Q: 10-px row gap so rows visibly separate as cards.
+  r.setStyle(listNode, "gap", "10")
   r.setStyle(listNode, "padding", "0")
   s.listNode = listNode
 

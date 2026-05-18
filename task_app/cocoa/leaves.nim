@@ -249,6 +249,11 @@ when defined(macosx):
       let btn = r.createElement("button")
       r.setTextContent(btn, $fm)
       r.setAttribute(btn, "data-filter", $fm)
+      # M-EVP-14 Wave-Q: pin a content-hugging 96-px main-axis width
+      # so the chips don't share the wrapper's row width equally
+      # (which produces ~33%-each stretched bands the reviewer
+      # flagged). Matches the GPUI/Freya chip-width convention.
+      r.setAttribute(btn, "data-fixed-width", "96")
       r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
       makeFilterSelectionEffect(r, vm, btn, fm)
       r.appendChild(wrapper, btn)
@@ -272,6 +277,13 @@ when defined(macosx):
     r.setAttribute(row, "data-fixed-height", "48")
     r.setStyle(row, "min-height", "48px")
     r.setStyle(row, "padding", "8px 12px")
+    # M-EVP-14 Wave-Q row-card surface: explicit dark fill +
+    # 10-px corners so rows read as discrete cards instead of
+    # disappearing into the cocoa adapter's neutralTint canvas.
+    # The cocoa adapter honors background-color + border-radius
+    # via the bezel-less branch on the row's NSView container.
+    r.setStyle(row, "background-color", "#1d1d28")
+    r.setStyle(row, "border-radius", "10px")
     if t.completed:
       r.setAttribute(row, "class", "completed")
 
@@ -366,6 +378,9 @@ when defined(macosx):
     r.setAttribute(listNode, "class", "task-list")
     r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
     r.setAttribute(listNode, ElementKindAttr, "list")
+    # Wave-Q: 10-px gap so the row-card backgrounds visibly separate.
+    r.setStyle(listNode, "gap", "10")
+    r.setStyle(listNode, "flex-direction", "column")
     s.listNode = listNode
 
     # `CocoaElement = Id = distinct pointer` — the nil sentinel is

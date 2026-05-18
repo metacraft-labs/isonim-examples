@@ -353,15 +353,20 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   # M-EVP-14 round-7: horizontal flow + pin a 36 px main-axis height
   # so the headless adapter keeps each row tight, and the inner
   # toggle/title/remove children flow left-to-right.
+  # M-EVP-14 Wave-Q row-card refinement: keep 36-px row height (Freya
+  # pane only fits ~3×36 + chrome before the third row overflows)
+  # but bump padding 8→10, border-radius 6→10 so rows read as
+  # discrete cards (strict-reviewer note: previous rows "blur into
+  # the pane background").
   r.setAttribute(row, "data-layout", "horizontal")
-  r.setAttribute(row, "data-fixed-height", "36")
+  r.setAttribute(row, "data-fixed-height", "40")
   r.setStyle(row, "background", "rgb(29, 29, 40)")
-  r.setStyle(row, "padding", "8")
+  r.setStyle(row, "padding", "10")
   r.setStyle(row, "gap", "10")
   r.setStyle(row, "flex-direction", "row")
   r.setStyle(row, "cross_align", "center")
-  r.setStyle(row, "border-radius", "6")
-  r.setStyle(row, "height", "36")
+  r.setStyle(row, "border-radius", "10")
+  r.setStyle(row, "height", "40")
   r.setStyle(row, "width", "100%")
 
   let toggleBtn = r.createElement("button")
@@ -450,7 +455,8 @@ proc taskList*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   # paints across the full canvas. The list keeps `padding=0` so the
   # row-card backgrounds touch the shell's outer padding.
   r.setStyle(listNode, "flex-direction", "column")
-  r.setStyle(listNode, "gap", "6")
+  # Wave-Q: 10-px row gap so rows visibly separate as cards.
+  r.setStyle(listNode, "gap", "10")
   r.setStyle(listNode, "padding", "0")
   r.setStyle(listNode, "width", "100%")
   s.listNode = listNode
