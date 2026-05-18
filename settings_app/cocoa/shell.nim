@@ -62,6 +62,17 @@
 template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
   ## Build the full settings-app tree against the given renderer and
   ## ViewModel. Returns the root node.
+  ##
+  ## Round-10 fix: the reviewer flagged the prior disclosure model
+  ## ("only the active group's items render") as making the captured
+  ## frame look broken — two of three section headers had no visible
+  ## content. Switch to the Freya "card stack" layout where every
+  ## group renders its full items list simultaneously, distinguished
+  ## via the AppKit-flavoured disclosure-triangle chrome on each
+  ## header. The active group's triangle reads ``▼`` (and its header
+  ## title flips to the indigo accent), other groups read ``▶`` —
+  ## this preserves the per-shell visual distinctness while making
+  ## every section's contents legible in the captured PNG.
   block:
     let appRoot = renderer.createElement("div")
     renderer.setAttribute(appRoot, "class", "settings-app-cocoa")
@@ -76,26 +87,18 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
 
         let disclosure = renderer.createElement("div")
         renderer.setAttribute(disclosure, "data-disclosure-id", gid)
-        # M-EVP-14 round-3: collapsed groups get a tight fixed height
-        # (just the triangle band + header) so the active group
-        # absorbs the surrounding vertical slack and its items have
-        # room to render meaningfully. Without this, all three groups
-        # equally divide the parent's body height regardless of
-        # expansion state, which leaves the active group's items
-        # squeezed to a few pixels each.
-        if not initiallyActive:
-          renderer.setAttribute(disclosure, "data-fixed-height", "60")
 
         let triangle = renderer.createElement("span")
         renderer.setAttribute(triangle, "class", "settings-disclosure-triangle")
-        # M-EVP-14 round-3: pin the disclosure triangle to a small
-        # fixed band so the rest of the disclosure container's
-        # vertical slice is left for the group section underneath.
-        # Without this, the prior heuristic split the disclosure 50/50
-        # between the triangle marker and the group, halving the
-        # group's available height.
+        # Pin the disclosure triangle to a small fixed band so the
+        # rest of the disclosure container's vertical slice is left
+        # for the group section underneath.
         renderer.setAttribute(triangle, "data-fixed-height", "20")
-        renderer.setTextContent(triangle, (if initiallyActive: "▼" else: "▶"))
+        renderer.setTextContent(triangle, (
+            if initiallyActive: "▼" else: "▶"))
+        # Round-10: indigo accent on the active triangle.
+        renderer.setStyle(triangle, "color",
+          (if initiallyActive: "#9d9bff" else: "#a3a4ad"))
         renderer.appendChild(disclosure, triangle)
 
         let groupNode = groupContainerLeaf(renderer)
@@ -106,89 +109,57 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
         # spacing) — the first header sits flush with the catalog's
         # top edge.
         let header = groupHeaderLeaf(renderer, g.label, g.description,
-                                     isFirst = groupIdx == 0)
+                                     isFirst = groupIdx == 0,
+                                     isActive = initiallyActive)
         renderer.setAttribute(header, "data-focusable", "true")
         renderer.setAttribute(header, "data-group-id", gid)
         renderer.addEventListener(header, "click", proc() =
           discard vmRef.setActiveGroup(gid))
         renderer.appendChild(groupNode, header)
 
-        # The disclosure model: only the active group's items render.
-        # Other groups show just their header (collapsed). This is the
-        # mid-distinctness point between TUI accordion (one expanded)
-        # and Freya card-stack (all expanded simultaneously).
-        if initiallyActive:
-          for itemIdx in 0 ..< g.items.len:
-            closureScope:
-              let it = g.items[itemIdx]
-              case it.kind
-              of sikToggle:
-                renderer.appendChild(groupNode,
-                  renderToggleItem(renderer, vmRef, it))
-              of sikNumber:
-                renderer.appendChild(groupNode,
-                  renderNumberItem(renderer, vmRef, it))
-              of sikChoice:
-                renderer.appendChild(groupNode,
-                  renderChoiceItem(renderer, vmRef, it))
+        # Round-10: render every group's items simultaneously. The
+        # active-vs-inactive distinction now lives in the disclosure
+        # triangle + header accent only (mirrors Freya's card stack
+        # with the AppKit triangle gloss layered on top).
+        for itemIdx in 0 ..< g.items.len:
+          closureScope:
+            let it = g.items[itemIdx]
+            case it.kind
+            of sikToggle:
+              renderer.appendChild(groupNode,
+                renderToggleItem(renderer, vmRef, it))
+            of sikNumber:
+              renderer.appendChild(groupNode,
+                renderNumberItem(renderer, vmRef, it))
+            of sikChoice:
+              renderer.appendChild(groupNode,
+                renderChoiceItem(renderer, vmRef, it))
 
         renderer.appendChild(disclosure, groupNode)
         renderer.appendChild(appRoot, disclosure)
 
         # Reactive active-disclosure binding. The disclosure's class,
-        # the triangle's text, and aria-expanded all mirror
+        # the triangle's text + tint, and aria-expanded all mirror
         # `vm.activeGroupId.val == gid` through a `createRenderEffect`.
+        # Items stay mounted regardless of active state — the visual
+        # accent is the only thing that flips.
         let rCaptured = renderer
-        let groupItems = g.items
         let groupId = gid
-        let groupContainer = groupNode
         let disclosureNode = disclosure
         let triangleNode = triangle
         createRenderEffect proc() =
           let isActive = vmRef.activeGroupId.val == groupId
           rCaptured.setAttribute(disclosureNode, "class",
             (if isActive: "settings-disclosure active"
-             else: "settings-disclosure"))
+              else: "settings-disclosure"))
           rCaptured.setTextContent(triangleNode,
             (if isActive: "▼" else: "▶"))
-          # Update the fixed-height marker so the layout pass gives
-          # the newly-active group the surrounding vertical slack.
-          if isActive:
-            rCaptured.removeAttribute(disclosureNode, "data-fixed-height")
-          else:
-            rCaptured.setAttribute(disclosureNode, "data-fixed-height", "60")
+          rCaptured.setStyle(triangleNode, "color",
+            (if isActive: "#9d9bff" else: "#a3a4ad"))
           if isActive:
             rCaptured.setAttribute(disclosureNode, "aria-expanded", "true")
-            # When activated, render the items if they aren't already
-            # in the tree. After the initial mount, all groups except
-            # the initially-active one have their items missing; when
-            # the user activates a previously-collapsed group, we
-            # materialise the items in place.
-            #
-            # NB: this re-runs whenever activeGroupId changes. We use
-            # the group container's childCount to decide whether items
-            # are already mounted (childCount > 1 means header + at
-            # least one item). The header is always present at index 0.
-            if rCaptured.childCount(groupContainer) <= 1:
-              for itemIdx in 0 ..< groupItems.len:
-                let it = groupItems[itemIdx]
-                case it.kind
-                of sikToggle:
-                  rCaptured.appendChild(groupContainer,
-                    renderToggleItem(rCaptured, vmRef, it))
-                of sikNumber:
-                  rCaptured.appendChild(groupContainer,
-                    renderNumberItem(rCaptured, vmRef, it))
-                of sikChoice:
-                  rCaptured.appendChild(groupContainer,
-                    renderChoiceItem(rCaptured, vmRef, it))
           else:
             rCaptured.removeAttribute(disclosureNode, "aria-expanded")
-            # Collapse: remove every child after the header (index 0).
-            while rCaptured.childCount(groupContainer) > 1:
-              let last = rCaptured.nthChild(groupContainer,
-                                            rCaptured.childCount(groupContainer) - 1)
-              rCaptured.removeChild(groupContainer, last)
 
     appRoot
 

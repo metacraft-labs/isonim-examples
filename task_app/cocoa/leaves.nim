@@ -222,7 +222,18 @@ when defined(macosx):
     # Pin the Add button to a fixed trailing width so the input
     # field consumes the remaining horizontal slice.
     r.setAttribute(addBtn, "data-fixed-width", "96")
+    # Round-10 fix: the reviewer flagged the Add Task button as a "flat
+    # outlined chip" rather than a tinted NSButton CTA. The renderer's
+    # bezel-less branch only fires when ``background-color`` is set —
+    # we already do that, but the reviewer's complaint was that the
+    # white title + indigo fill don't read as a *primary* action
+    # without a slight rounded corner + explicit white text override.
+    # Set ``color`` + ``border-radius`` so the renderer's ekButton
+    # accent-fill paints a soft-cornered indigo pill with white text,
+    # which is what a macOS primary CTA looks like on a dark surface.
     r.setStyle(addBtn, "background-color", "#7c7aed")
+    r.setStyle(addBtn, "color", "#ffffff")
+    r.setStyle(addBtn, "border-radius", "8")
     r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
     s.addBtn = addBtn
     r.appendChild(wrapper, addBtn)
@@ -287,36 +298,29 @@ when defined(macosx):
     if t.completed:
       r.setAttribute(row, "class", "completed")
 
-    let toggleBtn = r.createElement("button")
-    # Round-6 fix: the previous ``[ ]`` / ``[x]`` ASCII brackets
-    # rendered as literal text inside the NSButton bezel, which the
-    # reviewer flagged as non-Aqua ("looks like a code-fence in a
-    # native row"). The cocoa renderer surface doesn't expose
-    # ``setButtonType:NSSwitchButton`` (would give us the real Aqua
-    # checkbox bezel), and swapping the tag to ``<switch>`` /
-    # ``ekSwitch`` (NSSwitch) widens the control + drops the click
-    # handler shape the existing tests rely on. The minimum-risk fix
-    # is to use the Unicode ballot-box glyphs as the button label:
-    # ``☐`` (U+2610) and ``☑`` (U+2611) paint as proper square
-    # checkbox affordances inside the same NSButton bezel, matching
-    # the round-4 ``✓`` precedent in ``summaryBar`` and the Aqua
-    # "native-controls" expectation in the task-app brief.
-    let marker = if t.completed: "☑" else: "☐"
-    r.setTextContent(toggleBtn, marker)
-    # Pin the toggle glyph to a small leading width so the title
-    # label can claim the row's central horizontal slice.
+    # Round-10 fix: the reviewer flagged the previous toggle (a
+    # ``<button>`` with ``☐`` / ``☑`` glyphs) as invisible in the
+    # captured PNG — the bezel-less NSButton with a single-glyph
+    # label paints essentially nothing visible against the dark row
+    # background at small sizes. Settings_app's ``toggleLeaf`` after
+    # Wave Q-C maps ``<switch>`` → ``ekSwitch`` → real NSSwitch which
+    # ships its own pill-shaped on/off chrome (track + knob, animated)
+    # and is unambiguous in any capture. Use the same element here so
+    # the task row's leading affordance reads as a recognisable
+    # completion toggle instead of an empty pixel block.
+    let toggleBtn = r.createElement("switch")
+    # Pin the toggle widget to the row's leading band. NSSwitch's
+    # natural size is ~32×20 px on macOS; reserve 44 px so the row's
+    # padding stays consistent with the existing layout convention.
     r.setAttribute(toggleBtn, "data-fixed-width", "44")
-    # Round-7 fix: NSButton's default bezel paints the toggle widget
-    # as a *white* rounded square against the dark task-row palette
-    # (reviewer: "checkboxes look like Aqua light-mode chrome
-    # bolted onto a dark surface"). Completed rows additionally get
-    # the indigo accent fill so the toggle visibly tracks state.
-    # Setting ``background-color`` here triggers the renderer's
-    # bezel-less branch (see ``isonim_cocoa/renderer.nim`` lines
-    # 379-432) which drops the white bezel and paints the title in
-    # white on our explicit fill.
-    let toggleBg = if t.completed: "#7c7aed" else: "#1f2030"
-    r.setStyle(toggleBtn, "background-color", toggleBg)
+    r.setAttribute(toggleBtn, "data-fixed-height", "22")
+    # Drive the switch's on/off state via the ``checked`` attribute —
+    # the cocoa renderer maps ``checked`` → ``setSwitchState:`` for
+    # ekSwitch (see ``isonim_cocoa/renderer.nim`` line 542-544).
+    if t.completed:
+      r.setAttribute(toggleBtn, "checked", "true")
+    else:
+      r.setAttribute(toggleBtn, "checked", "false")
     r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
     r.appendChild(row, toggleBtn)
 
@@ -338,14 +342,24 @@ when defined(macosx):
 
     let removeBtn = r.createElement("button")
     r.setAttribute(removeBtn, "class", "remove")
-    r.setTextContent(removeBtn, "x")
+    # Round-10 fix: the reviewer flagged the ASCII ``"x"`` as reading
+    # like a stray hyphen / en-dash at the row's trailing edge rather
+    # than a real delete affordance. Swap for the Unicode "vector or
+    # cross product" glyph ``⨯`` (U+2A2F) which paints as a
+    # proportional, visibly-X-shaped delete mark inside the NSButton
+    # bezel-less label slot.
+    r.setTextContent(removeBtn, "⨯")
     # Pin the trailing remove glyph to a small fixed width.
     r.setAttribute(removeBtn, "data-fixed-width", "32")
-    # Round-7 fix: drop the default NSButton bezel so the remove "x"
-    # reads as a subtle dark affordance instead of a bright white
-    # square at the row's trailing edge (mirrors the toggle fix
-    # above; the renderer's bezel-less branch fires when we set an
-    # explicit background-color).
+    # Round-7 fix: drop the default NSButton bezel so the remove
+    # affordance reads as a subtle dark slot instead of a bright white
+    # square at the row's trailing edge (mirrors the toggle fix above
+    # — the renderer's bezel-less branch fires when we set an
+    # explicit background-color). The renderer auto-tints bezel-less
+    # ekButton titles to white via ``setAttributedTitle:``, so the
+    # ``⨯`` glyph lands as white-on-dark and reads cleanly without an
+    # explicit ``color`` override (which only affects ekText / ekLabel
+    # / ekInput per the renderer's ``applyStyle "color"`` branch).
     r.setStyle(removeBtn, "background-color", "#1f2030")
     r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
     r.appendChild(row, removeBtn)

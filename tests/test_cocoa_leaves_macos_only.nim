@@ -99,10 +99,15 @@ when defined(macosx):
       check pointer(row0) != nil
       check r.getAttribute(row0, "data-task-id") == "1"
       check "buy milk" in r.treeTextContent(row0)
-      check "[ ]" in r.treeTextContent(row0)
+      # Round-10 fix: the toggle is now an NSSwitch (``<switch>``)
+      # rather than an NSButton labeled with the ``☐`` / ``☑``
+      # ballot-box glyphs; the on/off state lives in the ``checked``
+      # attribute instead of the rendered text content.
+      let toggleBtn0Initial = r.nthChild(row0, 0)
+      check r.getAttribute(toggleBtn0Initial, "checked") == "false"
       check "3 of 3 remaining" in r.treeTextContent(s.summaryNode)
 
-      # ── 2. Toggle the first task via its per-row toggle button.
+      # ── 2. Toggle the first task via its per-row toggle switch.
       let toggleBtn0 = r.nthChild(row0, 0)
       check pointer(toggleBtn0) != nil
       r.fireEvent(toggleBtn0, "click"); drv.flush()
@@ -113,7 +118,8 @@ when defined(macosx):
       let row0After = r.nthChild(s.listNode, 0)
       check pointer(row0After) != nil
       check r.getAttribute(row0After, "class") == "completed"
-      check "[x]" in r.treeTextContent(row0After)
+      let toggleAfter = r.nthChild(row0After, 0)
+      check r.getAttribute(toggleAfter, "checked") == "true"
       check "2 of 3 remaining" in r.treeTextContent(s.summaryNode)
 
       # ── 3. Switch filter to Active via the second filter button.
@@ -127,8 +133,8 @@ when defined(macosx):
       check r.getAttribute(s.filterButtons[1], "aria-pressed") == "true"
       for i in 0 ..< r.childCount(s.listNode):
         let row = r.nthChild(s.listNode, i)
-        check "[x]" notin r.treeTextContent(row)
-        check "[ ]" in r.treeTextContent(row)
+        let tog = r.nthChild(row, 0)
+        check r.getAttribute(tog, "checked") == "false"
 
       # ── 4. Switch filter to Completed; only the toggled task shows.
       r.fireEvent(s.filterButtons[2], "click")
@@ -136,7 +142,8 @@ when defined(macosx):
       check vm.visibleTasks.len == 1
       check r.childCount(s.listNode) == 1
       let onlyRow = r.nthChild(s.listNode, 0)
-      check "[x]" in r.treeTextContent(onlyRow)
+      let onlyTog = r.nthChild(onlyRow, 0)
+      check r.getAttribute(onlyTog, "checked") == "true"
       check "buy milk" in r.treeTextContent(onlyRow)
       check r.getAttribute(s.filterButtons[2], "class") == "selected"
 

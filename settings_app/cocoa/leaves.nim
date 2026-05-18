@@ -167,7 +167,11 @@ when defined(macosx):
     if suffix.len > 0:
       r.setAttribute(host, "data-suffix", suffix)
     r.setAttribute(host, "data-layout", "horizontal")
-    r.setAttribute(host, "data-fixed-height", "24")
+    # Round-10 fix: the reviewer flagged the digit + stepper as
+    # "awkwardly stacked/cramped". Bump the host to a comfortable
+    # 28-px band so the NSStepper's two-arrow chrome has vertical
+    # room to draw both arrows distinctly.
+    r.setAttribute(host, "data-fixed-height", "28")
 
     # NSTextField for the displayed digit value.
     let inputNode = r.createElement("input")
@@ -175,9 +179,10 @@ when defined(macosx):
     r.setAttribute(inputNode, "data-min", $minValue)
     r.setAttribute(inputNode, "data-max", $maxValue)
     r.setAttribute(inputNode, "data-step", $stepValue)
-    # Reserve a 40-px slot for the digit text so the stepper arrows
-    # next to it have a known horizontal position.
-    r.setAttribute(inputNode, "data-fixed-width", "40")
+    # Round-10 fix: widen the digit slot from 40→60 px so a 1-3
+    # digit value sits centred in a comfortable text field rather
+    # than crowded against the stepper arrows.
+    r.setAttribute(inputNode, "data-fixed-width", "60")
     r.setStyle(inputNode, "background-color", "#15161f")
     r.setStyle(inputNode, "color", "#ecedf3")
 
@@ -206,6 +211,15 @@ when defined(macosx):
       if clamped > hi: clamped = hi
       discard captured.setNumber(id, clamped))
     r.appendChild(host, inputNode)
+
+    # Round-10 fix: insert an 8-px breathing spacer between the
+    # digit field and the stepper arrows. The horizontal layout
+    # heuristic doesn't honour CSS ``gap`` on plain ``<div>``
+    # containers (it only applies to ekStack), so we add an empty
+    # ``<div>`` with ``data-fixed-width: 8`` to claim that band.
+    let spacer = r.createElement("div")
+    r.setAttribute(spacer, "data-fixed-width", "8")
+    r.appendChild(host, spacer)
 
     # NSStepper sibling — the actual up/down arrow widget. Maps to
     # ``ekStepper`` → ``newNSStepper(min, max, value, increment)``.
@@ -323,7 +337,8 @@ when defined(macosx):
     node
 
   proc groupHeaderLeaf*(r: CocoaRenderer; label, description: string;
-                        isFirst: bool = true): CocoaElement =
+                        isFirst: bool = true;
+                        isActive: bool = false): CocoaElement =
     ## Round-5 review: group headers previously rendered at the same
     ## visible weight as item labels (system NSTextField default ~13 px
     ## regular), so the eye had to count rows to find a group boundary.
@@ -372,12 +387,16 @@ when defined(macosx):
     # header label is unambiguously heavier than the body item labels.
     r.setStyle(h2, "font-weight", "600")
     r.setStyle(h2, "font-size", "15")
-    # M-EVP-14 round-8: paint the group title in the indigo accent
-    # so the header band reads as a real section divider, not a
-    # faint dark stripe. NSTextField's default ``controlTextColor``
-    # is near-black, which is invisible against the adapter's
-    # ``neutralTint`` palette (#28-#3A grey).
-    r.setStyle(h2, "color", "#9d9bff")
+    # M-EVP-14 round-8 + round-10: paint the group title in the
+    # indigo accent for the active group, in a lighter primary
+    # foreground for the others. Both colours are legible against
+    # the adapter's ``neutralTint`` palette (#28-#3A grey); the
+    # active accent gives the user an unambiguous "this is the
+    # currently-selected section" signal — the M-EVP-14 round-10
+    # reviewer flagged the prior all-indigo headers as masking the
+    # active/inactive distinction.
+    r.setStyle(h2, "color",
+               (if isActive: "#9d9bff" else: "#ecedf3"))
     r.appendChild(host, h2)
 
     if description.len > 0:
