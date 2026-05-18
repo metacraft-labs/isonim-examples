@@ -117,26 +117,24 @@ proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(wrapper, "class", "task-input")
   r.setAttribute(wrapper, ComponentPathAttr, TaskInputPath)
   r.setAttribute(wrapper, ElementKindAttr, "input")
-  # Round-2 review: the brief asks for the input field to sit
-  # **above** the Add Task button, not beside it. Stack vertically so
-  # the field reads as a labelled entry row + a primary CTA below.
+  # M-EVP-14 Wave Y (Y-5 fix): switch from column → row so the input
+  # and the Add Task CTA sit side-by-side on a single visual line.
+  # Round-2 had stacked them vertically per a then-current brief, but
+  # Round-17 reviewer flagged this as breaking the standard task-app
+  # idiom ("'New task...' textbox stretches very wide with a large
+  # empty band between it and the 'Add Task' CTA on the next visual
+  # line — input + Add aren't on the same row"). Reverting to the
+  # row layout aligns gpui with the cocoa / freya / web / tui leaves
+  # which all keep the input + add on one row.
   r.setStyle(wrapper, "background", "#1d1d28")
   r.setStyle(wrapper, "padding", "8")
   r.setStyle(wrapper, "gap", "8")
-  r.setStyle(wrapper, "flex-direction", "column")
-  # Round-4 review: the Add Task pill needs to sit at the right edge of
-  # the wrapper instead of bottom-left. The GPUI shim does NOT honour
-  # ``margin-left: auto`` or ``align-self`` (see
-  # ``apply_styles_to_div`` in
-  # ``isonim-gpui/rust/gpui-nim-shim/src/render_sync.rs`` — the
-  # property list ignores both), but it does honour ``align-items``
-  # on the parent. Flipping the wrapper's cross-axis alignment to
-  # ``end`` right-aligns its column children. The full-width input
-  # still spans the wrapper because its own ``width: 100%`` overrides
-  # the alignment for that child, but the fixed-width Add Task pill
-  # below is pushed to the right edge — visually matching "Add Task
-  # pill next to the right end of the input row".
-  r.setStyle(wrapper, "align-items", "end")
+  r.setStyle(wrapper, "flex-direction", "row")
+  # ``align-items: center`` keeps the input field and the fixed-height
+  # Add Task pill vertically centred on the row's baseline. The input
+  # grows to fill via ``flex: 1``-equivalent (the GPUI shim honours a
+  # ``flex-grow`` value of ``1`` on the child below).
+  r.setStyle(wrapper, "align-items", "center")
   r.setStyle(wrapper, "border-radius", "8")
 
   # Round-2 review: the input row was invisible because (a) the inner
@@ -151,7 +149,14 @@ proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setStyle(inp, "color", "#a0a2b0")
   r.setStyle(inp, "padding", "8")
   r.setStyle(inp, "border-radius", "4")
-  r.setStyle(inp, "width", "100%")
+  # M-EVP-14 Wave Y (Y-5): flex-grow so the input claims the row's
+  # leftover horizontal slice (with the Add Task pill on the right
+  # at its content-hugging 140-px width). The GPUI shim honours
+  # ``flex-grow: 1``; ``width: 100%`` is replaced because in a row
+  # flex container that would override the flex distribution and
+  # push the Add Task pill onto the next visual line again.
+  r.setStyle(inp, "flex-grow", "1")
+  r.setStyle(inp, "height", "40")
   s.inputNode = inp
   r.appendChild(wrapper, inp)
 
