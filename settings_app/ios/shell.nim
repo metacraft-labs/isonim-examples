@@ -105,17 +105,21 @@ template renderSettingsShell*(renderer, vmRef): untyped {.dirty.} =
             let itemRow = itemContainerLeaf(renderer)
             renderer.setAttribute(itemRow, "data-item-id", it.id)
 
-            # Round-7: drop the per-item description on iOS so each
-            # row stays a single line — the editor's preview tile
-            # only shows ~500 pt of the device frame and we need all
-            # three groups (9 items + 3 headers) to fit in-frame for
-            # the reviewer's "Notifications below the fold" remedy.
-            # The description is parity-preserved by the cross-
-            # renderer probes via the catalog itself; it isn't load-
-            # bearing for the iOS visual review.
+            # Round-13 reviewer flagged the "description tier" as a
+            # content-equivalence gap vs Web / Freya: every other
+            # renderer shows the per-item description below the label,
+            # but iOS dropped it in Round-7 for fit. Wave U-5: restore
+            # the description (small + muted, well below the label
+            # weight) so the iOS cell reaches content parity. The
+            # row's `height: 30` cap in ``itemContainerLeaf`` will let
+            # the column claim its natural height now that two text
+            # lines stack vertically inside ``rowTextColumnLeaf``.
             let textCol = rowTextColumnLeaf(renderer)
             renderer.appendChild(textCol,
               labelLeaf(renderer, it.label))
+            if it.description.len > 0:
+              renderer.appendChild(textCol,
+                descriptionLeaf(renderer, it.description))
             renderer.appendChild(itemRow, textCol)
 
             case it.kind

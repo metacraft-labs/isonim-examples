@@ -55,11 +55,17 @@ when defined(macosx):
     r.setAttribute(node, ElementKindAttr, "row")
     r.setStyle(node, "background-color", surfaceCard)
     r.setStyle(node, "border-radius", "8")
-    r.setStyle(node, "padding", "3")
+    r.setStyle(node, "padding", "6")
     r.setStyle(node, "gap", "8")
     r.setStyle(node, "flex-direction", "row")
     r.setStyle(node, "align-items", "center")
-    r.setStyle(node, "height", "30")
+    # Wave U-5: bump from 30 → 48 pt so a label + description column
+    # fits vertically inside the row. Round-7 pinned 30 pt when the
+    # iOS rows omitted descriptions; round-13 reviewer flagged the
+    # missing description tier as a content-equivalence gap. The
+    # extra 18 pt accommodates a 14-pt label baseline + 10-pt
+    # description baseline + 6 + 6 padding (descenders included).
+    r.setStyle(node, "height", "48")
     node
 
   proc rowTextColumnLeaf*(r: UIKitRenderer): UIKitElement =
