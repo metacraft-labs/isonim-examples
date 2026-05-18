@@ -115,6 +115,13 @@ when defined(macosx):
     # Pin a fixed width too so the headless layout pass doesn't
     # stretch the switch across the full row.
     r.setAttribute(node, "data-fixed-width", "44")
+    # M-EVP-14 Wave T (T-8 fix): tint the on-state in the IsoNim brand
+    # indigo instead of the macOS system accent (teal / system-blue
+    # on Sonoma). The cocoa renderer's ``color`` style branch now
+    # routes to ``-[NSSwitch setOnTintColor:]`` for ekSwitch elements
+    # (probed via ``respondsToSelector:`` for graceful pre-10.15
+    # fallback).
+    r.setStyle(node, "color", "#7c7aed")
     let captured = vmRef
     let id = itemId
     let rCaptured = r
