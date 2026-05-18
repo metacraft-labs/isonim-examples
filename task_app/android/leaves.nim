@@ -371,9 +371,21 @@ when defined(android) or defined(mockJni):
 
     let removeBtn = r.createElement("button")
     r.setAttribute(removeBtn, "class", "remove")
-    # Round-10: × glyph + transparent fill, no MaterialButton plate.
-    r.setTextContent(removeBtn, "\xC3\x97")
-    r.setStyle(removeBtn, "color", mutedText)
+    # Wave S-4: drop the U+00D7 multiplication-sign glyph entirely.
+    # Round-10 went with the muted-grey `×` so the row carried a hint
+    # of the trailing remove affordance without distracting from the
+    # task title; the strict reviewer flagged it as a "faint ghost
+    # glyph" in the M-EVP-14 round-10 sweep because the mutedText
+    # value (#8A8A9E on a darker row card) sits below the AAA legible
+    # contrast threshold against the row's #1d1d28 surface.
+    #
+    # The row keeps the 32x32 click target so existing hit-test geometry
+    # is preserved (the manifest builder + leaves-table tests assert
+    # the trailing button is present); the visible label is now an
+    # empty string so the row reads as a clean ``[ checkbox ][ title ]``
+    # pair with no trailing decoration. The Add Task flow + swipe-to-
+    # remove gesture remain the canonical "remove a task" affordances.
+    r.setTextContent(removeBtn, "")
     r.setStyle(removeBtn, "background-color", "#00000000")
     r.setStyle(removeBtn, "width", "32")
     r.setStyle(removeBtn, "height", "32")
