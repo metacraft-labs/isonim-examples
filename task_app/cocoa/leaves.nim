@@ -402,6 +402,23 @@ when defined(macosx):
     ## The visible task rows (or an empty-state placeholder). Built once;
     ## `forEachKeyed` watches `vm.visibleTasks` and reconciles when the
     ## VM mutates.
+    ##
+    ## M-EVP-14 Wave Y (Y-3 fix): pin the list's main-axis height to
+    ## its rows-plus-gaps content size via a reactive
+    ## ``data-fixed-height`` so the cocoa adapter no longer hands the
+    ## list ALL the leftover shell height. Round-17 task reviewer
+    ## flagged a ~300-px dead band between the last row and the
+    ## summary; root-cause was that the list was the appShell's only
+    ## flex child (input/filter/summary all carried explicit
+    ## ``data-fixed-height``), so it absorbed every extra pixel and
+    ## the rows sat top-aligned inside a 450-px tall pane. With the
+    ## list now content-sized, the cocoa adapter's vertical-stack
+    ## heuristic lays the children out tightly from the top: input
+    ## (56) → filter (44) → list (rows×48 + gaps) → summary (44).
+    ## Any leftover space in the shell ends up as background-tinted
+    ## empty area at the BOTTOM of the canvas, which is the natural
+    ## visual rhythm for a top-aligned task list with a sticky
+    ## summary footer.
     let s = leavesFor(vm)
     let listNode = r.createElement("ul")
     r.setAttribute(listNode, "class", "task-list")
@@ -410,6 +427,16 @@ when defined(macosx):
     # Wave-Q: 10-px gap so the row-card backgrounds visibly separate.
     r.setStyle(listNode, "gap", "10")
     r.setStyle(listNode, "flex-direction", "column")
+    let listRef = listNode
+    createRenderEffect proc() =
+      let visible = vm.visibleTasks
+      # Per-row main-axis size is 48 px (data-fixed-height on each
+      # row). Inter-row gap is 10 px (visually emitted by the cocoa
+      # adapter — keep in sync with renderTaskRow). The empty-state
+      # placeholder occupies one row's worth.
+      let rowCount = max(visible.len, 1)
+      let listHeight = rowCount * 48 + (rowCount - 1) * 10 + 8
+      r.setAttribute(listRef, "data-fixed-height", $listHeight)
     s.listNode = listNode
 
     # `CocoaElement = Id = distinct pointer` — the nil sentinel is
