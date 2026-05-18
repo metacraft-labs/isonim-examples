@@ -61,8 +61,15 @@ const
   # M-EVP-14 Wave R: bumped 80x24 → 100x30 to match the editor's
   # xterm.js host (isonim@4b2b5eb increased the cell grid so the TUI
   # demo fills the preview pane instead of clustering top-left).
-  DefaultCols = 100
-  DefaultRows = 30
+  # M-EVP-14 Wave Y (Y-4): bumped 100x30 → 120x36 so the TUI cell
+  # raster fills more of the ~1080x720 preview pane. Round-17 task
+  # reviewer flagged the TUI cell as occupying only ~620 px of a
+  # ~1100 px wide pane; at 100x30 with the floor=12 font-size cap in
+  # ``attachTuiTerminalClient`` xterm.js sized the grid to ~6.4 px ×
+  # ~17 px per cell. The denser 120x36 grid pushes the visible raster
+  # to fill ≥95 % of the pane on both axes.
+  DefaultCols = 120
+  DefaultRows = 36
   DefaultFps = 12
   DefaultPort = 8112
   DefaultBackend = "tui-term"
