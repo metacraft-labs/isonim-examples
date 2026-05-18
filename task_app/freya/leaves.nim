@@ -210,7 +210,15 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setStyle(inp, "border-radius", "4")
   r.setStyle(inp, "flex-direction", "row")
   r.setStyle(inp, "cross_align", "center")
-  r.setStyle(inp, "width", "660")
+  # M-EVP-14 Wave Y (Y-6 fix): shrink input width from 660 → 600 so
+  # the trailing 120-px Add Task pill (the headless adapter honours
+  # ``data-fixed-width: 120``, not the inline ``width: 84``) doesn't
+  # spill off the right edge of the 800-px preview pane. Round-17
+  # task reviewer flagged "'Add Task' button text is partly clipped
+  # on the right edge in the visible crop". Wrapper inner width with
+  # padding=10 + gap=10 is 770; input(600) + gap(10) + button(120) =
+  # 730 leaves a comfortable 40-px right-edge margin.
+  r.setStyle(inp, "width", "600")
   r.setStyle(inp, "height", "36")
   s.inputNode = inp
   r.appendChild(wrapper, inp)
@@ -365,15 +373,24 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   # but bump padding 8→10, border-radius 6→10 so rows read as
   # discrete cards (strict-reviewer note: previous rows "blur into
   # the pane background").
+  # M-EVP-14 Wave Y (Y-6 fix): bump row height 40 → 52 and padding
+  # 10 → 12 so the toggle/title/remove triplet has visible card
+  # padding rhythm. Round-17 task reviewer flagged the rows as
+  # "very tight vertically — task name + tiny check square + ``×``
+  # cramped on one ~24-px line; no card padding rhythm". At 52 px
+  # the row body claims ~28 px of inner height between the 12-px
+  # top/bottom padding bands, which gives the 20-px toggle / label /
+  # 20-px remove children a comfortable centred line plus 4 px
+  # breathing on either side.
   r.setAttribute(row, "data-layout", "horizontal")
-  r.setAttribute(row, "data-fixed-height", "40")
+  r.setAttribute(row, "data-fixed-height", "52")
   r.setStyle(row, "background", "rgb(29, 29, 40)")
-  r.setStyle(row, "padding", "10")
+  r.setStyle(row, "padding", "12")
   r.setStyle(row, "gap", "10")
   r.setStyle(row, "flex-direction", "row")
   r.setStyle(row, "cross_align", "center")
   r.setStyle(row, "border-radius", "10")
-  r.setStyle(row, "height", "40")
+  r.setStyle(row, "height", "52")
   r.setStyle(row, "width", "100%")
 
   let toggleBtn = r.createElement("button")
