@@ -291,12 +291,14 @@ proc choiceLeaf*(r: TerminalRenderer; vmRef: SettingsVM; itemId: string;
   # Round-7 polish: bold inline cycler glyph (`< Default >`) — same
   # rationale as `settings-toggle`.
   r.setStyle(host, "bold", "true")
-  # M-EVP-14 Wave R: terminal-color accent on the cycler glyph. Closest
-  # 16-color analog to the IsoNim indigo #7c7aed is bright_magenta
-  # (palette 13). Applies to the whole choice leaf — the `< Default >`
-  # text reads in vivid magenta so the active selection is visually
-  # distinct from inactive choices on other rows.
-  r.setStyle(host, "color", "bright_magenta")
+  # M-EVP-14 Wave T: 24-bit truecolor brand accent. The compositor's
+  # ``parseColorOrDefault`` now accepts ``#RRGGBB`` and emits a
+  # ``\x1b[38;2;R;G;Bm`` SGR via ``ansi.fgParams``'s ``ckRgb`` branch,
+  # so we paint the exact IsoNim indigo (``#7c7aed``) instead of
+  # degrading to ``bright_magenta`` (which reads as pink). Terminals
+  # that don't speak truecolor keep the default fg, same fallback as
+  # the previous named-colour path.
+  r.setStyle(host, "color", "#7c7aed")
 
   # Inline cycler presentation. Appended FIRST so the `< value >`
   # glyph surfaces above the multi-row OptionList in the rasterised

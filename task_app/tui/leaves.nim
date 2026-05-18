@@ -232,15 +232,21 @@ proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
     r.setTextContent(segAct, labelFor(active, "Active", fmActive))
     r.setTextContent(segCom, labelFor(active, "Completed", fmCompleted))
     # Reset every segment's foreground then paint the active one with
-    # `bright_magenta` — the closest 16-ANSI to the brand indigo
-    # `#7c7aed`. Sep / pad / walls stay at the row's inherited fg.
+    # the IsoNim brand indigo. M-EVP-14 Wave T: the compositor now
+    # accepts ``#RRGGBB`` and emits a 24-bit-truecolor SGR via
+    # ``ansi.fgParams``'s ``ckRgb`` branch, so we can paint the exact
+    # brand accent ``#7c7aed`` instead of degrading to the closest
+    # 16-ANSI ("bright_magenta" reads as pink, "bright_blue" as too
+    # cool). Terminals that don't understand 24-bit SGR keep the
+    # default fg, which is the same behaviour as the previous
+    # named-colour fallback.
     r.setStyle(segAll, "color", "default")
     r.setStyle(segAct, "color", "default")
     r.setStyle(segCom, "color", "default")
     case active
-    of fmAll:       r.setStyle(segAll, "color", "bright_magenta")
-    of fmActive:    r.setStyle(segAct, "color", "bright_magenta")
-    of fmCompleted: r.setStyle(segCom, "color", "bright_magenta")
+    of fmAll:       r.setStyle(segAll, "color", "#7c7aed")
+    of fmActive:    r.setStyle(segAct, "color", "#7c7aed")
+    of fmCompleted: r.setStyle(segCom, "color", "#7c7aed")
   ui(r):
     embedNode(host)
 
