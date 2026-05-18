@@ -271,12 +271,13 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   else:
     r.setStyle(row, "color", "#e8e9f0")
 
-  # Round-5 review: GPUI's idiom expectation is "flat surface + rounded
-  # corners", not ASCII brackets. Drop the `[ ]` / `[x]` text marker and
-  # render the toggle as a small (~14 px) stroked square: indigo when
-  # on, neutral when off, with a ✓ glyph inside the on-state. The GPUI
-  # shim does honour textContent on a filled div, so the check-mark
-  # paints inside the square once flipped.
+  # Round-10 review: the toggle must read as a checkbox, not a
+  # decorative square. Bump geometry to 16x16 so a ✓ glyph fits
+  # without clipping (the shim honours textContent on a filled div).
+  # Inactive state still paints empty (the brief allows this), but
+  # the active state now paints a Unicode check-mark in the centre.
+  # Items are anchored via flex centring on the toggle so the glyph
+  # lines up cleanly inside the pill.
   let toggleBtn = r.createElement("div")
   if t.completed:
     r.setStyle(toggleBtn, "background", "#7c7aed")
@@ -286,9 +287,11 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
     r.setStyle(toggleBtn, "background", "#3a3a52")
     r.setStyle(toggleBtn, "color", "#e8e9f0")
     r.setTextContent(toggleBtn, "")
-  r.setStyle(toggleBtn, "width", "14")
-  r.setStyle(toggleBtn, "height", "14")
+  r.setStyle(toggleBtn, "width", "16")
+  r.setStyle(toggleBtn, "height", "16")
   r.setStyle(toggleBtn, "border-radius", "3")
+  r.setStyle(toggleBtn, "align-items", "center")
+  r.setStyle(toggleBtn, "justify-content", "center")
   r.setStyle(toggleBtn, "cursor", "pointer")
   r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
   r.appendChild(row, toggleBtn)
@@ -303,17 +306,26 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   r.setStyle(label, "color", (if t.completed: "#6e7080" else: "#c8cad6"))
   r.appendChild(row, label)
 
+  # Round-10 review: the × must be consistently visible on every row,
+  # not hover-conditional. Switch to the Unicode multiplication-sign
+  # glyph (U+00D7) painted in a muted neutral so it reads as a quiet
+  # remove affordance on every row rather than a coloured warning
+  # competing with the task title. Pin transparent background so the
+  # × sits flush against the row surface (#1d1d28) — the previous
+  # solid pill fill made the chrome look heavier on every row.
   let removeBtn = r.createElement("button")
   r.setAttribute(removeBtn, "class", "remove")
-  r.setTextContent(removeBtn, "x")
-  r.setStyle(removeBtn, "background", "#34353f")
-  r.setStyle(removeBtn, "color", "#e08080")
+  r.setTextContent(removeBtn, "×")
+  r.setStyle(removeBtn, "background", "#1d1d28")
+  r.setStyle(removeBtn, "color", "#a0a2b0")
   # Round-3 review: pin remove button to the same scale as the leading
   # toggle so the row reads as a balanced [toggle] [title] [×] band.
   r.setStyle(removeBtn, "width", "24")
   r.setStyle(removeBtn, "height", "24")
   r.setStyle(removeBtn, "padding", "4")
   r.setStyle(removeBtn, "border-radius", "4")
+  r.setStyle(removeBtn, "align-items", "center")
+  r.setStyle(removeBtn, "justify-content", "center")
   r.setStyle(removeBtn, "cursor", "pointer")
   r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
   r.appendChild(row, removeBtn)
@@ -373,15 +385,21 @@ proc summaryBar*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(summaryNode, "class", "task-summary")
   r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
   r.setAttribute(summaryNode, ElementKindAttr, "summary")
-  r.setStyle(summaryNode, "background", "#1d1d28")
-  r.setStyle(summaryNode, "color", "#a0a2b0")
+  # Round-10 review: the summary footer was tonally identical to
+  # task titles (#a0a2b0 vs the task labels' #c8cad6) so it read at
+  # the same hierarchy. Drop to a dimmer #6e7080 and a slightly
+  # darker pill so it visibly sits as a tertiary footer rather than
+  # competing with the list above.
+  r.setStyle(summaryNode, "background", "#15151c")
+  r.setStyle(summaryNode, "color", "#6e7080")
   r.setStyle(summaryNode, "padding", "8")
   r.setStyle(summaryNode, "gap", "8")
   r.setStyle(summaryNode, "flex-direction", "row")
+  r.setStyle(summaryNode, "align-items", "center")
   r.setStyle(summaryNode, "border-radius", "6")
   s.summaryNode = summaryNode
   let row = r.createElement("span")
-  r.setStyle(row, "color", "#a0a2b0")
+  r.setStyle(row, "color", "#6e7080")
   r.appendChild(summaryNode, row)
   createRenderEffect proc() =
     let active = vm.activeCount

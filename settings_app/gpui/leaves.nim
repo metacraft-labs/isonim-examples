@@ -62,18 +62,37 @@ proc descriptionLeaf*(r: GpuiRenderer; text: string): GpuiElement =
 
 proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
                  itemId: string): GpuiElement =
-  let node = r.createElement("input")
+  # Round-10 review: the reviewer reported "no toggle widget visible
+  # at all" — the previous `<input>` element, while pinned to 32x18,
+  # collapsed visually because the shim's renderer paints `<input>`
+  # tags as a plain div with no decorative chrome. Build the toggle
+  # explicitly as a 28x16 rounded pill div with a small inner thumb
+  # so the control reads as a tangible switch on both states. Mirrors
+  # the visual idiom used by the task-app's row toggle.
+  let node = r.createElement("div")
+  r.setAttribute(node, "data-toggle", "true")
+  # Round-10: keep the `type=checkbox` data hook so existing tests
+  # (test_settings_gpui_end_to_end ``toggleNodeOf``) still resolve the
+  # leaf via the same attribute lookup. The visible chrome is now an
+  # explicit div pill + thumb instead of a `<input type=checkbox>`.
   r.setAttribute(node, "type", "checkbox")
-  # Round-3 review: against the dark card surface (#1d1d28) the toggle
-  # was invisible because it inherited a near-identical background and
-  # the GPUI shim drops borders. Pin pill geometry explicitly (the shim
-  # honours width/height/border-radius) and use an off-state fill that
-  # contrasts against the card so the control is visible even when the
-  # underlying signal is false.
-  r.setStyle(node, "width", "32")
-  r.setStyle(node, "height", "18")
-  r.setStyle(node, "border-radius", "9")
+  r.setStyle(node, "width", "28")
+  r.setStyle(node, "height", "16")
+  r.setStyle(node, "border-radius", "8")
+  r.setStyle(node, "padding", "2")
+  r.setStyle(node, "flex-direction", "row")
+  r.setStyle(node, "align-items", "center")
   r.setStyle(node, "cursor", "pointer")
+
+  # Inner thumb — a small filled circle that visibly anchors the on/off
+  # state on top of the track background.
+  let thumb = r.createElement("div")
+  r.setStyle(thumb, "width", "12")
+  r.setStyle(thumb, "height", "12")
+  r.setStyle(thumb, "border-radius", "6")
+  r.setStyle(thumb, "background", "#ffffff")
+  r.appendChild(node, thumb)
+
   let captured = vmRef
   let id = itemId
   createRenderEffect proc() =
@@ -83,13 +102,13 @@ proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
       r.setAttribute(node, "checked", "checked")
       # Active accent fill mirrors the editor's accent token.
       r.setStyle(node, "background", "#7c7aed")
-      r.setStyle(node, "color", "#ffffff")
+      r.setStyle(node, "justify-content", "end")
     else:
       r.removeAttribute(node, "checked")
       # Off-state pill: lighter than the card so the control reads as a
       # tangible affordance rather than a hole in the surface.
       r.setStyle(node, "background", "#3a3a52")
-      r.setStyle(node, "color", "#a0a2b0")
+      r.setStyle(node, "justify-content", "start")
   r.addEventListener(node, "click", proc() =
     let current = getAttribute(node, "data-value") == "true"
     discard captured.setToggle(id, not current))
@@ -110,9 +129,26 @@ proc isIntegerString(s: string): bool =
     inc i
   true
 
+proc makeNumberStepHandler(vmRef: SettingsVM; itemId: string;
+                           delta, lo, hi: int): proc() =
+  let captured = vmRef
+  let id = itemId
+  let d = delta
+  let mn = lo
+  let mx = hi
+  result = proc() =
+    var next = captured.numberValue(id) + d
+    if next < mn: next = mn
+    if next > mx: next = mx
+    discard captured.setNumber(id, next)
+
 proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
                  minValue, maxValue, stepValue: int;
                  suffix: string): GpuiElement =
+  ## Round-10 review: the previous numberLeaf surfaced only static
+  ## ``14 pt`` text with no spinner affordance. Wrap the value in a
+  ## host row with explicit ``−`` and ``+`` step buttons flanking the
+  ## value display so the control reads as a numeric stepper.
   let host = r.createElement("div")
   r.setAttribute(host, "class", "settings-number")
   r.setAttribute(host, "data-min", $minValue)
@@ -123,6 +159,29 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
   r.setStyle(host, "flex-direction", "row")
   r.setStyle(host, "align-items", "center")
   r.setStyle(host, "gap", "6")
+
+  let lo = minValue
+  let hi = maxValue
+  let step = stepValue
+
+  # Decrement button — quiet square with a muted '−' glyph. Honours
+  # the only styles the GPUI shim maps (bg/color/width/height/border
+  # -radius/cursor/flex centring).
+  let decBtn = r.createElement("button")
+  r.setAttribute(decBtn, "class", "settings-number-dec")
+  r.setTextContent(decBtn, "−")
+  r.setStyle(decBtn, "background", "#22232e")
+  r.setStyle(decBtn, "color", "#c8cad6")
+  r.setStyle(decBtn, "width", "20")
+  r.setStyle(decBtn, "height", "20")
+  r.setStyle(decBtn, "padding", "2")
+  r.setStyle(decBtn, "border-radius", "4")
+  r.setStyle(decBtn, "align-items", "center")
+  r.setStyle(decBtn, "justify-content", "center")
+  r.setStyle(decBtn, "cursor", "pointer")
+  r.addEventListener(decBtn, "click",
+    makeNumberStepHandler(vmRef, itemId, -step, lo, hi))
+  r.appendChild(host, decBtn)
 
   # Round-2 review: the headless renderer renders ``textContent`` from
   # the element tree, not ``value`` attributes. So we emit the numeric
@@ -137,7 +196,10 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
   r.setStyle(inputNode, "background", "#22232e")
   r.setStyle(inputNode, "color", "#e8e9f0")
   r.setStyle(inputNode, "padding", "6")
+  r.setStyle(inputNode, "width", "40")
   r.setStyle(inputNode, "border-radius", "4")
+  r.setStyle(inputNode, "align-items", "center")
+  r.setStyle(inputNode, "justify-content", "center")
 
   let captured = vmRef
   let id = itemId
@@ -147,8 +209,6 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
     r.setAttribute(inputNode, "data-value", $value)
     r.setTextContent(inputNode, $value)
 
-  let lo = minValue
-  let hi = maxValue
   r.addEventListener(inputNode, "click", proc() =
     let raw = getAttribute(inputNode, "data-value").strip()
     if not isIntegerString(raw):
@@ -164,6 +224,26 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
     discard captured.setNumber(id, clamped))
   r.appendChild(host, inputNode)
 
+  # Increment button — symmetric with the decrement above. Uses the
+  # ASCII '+' glyph; the shim doesn't measure-and-centre text the way
+  # CSS would, so flex centring on the surrounding div is the way to
+  # anchor the single character cleanly.
+  let incBtn = r.createElement("button")
+  r.setAttribute(incBtn, "class", "settings-number-inc")
+  r.setTextContent(incBtn, "+")
+  r.setStyle(incBtn, "background", "#22232e")
+  r.setStyle(incBtn, "color", "#c8cad6")
+  r.setStyle(incBtn, "width", "20")
+  r.setStyle(incBtn, "height", "20")
+  r.setStyle(incBtn, "padding", "2")
+  r.setStyle(incBtn, "border-radius", "4")
+  r.setStyle(incBtn, "align-items", "center")
+  r.setStyle(incBtn, "justify-content", "center")
+  r.setStyle(incBtn, "cursor", "pointer")
+  r.addEventListener(incBtn, "click",
+    makeNumberStepHandler(vmRef, itemId, step, lo, hi))
+  r.appendChild(host, incBtn)
+
   if suffix.len > 0:
     let suffixNode = r.createElement("span")
     r.setAttribute(suffixNode, "class", "settings-number-suffix")
@@ -177,61 +257,118 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
 # Choice leaf
 # ----------------------------------------------------------------------------
 
+proc makeChoiceSelectionEffect(r: GpuiRenderer; vmRef: SettingsVM;
+                               itemId: string; optBtn: GpuiElement;
+                               optValue: string) =
+  ## Factory hoisted to top level so the per-option closure can't alias
+  ## the loop variable in ``choiceLeaf``.
+  let captured = vmRef
+  let id = itemId
+  let value = optValue
+  let btn = optBtn
+  createRenderEffect proc() =
+    let active = captured.choiceValue(id) == value
+    if active:
+      # Active segment carries the indigo accent fill + white text so
+      # the selected option is visually distinct from siblings (the
+      # round-9 review reported a non-functional accent on the segmented
+      # control — segments all rendered as identical dark pills).
+      r.setAttribute(btn, "data-active", "true")
+      r.setStyle(btn, "background", "#7c7aed")
+      r.setStyle(btn, "color", "#ffffff")
+    else:
+      r.removeAttribute(btn, "data-active")
+      # Inactive segments sit transparent on the row surface (#1d1d28)
+      # with muted text so they read as siblings rather than competing
+      # band-fills.
+      r.setStyle(btn, "background", "#22232e")
+      r.setStyle(btn, "color", "#a0a2b0")
+
+proc makeChoiceClickHandler(vmRef: SettingsVM; itemId: string;
+                            value: string): proc() =
+  let captured = vmRef
+  let id = itemId
+  let v = value
+  result = proc() =
+    discard captured.setChoice(id, v)
+
 proc choiceLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
                  options: seq[string]): GpuiElement =
+  ## Round-10 review: render the choice as an explicit segmented pill
+  ## row — one fixed-width button per option, with the active option
+  ## painted in the indigo accent. The previous ``<select>``-with-
+  ## ``<option>`` approach collapsed into a stacked column of dark
+  ## divs (no flex-direction on the select) and the active option's
+  ## indigo styling never read as a segmented control.
+  ##
+  ## Tree shape preserved for existing tests:
+  ##   <div class="settings-choice" data-value=… data-options=…>
+  ##     <div class="" data-value=…>                ← "select" host
+  ##       <div class="settings-choice-option" data-value="LF">LF</div>
+  ##       <div class="settings-choice-option" data-value="CRLF">CRLF</div>
+  ##       …
+  ##     </div>
+  ##   </div>
   let host = r.createElement("div")
   r.setAttribute(host, "class", "settings-choice")
   r.setAttribute(host, "data-options", options.join("|"))
   r.setStyle(host, "flex-direction", "row")
   r.setStyle(host, "align-items", "center")
-  r.setStyle(host, "gap", "6")
+  r.setStyle(host, "gap", "4")
 
-  let selectNode = r.createElement("select")
-  r.setStyle(selectNode, "background", "#22232e")
-  r.setStyle(selectNode, "color", "#e8e9f0")
-  r.setStyle(selectNode, "padding", "6")
-  r.setStyle(selectNode, "border-radius", "4")
+  # Inner "select" container — exposed to e2e tests via
+  # ``choiceSelectOf``. The container holds the segmented option
+  # buttons in a horizontal row; the host's click handler reads its
+  # ``data-value`` and commits to the VM (mirrors the round-1 contract).
+  let selectNode = r.createElement("div")
+  r.setStyle(selectNode, "background", "#15151c")
+  r.setStyle(selectNode, "padding", "2")
+  r.setStyle(selectNode, "border-radius", "6")
+  r.setStyle(selectNode, "flex-direction", "row")
+  r.setStyle(selectNode, "gap", "4")
+  r.setStyle(selectNode, "align-items", "center")
   r.setStyle(selectNode, "cursor", "pointer")
+  let capturedOptions = options
   let captured = vmRef
   let id = itemId
-  let capturedOptions = options
 
   for opt in options:
-    let optionNode = r.createElement("option")
-    r.setAttribute(optionNode, "data-value", opt)
-    r.setTextContent(optionNode, opt)
-    r.setStyle(optionNode, "color", "#a0a2b0")
-    r.setStyle(optionNode, "background", "#22232e")
-    r.setStyle(optionNode, "padding", "6")
-    r.setStyle(optionNode, "border-radius", "4")
-    r.appendChild(selectNode, optionNode)
+    let optBtn = r.createElement("div")
+    r.setAttribute(optBtn, "class", "settings-choice-option")
+    r.setAttribute(optBtn, "data-value", opt)
+    r.setTextContent(optBtn, opt)
+    # Pin a content-hugging width so the segments are pills, not
+    # stretched bands.
+    r.setStyle(optBtn, "width", "72")
+    r.setStyle(optBtn, "height", "22")
+    r.setStyle(optBtn, "padding", "4")
+    r.setStyle(optBtn, "border-radius", "4")
+    r.setStyle(optBtn, "align-items", "center")
+    r.setStyle(optBtn, "justify-content", "center")
+    r.setStyle(optBtn, "cursor", "pointer")
+    r.addEventListener(optBtn, "click",
+      makeChoiceClickHandler(vmRef, itemId, opt))
+    makeChoiceSelectionEffect(r, vmRef, itemId, optBtn, opt)
+    r.appendChild(selectNode, optBtn)
+
+  # Programmatic-write contract: tests / driver scripts set
+  # ``data-value`` on the inner select then click. The handler reads
+  # that value back and routes through ``setChoice`` so the VM-rejects-
+  # unknown-options path stays intact.
+  r.addEventListener(selectNode, "click", proc() =
+    let picked = getAttribute(selectNode, "data-value")
+    var valid = false
+    for o in capturedOptions:
+      if o == picked:
+        valid = true
+        break
+    if valid:
+      discard captured.setChoice(id, picked))
 
   createRenderEffect proc() =
     let value = captured.choiceValue(id)
     r.setAttribute(host, "data-value", value)
     r.setAttribute(selectNode, "data-value", value)
-    for i in 0 ..< childCount(selectNode):
-      let optionNode = nthChild(selectNode, i)
-      if getAttribute(optionNode, "data-value") == value:
-        r.setAttribute(optionNode, "selected", "selected")
-        # Selected option carries the indigo accent fill so the
-        # active choice is visually distinct from siblings.
-        r.setStyle(optionNode, "background", "#7c7aed")
-        r.setStyle(optionNode, "color", "#ffffff")
-      else:
-        r.removeAttribute(optionNode, "selected")
-        r.setStyle(optionNode, "background", "#22232e")
-        r.setStyle(optionNode, "color", "#a0a2b0")
-
-  r.addEventListener(selectNode, "click", proc() =
-    let picked = getAttribute(selectNode, "data-value")
-    var valid = false
-    for opt in capturedOptions:
-      if opt == picked:
-        valid = true
-        break
-    if valid:
-      discard captured.setChoice(id, picked))
 
   r.appendChild(host, selectNode)
   host
