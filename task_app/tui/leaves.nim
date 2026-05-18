@@ -121,7 +121,10 @@ proc taskInput*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   let inp = newInput(r,
     value = vm.inputText.val,
     placeholder = " New task...",
-    width = 32,
+    # M-EVP-14 Wave R: inner width 32 → 78 to match the 100x30 cell
+    # grid the editor now hosts (isonim@4b2b5eb). 78 inner + 2 walls
+    # = 80-col outer, leaving a ~20-col margin against the right edge.
+    width = 78,
     border = bsRound,
     onChange = makeInputChangeHandler(vm),
     onSubmit = makeInputSubmitHandler(vm, s))
@@ -189,7 +192,8 @@ proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
     # `< X >`, single-space inactive padding) so the worst-case row
     # ("All | Active | <Completed>", 30 cells) fits inside the
     # 32-cell inner width.
-    r.setTextContent(txtNode, "│" & padOrTruncate(parts, 32) & "│")
+    # Wave R: inner width 32 → 78 (matches taskInput + taskList).
+    r.setTextContent(txtNode, "│" & padOrTruncate(parts, 78) & "│")
   ui(r):
     embedNode(host)
 
@@ -271,7 +275,8 @@ proc taskList*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   # framed filter / summary rows. Round-2 had inner=30 + 2-cell padding
   # which produced a 1-cell column offset between the input body and
   # the task rows.
-  s.listWidth = 32
+  # Wave R: inner width 32 → 78 (matches taskInput + filterBar).
+  s.listWidth = 78
   let listNode = listRef
   let width = s.listWidth
 

@@ -58,8 +58,11 @@ import ./story_dispatch_demo
 import ./tui_term_bridge
 
 const
-  DefaultCols = 80
-  DefaultRows = 24
+  # M-EVP-14 Wave R: bumped 80x24 → 100x30 to match the editor's
+  # xterm.js host (isonim@4b2b5eb increased the cell grid so the TUI
+  # demo fills the preview pane instead of clustering top-left).
+  DefaultCols = 100
+  DefaultRows = 30
   DefaultFps = 12
   DefaultPort = 8112
   DefaultBackend = "tui-term"
