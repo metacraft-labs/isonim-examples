@@ -62,13 +62,20 @@ proc descriptionLeaf*(r: GpuiRenderer; text: string): GpuiElement =
 
 proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
                  itemId: string): GpuiElement =
-  # Round-10 review: the reviewer reported "no toggle widget visible
-  # at all" — the previous `<input>` element, while pinned to 32x18,
-  # collapsed visually because the shim's renderer paints `<input>`
-  # tags as a plain div with no decorative chrome. Build the toggle
-  # explicitly as a 28x16 rounded pill div with a small inner thumb
-  # so the control reads as a tangible switch on both states. Mirrors
-  # the visual idiom used by the task-app's row toggle.
+  # Wave S-2: bumped to a 36x20 pill hosting a 16x16 thumb. The
+  # round-10 28x16 host + 12x12 thumb read as too small at the editor's
+  # preview scale — the thumb disappeared into the pill chrome when
+  # the cell was downscaled to a thumbnail. The pill is now visibly
+  # larger than the surrounding text baseline; the thumb's diameter
+  # leaves a 2px breathing strip on each side so the OFF / ON glyph
+  # reads as a tangible affordance.
+  #
+  # Round-10 review history: the original `<input>` element collapsed
+  # visually because the shim's renderer paints `<input>` tags as a
+  # plain div with no decorative chrome. R-B rewrote the toggle as an
+  # explicit pill + thumb div pair, which lifted visibility from "none"
+  # to "small dot" — this S-wave pass takes it the rest of the way to
+  # "clearly readable switch" at preview scale.
   let node = r.createElement("div")
   r.setAttribute(node, "data-toggle", "true")
   # Round-10: keep the `type=checkbox` data hook so existing tests
@@ -76,21 +83,27 @@ proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
   # leaf via the same attribute lookup. The visible chrome is now an
   # explicit div pill + thumb instead of a `<input type=checkbox>`.
   r.setAttribute(node, "type", "checkbox")
-  r.setStyle(node, "width", "28")
-  r.setStyle(node, "height", "16")
-  r.setStyle(node, "border-radius", "8")
+  r.setStyle(node, "width", "36")
+  r.setStyle(node, "height", "20")
+  r.setStyle(node, "border-radius", "10")
   r.setStyle(node, "padding", "2")
   r.setStyle(node, "flex-direction", "row")
   r.setStyle(node, "align-items", "center")
   r.setStyle(node, "cursor", "pointer")
 
-  # Inner thumb — a small filled circle that visibly anchors the on/off
-  # state on top of the track background.
+  # Inner thumb — a circle that visibly anchors the on/off state on
+  # top of the track background. 16x16 leaves a 2px gutter on each
+  # axis inside the 20-tall pill so the circle reads as a discrete
+  # element rather than spanning the full pill height. A 1px white
+  # border on the OFF state lifts the thumb off the muted-grey pill
+  # background even when the cell is rendered at preview scale.
   let thumb = r.createElement("div")
-  r.setStyle(thumb, "width", "12")
-  r.setStyle(thumb, "height", "12")
-  r.setStyle(thumb, "border-radius", "6")
+  r.setStyle(thumb, "width", "16")
+  r.setStyle(thumb, "height", "16")
+  r.setStyle(thumb, "border-radius", "8")
   r.setStyle(thumb, "background", "#ffffff")
+  r.setStyle(thumb, "border", "1")
+  r.setStyle(thumb, "border-color", "#15151c")
   r.appendChild(node, thumb)
 
   let captured = vmRef
@@ -100,15 +113,22 @@ proc toggleLeaf*(r: GpuiRenderer; vmRef: SettingsVM;
     r.setAttribute(node, "data-value", (if value: "true" else: "false"))
     if value:
       r.setAttribute(node, "checked", "checked")
-      # Active accent fill mirrors the editor's accent token.
+      # Active accent fill mirrors the editor's accent token; thumb
+      # stays white so the contrast vs the indigo track is maximal.
       r.setStyle(node, "background", "#7c7aed")
       r.setStyle(node, "justify-content", "end")
+      r.setStyle(thumb, "background", "#ffffff")
+      r.setStyle(thumb, "border-color", "#7c7aed")
     else:
       r.removeAttribute(node, "checked")
-      # Off-state pill: lighter than the card so the control reads as a
-      # tangible affordance rather than a hole in the surface.
-      r.setStyle(node, "background", "#3a3a52")
+      # Off-state pill: a darker pill (#2a2a3a) with a slightly raised
+      # thumb tinted #d8d9e0 (off-white) — the colour delta vs the pill
+      # is bigger than pure white-on-#3a3a52 was, which is what the
+      # reviewer reported as "thumb not visible at preview scale".
+      r.setStyle(node, "background", "#2a2a3a")
       r.setStyle(node, "justify-content", "start")
+      r.setStyle(thumb, "background", "#d8d9e0")
+      r.setStyle(thumb, "border-color", "#15151c")
   r.addEventListener(node, "click", proc() =
     let current = getAttribute(node, "data-value") == "true"
     discard captured.setToggle(id, not current))
