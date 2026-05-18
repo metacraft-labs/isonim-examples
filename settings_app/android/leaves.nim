@@ -480,13 +480,19 @@ when defined(android) or defined(mockJni):
     r.setAttribute(host, ElementKindAttr, "group-header")
     if description.len > 0:
       r.setAttribute(host, "data-description", description)
-    r.setStyle(host, "padding", "4")
+    # M-EVP-14 Wave-S polish: tighten header to claim more vertical
+    # space for items, so Notifications group is visible without
+    # scrolling. Round-11 reviewer flagged "group headers render
+    # very large/bold relative to item labels" + "Notifications
+    # group is cut off below".
+    r.setStyle(host, "padding", "2")
 
     let h2 = r.createElement("h2")
     r.setAttribute(h2, "class", "settings-group-header-label")
     r.setTextContent(h2, label)
-    # M3 titleMedium = 16 sp.
-    r.setStyle(h2, "font-size", "16")
+    # M3 titleSmall = 14 sp — keeps the header subordinate to item
+    # labels' 14-16 sp body weight while still reading as a heading.
+    r.setStyle(h2, "font-size", "14")
     r.setStyle(h2, "color", onSurface)
     r.appendChild(host, h2)
 

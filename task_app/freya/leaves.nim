@@ -400,13 +400,16 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
 
   let display =
     if t.completed: t.name & " (done)" else: t.name
-  # Round-4: task title at body weight (`normal`); completed rows fade
-  # to secondary text colour (acts as a strikethrough proxy since the
-  # headless raster doesn't paint borders / text-decoration).
+  # M-EVP-14 Wave-S polish: bump title to 15 px / weight 500 so the
+  # row text reads as a clear primary label, distinct from the 12 px /
+  # weight normal summary footer. Round-11 reviewer flagged "task
+  # title weight identical to summary weight; typography hierarchy
+  # between row title and footer is flat" — this widens the type
+  # tier ratio.
   addTextSpan(r, row, display,
               color = (if t.completed: "rgb(110, 112, 128)"
                        else: "rgb(232, 233, 240)"),
-              fontSize = "14", fontWeight = "normal")
+              fontSize = "15", fontWeight = "500")
 
   let removeBtn = r.createElement("button")
   r.setAttribute(removeBtn, "class", "remove")

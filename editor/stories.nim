@@ -708,16 +708,22 @@ body { padding: 32px; overflow-y: auto; }
   border-radius: 999px;
 }
 .task .remove {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1;
-  color: #A0A2B0;
+  font-weight: 500;
+  /* M-EVP-14 Wave-S polish: bump glyph contrast — reviewer flagged
+     the previous #A0A2B0 muted color as "barely visible / reads as
+     decorative". Brighter #C8CAD6 keeps the tertiary affordance role
+     while making the × legible at preview-pane scale. */
+  color: #C8CAD6;
+  background-color: rgba(255, 255, 255, 0.04);
   user-select: none;
-  border-radius: 4px;
+  border-radius: 6px;
   flex-shrink: 0;
 }
 .filter-bar {

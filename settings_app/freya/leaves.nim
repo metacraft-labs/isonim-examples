@@ -311,11 +311,15 @@ proc groupContainerLeaf*(r: FreyaRenderer): FreyaElement =
   # card (Notifications) clears the default viewport. Pin width to
   # 100% so the section spans its parent card-wrapper (cross_align
   # default `start` would otherwise collapse it to content width).
+  # M-EVP-14 Wave-S polish: bump padding 10→14 + reintroduce a 14-px
+  # bottom margin so the three cards visibly separate. Round-11
+  # reviewer flagged "intra-card spacing is tight, inter-card spacing
+  # barely larger; hierarchy ratio under-developed".
   r.setStyle(node, "background", cCardBg)
-  r.setStyle(node, "padding", cCardPad)
-  r.setStyle(node, "margin", "0")
+  r.setStyle(node, "padding", "14")
+  r.setStyle(node, "margin", "0 0 14 0")
   r.setStyle(node, "border", cCardBorder)
-  r.setStyle(node, "border-radius", "8")
+  r.setStyle(node, "border-radius", "10")
   r.setStyle(node, "flex-direction", "column")
   r.setStyle(node, "gap", cCardGap)
   r.setStyle(node, "width", "100%")

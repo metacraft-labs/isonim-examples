@@ -353,14 +353,14 @@ when defined(macosx):
     r.setAttribute(removeBtn, "data-fixed-width", "32")
     # Round-7 fix: drop the default NSButton bezel so the remove
     # affordance reads as a subtle dark slot instead of a bright white
-    # square at the row's trailing edge (mirrors the toggle fix above
-    # — the renderer's bezel-less branch fires when we set an
-    # explicit background-color). The renderer auto-tints bezel-less
-    # ekButton titles to white via ``setAttributedTitle:``, so the
-    # ``⨯`` glyph lands as white-on-dark and reads cleanly without an
-    # explicit ``color`` override (which only affects ekText / ekLabel
-    # / ekInput per the renderer's ``applyStyle "color"`` branch).
+    # square at the row's trailing edge.
     r.setStyle(removeBtn, "background-color", "#1f2030")
+    # M-EVP-14 Wave-S polish: round-11 reviewer flagged the macOS-red
+    # tint on this glyph as "competing with the indigo Add CTA". Pin
+    # an explicit muted-neutral text colour (matches the web/freya
+    # `.task .remove` convention). The Wave-Q-A renderer edit made
+    # ``setStyle "color"`` apply to ekButton bezel-less labels.
+    r.setStyle(removeBtn, "color", "#a0a2b0")
     r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
     r.appendChild(row, removeBtn)
 

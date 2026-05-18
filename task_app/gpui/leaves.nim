@@ -224,9 +224,15 @@ proc filterBar*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   r.setAttribute(wrapper, "class", "filter-bar")
   r.setAttribute(wrapper, ComponentPathAttr, FilterBarPath)
   r.setAttribute(wrapper, ElementKindAttr, "filter-bar")
+  # M-EVP-14 Wave-S polish: padding 4→8 on the filter-bar wrapper so
+  # the chip cluster gets the same vertical breathing room as the
+  # input card (~8 px) and the task-row cards (12 px). Round-11
+  # reviewer flagged "filter chip cluster sits very close to the
+  # input row above — ~6 px vs the ~12 px gap to the task list below;
+  # the rhythm is slightly uneven."
   r.setStyle(wrapper, "flex-direction", "row")
   r.setStyle(wrapper, "gap", "6")
-  r.setStyle(wrapper, "padding", "4")
+  r.setStyle(wrapper, "padding", "8")
 
   for fm in [fmAll, fmActive, fmCompleted]:
     let btn = r.createElement("button")
