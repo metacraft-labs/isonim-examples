@@ -187,15 +187,24 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
   # Decrement button — quiet square with a muted '−' glyph. Honours
   # the only styles the GPUI shim maps (bg/color/width/height/border
   # -radius/cursor/flex centring).
+  #
+  # M-EVP-14 Wave T (T-5 fix). Round-12 reviewer flagged that the
+  # 20x20 glyph chip is invisible at preview scale (the editor
+  # canvas downscales the captured frame ~3x). Bump to 28x28 with a
+  # higher-contrast surface + glyph fill so the stepper bracketing
+  # reads cleanly. Matches the bumped task-app remove glyph chip in
+  # the same wave.
   let decBtn = r.createElement("button")
   r.setAttribute(decBtn, "class", "settings-number-dec")
   r.setTextContent(decBtn, "−")
-  r.setStyle(decBtn, "background", "#22232e")
-  r.setStyle(decBtn, "color", "#c8cad6")
-  r.setStyle(decBtn, "width", "20")
-  r.setStyle(decBtn, "height", "20")
+  r.setStyle(decBtn, "background", "#2a2b3a")
+  r.setStyle(decBtn, "color", "#e8e9f0")
+  r.setStyle(decBtn, "width", "28")
+  r.setStyle(decBtn, "height", "28")
   r.setStyle(decBtn, "padding", "2")
-  r.setStyle(decBtn, "border-radius", "4")
+  r.setStyle(decBtn, "border-radius", "5")
+  r.setStyle(decBtn, "font-size", "16")
+  r.setStyle(decBtn, "font-weight", "600")
   r.setStyle(decBtn, "align-items", "center")
   r.setStyle(decBtn, "justify-content", "center")
   r.setStyle(decBtn, "cursor", "pointer")
@@ -251,12 +260,14 @@ proc numberLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
   let incBtn = r.createElement("button")
   r.setAttribute(incBtn, "class", "settings-number-inc")
   r.setTextContent(incBtn, "+")
-  r.setStyle(incBtn, "background", "#22232e")
-  r.setStyle(incBtn, "color", "#c8cad6")
-  r.setStyle(incBtn, "width", "20")
-  r.setStyle(incBtn, "height", "20")
+  r.setStyle(incBtn, "background", "#2a2b3a")
+  r.setStyle(incBtn, "color", "#e8e9f0")
+  r.setStyle(incBtn, "width", "28")
+  r.setStyle(incBtn, "height", "28")
   r.setStyle(incBtn, "padding", "2")
-  r.setStyle(incBtn, "border-radius", "4")
+  r.setStyle(incBtn, "border-radius", "5")
+  r.setStyle(incBtn, "font-size", "16")
+  r.setStyle(incBtn, "font-weight", "600")
   r.setStyle(incBtn, "align-items", "center")
   r.setStyle(incBtn, "justify-content", "center")
   r.setStyle(incBtn, "cursor", "pointer")

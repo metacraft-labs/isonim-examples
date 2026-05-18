@@ -322,14 +322,20 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   let removeBtn = r.createElement("button")
   r.setAttribute(removeBtn, "class", "remove")
   r.setTextContent(removeBtn, "×")
-  r.setStyle(removeBtn, "background", "#1d1d28")
-  r.setStyle(removeBtn, "color", "#a0a2b0")
-  # Round-3 review: pin remove button to the same scale as the leading
-  # toggle so the row reads as a balanced [toggle] [title] [×] band.
-  r.setStyle(removeBtn, "width", "24")
-  r.setStyle(removeBtn, "height", "24")
+  # M-EVP-14 Wave T (T-5 fix). Round-12 reviewer flagged the remove
+  # glyph as "missing at preview scale" — the 24x24 muted-neutral
+  # chip is hard to spot once the editor's preview canvas downscales
+  # the captured frame. Bump the chip to 32x32 with a slightly
+  # heavier subtle-card fill + lighter glyph colour so the trailing
+  # remove affordance reads cleanly at preview scale.
+  r.setStyle(removeBtn, "background", "#2a2b3a")
+  r.setStyle(removeBtn, "color", "#d4d6e0")
+  r.setStyle(removeBtn, "width", "32")
+  r.setStyle(removeBtn, "height", "32")
   r.setStyle(removeBtn, "padding", "4")
-  r.setStyle(removeBtn, "border-radius", "4")
+  r.setStyle(removeBtn, "border-radius", "6")
+  r.setStyle(removeBtn, "font-size", "18")
+  r.setStyle(removeBtn, "font-weight", "600")
   r.setStyle(removeBtn, "align-items", "center")
   r.setStyle(removeBtn, "justify-content", "center")
   r.setStyle(removeBtn, "cursor", "pointer")
