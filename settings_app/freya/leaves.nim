@@ -315,9 +315,13 @@ proc groupContainerLeaf*(r: FreyaRenderer): FreyaElement =
   # bottom margin so the three cards visibly separate. Round-11
   # reviewer flagged "intra-card spacing is tight, inter-card spacing
   # barely larger; hierarchy ratio under-developed".
+  # M-EVP-14 Wave Z' (Z'-5): tighten card padding 14→10 + margin 14→10
+  # so all three group cards fit in the 720-px pane without the third
+  # (Appearance) header getting cropped at the bottom. The intra-vs-
+  # inter card hierarchy is preserved (gap=8 vs margin=10).
   r.setStyle(node, "background", cCardBg)
-  r.setStyle(node, "padding", "14")
-  r.setStyle(node, "margin", "0 0 14 0")
+  r.setStyle(node, "padding", cCardPad)
+  r.setStyle(node, "margin", "0 0 " & cCardPad & " 0")
   r.setStyle(node, "border", cCardBorder)
   r.setStyle(node, "border-radius", "10")
   r.setStyle(node, "flex-direction", "column")
