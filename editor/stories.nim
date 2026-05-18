@@ -577,8 +577,9 @@ body { padding: 32px; overflow-y: auto; }
   min-width: 72px;
 }
 .choice-pill.active {
-  background: #272752;
-  color: #ECEDF3;
+  background: #7c7aed;
+  color: #FFFFFF;
+  border: 1px solid #7c7aed;
 }
 .number {
   background: #1A1B26;

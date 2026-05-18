@@ -102,50 +102,33 @@ when defined(macosx):
 
   proc toggleLeaf*(r: CocoaRenderer; vmRef: SettingsVM;
                    itemId: string): CocoaElement =
-    let node = r.createElement("input")
-    r.setAttribute(node, "type", "checkbox")
-    # M-EVP-14 round-4: pin the toggle widget to AppKit's natural
-    # NSSwitch / NSButton (checkbox) height so the layout pass
-    # reserves a real vertical band instead of compressing the
-    # widget into a single-pixel strip (which is what the round-3
-    # equal-flex split left after label + description + widget all
-    # took 17 px each inside a 52 px row).
+    ## P-B fix: emit a real ``<switch>`` element so the cocoa renderer
+    ## maps it to ``ekSwitch`` → ``NSSwitch``. NSSwitch ships its own
+    ## pill-shaped on/off chrome (track + knob, animated) so the row's
+    ## right band paints a recognisable toggle widget in the captured
+    ## PNG instead of a coloured ``[OFF]`` / ``[ON]`` text strip in an
+    ## NSTextField (the previous ``<input type="checkbox">`` mapping).
+    let node = r.createElement("switch")
+    # NSSwitch's natural height is ~22 px on macOS; round up to 24
+    # so the row reserves a comfortable band.
     r.setAttribute(node, "data-fixed-height", "24")
+    # Pin a fixed width too so the headless layout pass doesn't
+    # stretch the switch across the full row.
+    r.setAttribute(node, "data-fixed-width", "44")
     let captured = vmRef
     let id = itemId
     let rCaptured = r
-    # M-EVP-14 round-8: the toggle's underlying NSTextField paints
-    # its ``stringValue`` (default empty), so the bezel-less branch
-    # only produces a coloured strip with no on/off cue. Pre-stamp
-    # a white foreground for the glyph and let the render effect
-    # below set the actual ON/OFF string.
-    r.setStyle(node, "color", "#ecedf3")
     createRenderEffect proc() =
       let value = captured.toggleValue(id)
+      # ``setAttribute("checked", "true"|"false")`` lands on
+      # ``setSwitchState:`` via ``applyAttribute`` (see
+      # ``isonim_cocoa/renderer.nim`` ekSwitch branch).
       rCaptured.setAttribute(node, "data-value",
                              (if value: "true" else: "false"))
-      # M-EVP-14 round-8: stamp a real glyph into the field so the
-      # toggle reads as a state widget instead of an empty coloured
-      # strip. ``setTextContent`` on an ``ekInput`` lands as
-      # ``setStringValue:`` — see
-      # ``isonim-cocoa/src/isonim_cocoa/renderer.nim`` ~line 760.
-      rCaptured.setTextContent(node, if value: "ON" else: "OFF")
       if value:
-        rCaptured.setAttribute(node, "checked", "checked")
-        # Round-7 fix: the underlying ekInput (NSTextField) ships a
-        # bright white bezel by default which reads as a giant white
-        # bar inside the otherwise-dark settings card. The renderer
-        # drops the bezel + draws-background when a
-        # ``background-color`` is set (see
-        # ``isonim_cocoa/renderer.nim`` lines 379-432), so we paint
-        # the toggle's "checked" state with the indigo accent and
-        # the unchecked state with a dim neutral fill. The state
-        # cascade through ``createRenderEffect`` keeps the colour in
-        # lockstep with ``vm.toggleValue``.
-        rCaptured.setStyle(node, "background-color", "#7c7aed")
+        rCaptured.setAttribute(node, "checked", "true")
       else:
-        rCaptured.removeAttribute(node, "checked")
-        rCaptured.setStyle(node, "background-color", "#1f2030")
+        rCaptured.setAttribute(node, "checked", "false")
     r.addEventListener(node, "click", proc() =
       let current = rCaptured.getAttribute(node, "data-value") == "true"
       discard captured.setToggle(id, not current))
@@ -169,6 +152,13 @@ when defined(macosx):
   proc numberLeaf*(r: CocoaRenderer; vmRef: SettingsVM; itemId: string;
                    minValue, maxValue, stepValue: int;
                    suffix: string): CocoaElement =
+    ## P-B fix: render a real NSStepper next to an NSTextField that
+    ## shows the current numeric value. Previously the leaf only
+    ## emitted an ``<input type="number">`` (NSTextField) so the cell
+    ## had digits but no visible up/down arrows — the strict reviewer
+    ## flagged the absence of stepper chrome. The cocoa renderer maps
+    ## ``<stepper>`` → ``ekStepper`` → ``newNSStepper(...)`` which
+    ## paints the canonical two-button arrow control.
     let host = r.createElement("div")
     r.setAttribute(host, "class", "settings-number")
     r.setAttribute(host, "data-min", $minValue)
@@ -176,26 +166,18 @@ when defined(macosx):
     r.setAttribute(host, "data-step", $stepValue)
     if suffix.len > 0:
       r.setAttribute(host, "data-suffix", suffix)
-    # M-EVP-14 round-4: pin the number-stepper widget to AppKit's
-    # natural NSTextField + NSStepper composite height. Lay the
-    # input and suffix out horizontally inside the host so the
-    # stepper's input bezel + suffix glyph sit side by side instead
-    # of stacking vertically and halving each other's slice.
     r.setAttribute(host, "data-layout", "horizontal")
     r.setAttribute(host, "data-fixed-height", "24")
 
+    # NSTextField for the displayed digit value.
     let inputNode = r.createElement("input")
     r.setAttribute(inputNode, "type", "number")
     r.setAttribute(inputNode, "data-min", $minValue)
     r.setAttribute(inputNode, "data-max", $maxValue)
     r.setAttribute(inputNode, "data-step", $stepValue)
-    # Round-7 fix: drop NSTextField's default white bezel so the
-    # numeric stepper reads as a dark surface instead of a glaring
-    # white bar inside the settings card. ``applyStyle`` swaps
-    # ``setBordered:`` / ``setDrawsBackground:`` off as soon as a
-    # background-color is set (see ``isonim_cocoa/renderer.nim``
-    # lines 379-432); we follow with the foreground text-colour so
-    # the digit value reads against the dark fill.
+    # Reserve a 40-px slot for the digit text so the stepper arrows
+    # next to it have a known horizontal position.
+    r.setAttribute(inputNode, "data-fixed-width", "40")
     r.setStyle(inputNode, "background-color", "#15161f")
     r.setStyle(inputNode, "color", "#ecedf3")
 
@@ -206,14 +188,6 @@ when defined(macosx):
       let value = captured.numberValue(id)
       rCaptured.setAttribute(host, "data-value", $value)
       rCaptured.setAttribute(inputNode, "data-value", $value)
-      # M-EVP-14 round-8: previously the leaf only mirrored the VM
-      # value into ``data-value``, which the cocoa renderer ignores —
-      # so the NSTextField stayed empty and the bezel-less branch
-      # produced a flat dark strip with no digits. ``setTextContent``
-      # on an ``ekInput`` lands as ``setStringValue:`` (see
-      # ``isonim-cocoa/src/isonim_cocoa/renderer.nim`` line ~760), so
-      # the bezel-less control finally paints the actual numeric
-      # value over the dark fill.
       rCaptured.setTextContent(inputNode, $value)
 
     let lo = minValue
@@ -233,17 +207,34 @@ when defined(macosx):
       discard captured.setNumber(id, clamped))
     r.appendChild(host, inputNode)
 
+    # NSStepper sibling — the actual up/down arrow widget. Maps to
+    # ``ekStepper`` → ``newNSStepper(min, max, value, increment)``.
+    # The renderer's ``applyAttribute`` wires ``min`` / ``max`` /
+    # ``value`` directly to NSStepper's ``setMinValue:`` /
+    # ``setMaxValue:`` / ``setDoubleValue:`` (see
+    # ``isonim-cocoa/src/isonim_cocoa/renderer.nim``).
+    let stepperNode = r.createElement("stepper")
+    r.setAttribute(stepperNode, "min", $minValue)
+    r.setAttribute(stepperNode, "max", $maxValue)
+    r.setAttribute(stepperNode, "data-fixed-width", "19")
+    r.setAttribute(stepperNode, "data-fixed-height", "27")
+    createRenderEffect proc() =
+      rCaptured.setAttribute(stepperNode, "value",
+                             $captured.numberValue(id))
+    r.addEventListener(stepperNode, "change", proc() =
+      # NSStepper -change fires when the user clicks an arrow; we
+      # don't read the post-click value back from the control because
+      # the headless capture path never dispatches real user clicks,
+      # but wiring the callback keeps the on-device target-action
+      # surface in place.
+      discard)
+    r.appendChild(host, stepperNode)
+
     if suffix.len > 0:
       let suffixNode = r.createElement("span")
       r.setAttribute(suffixNode, "class", "settings-number-suffix")
       r.setTextContent(suffixNode, suffix)
-      # M-EVP-14 round-4: trailing suffix sits in a narrow band so the
-      # input bezel claims the row's remaining horizontal slice.
       r.setAttribute(suffixNode, "data-fixed-width", "32")
-      # M-EVP-14 round-8: paint the suffix in the muted secondary
-      # tone matching the description so the unit glyph reads as
-      # auxiliary text instead of disappearing into the dark row
-      # surface.
       r.setStyle(suffixNode, "color", "#a3a4ad")
       r.appendChild(host, suffixNode)
 

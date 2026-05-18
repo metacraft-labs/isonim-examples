@@ -197,10 +197,24 @@ when defined(android) or defined(mockJni):
     r.setAttribute(wrapper, "class", "task-input")
     r.setAttribute(wrapper, ComponentPathAttr, TaskInputPath)
     r.setAttribute(wrapper, ElementKindAttr, "input")
+    # M-EVP-14 Wave-Q fix: the wrapper is a HORIZONTAL row hosting
+    # an input that grows + a content-hugging Add Task CTA on the
+    # trailing edge. The earlier shape (default vertical stack) made
+    # the Add Task button paint as a full-width 48-dp indigo band
+    # across the top of the screen — the strict reviewer flagged it
+    # as a "thick solid-indigo header band" that broke the "accent
+    # used sparingly" rule. Laying input + CTA on a row keeps the
+    # indigo to a content-hugging button shape.
+    r.setStyle(wrapper, "flex-direction", "row")
+    r.setStyle(wrapper, "gap", "8")
 
     let inp = r.createElement("input")
     r.setAttribute(inp, "type", "text")
     r.setAttribute(inp, "placeholder", "New task...")
+    # Let the input claim the slack along the main axis so the
+    # Add Task button on the trailing edge stays content-sized.
+    r.setStyle(inp, "flex-grow", "1")
+    r.setStyle(inp, "height", "48")
     s.inputNode = inp
     r.appendChild(wrapper, inp)
 
@@ -214,8 +228,10 @@ when defined(android) or defined(mockJni):
     r.addEventListener(addBtn, "click", makeAddTaskHandler(vm))
     # Add Task is the primary CTA for the screen — keep the indigo
     # fill (round-3 brief: "this is the primary CTA — accent is
-    # appropriate here").
+    # appropriate here"). A pinned 120-dp width keeps the CTA from
+    # ballooning to fill the row.
     r.setStyle(addBtn, "height", "48")
+    r.setStyle(addBtn, "width", "120")
     r.setStyle(addBtn, "background-color", accentIndigo)
     r.setStyle(addBtn, "color", "#ffffff")
     r.setStyle(addBtn, "border-radius", "8")
