@@ -71,7 +71,7 @@ const
   ColorCanvas       = "#0F1117"
   ColorSurface      = "#1d1d28"
   ColorSurfaceBorder = "#25263A"
-  ColorTextPrimary  = "#E6E6F0"
+  ColorTextPrimary  = "#E8E9F0"
   ColorTextMuted    = "#A0A2B0"
   ColorAccent       = "#7c7aed"
   ColorWhite        = "#FFFFFF"
@@ -156,10 +156,14 @@ proc taskInput*(r: MockRenderer; vm: TaskAppVM): MockNode =
   r.setStyle(inpRef, "font-size", "14px")
   r.setStyle(inpRef, "font-family", "inherit")
 
-  # Add Task CTA — content-hugging, indigo accent, white text.
+  # Add Task CTA — content-hugging, indigo accent, white text. Round-10
+  # uses both `background` and `background-color` so any UA `buttonface`
+  # default is fully overridden, and sets `border: none` to keep the
+  # CTA filled (no UA outline-only fallback).
+  r.setStyle(addBtnRef, "background", ColorAccent)
   r.setStyle(addBtnRef, "background-color", ColorAccent)
   r.setStyle(addBtnRef, "color", ColorWhite)
-  r.setStyle(addBtnRef, "border", "0")
+  r.setStyle(addBtnRef, "border", "none")
   r.setStyle(addBtnRef, "padding", "8px 16px")
   r.setStyle(addBtnRef, "border-radius", "6px")
   r.setStyle(addBtnRef, "font-size", "13px")

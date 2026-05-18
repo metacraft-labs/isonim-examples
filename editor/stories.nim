@@ -578,8 +578,10 @@ body { padding: 32px; overflow-y: auto; }
 }
 .choice-pill.active {
   background: #7c7aed;
+  background-color: #7c7aed;
   color: #FFFFFF;
   border: 1px solid #7c7aed;
+  font-weight: 600;
 }
 .number {
   background: #1A1B26;
@@ -646,12 +648,17 @@ body { padding: 32px; overflow-y: auto; }
   font-weight: 600;
   color: #FFFFFF;
   background: #7C7AED;
+  background-color: #7C7AED;
   padding: 8px 16px;
   border-radius: 6px;
+  border: none;
   letter-spacing: 0.01em;
 }
 .task-input-submit {
-  border: 0;
+  border: none;
+  background: #7C7AED;
+  background-color: #7C7AED;
+  color: #FFFFFF;
   font-family: inherit;
   cursor: pointer;
   margin-left: auto;
@@ -689,7 +696,7 @@ body { padding: 32px; overflow-y: auto; }
   font-weight: 700;
   line-height: 1;
 }
-.task .name { font-size: 14px; color: #E6E6F0; flex: 1; line-height: 1.4; }
+.task .name { font-size: 14px; color: #E8E9F0; flex: 1; line-height: 1.4; }
 .task.done .name { color: #A0A2B0; text-decoration: line-through; }
 .task .badge {
   font-size: 10px;

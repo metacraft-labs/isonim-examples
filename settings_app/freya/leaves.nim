@@ -238,7 +238,14 @@ proc choiceLeaf*(r: FreyaRenderer; vmRef: SettingsVM; itemId: string;
   # while the wrapping option still carries the `data-value` attribute
   # the click router reads. The currently-selected option flips to an
   # indigo background through the createRenderEffect below.
+  # Round-10: keep a parallel `seq` of the chip-label spans so the
+  # selection effect can flip their colour to white + weight to bold
+  # on the active option. Without this, the active label stayed at the
+  # primary off-white on every chip, which made the active indigo
+  # segment read as pale grey rather than the saturated brand indigo
+  # to the reviewer.
   var chipBgs: seq[FreyaElement] = @[]
+  var chipLabels: seq[FreyaElement] = @[]
   for opt in options:
     let optionNode = r.createElement("option")
     r.setAttribute(optionNode, "data-value", opt)
@@ -250,11 +257,12 @@ proc choiceLeaf*(r: FreyaRenderer; vmRef: SettingsVM; itemId: string;
     r.setStyle(optionNode, "cross_align", "center")
     let chipSpan = r.createElement("span")
     r.setTextContent(chipSpan, opt)
-    r.setStyle(chipSpan, "color", cTextPrimary)
+    r.setStyle(chipSpan, "color", cTextSecondary)
     r.setStyle(chipSpan, "font-size", "13")
     r.appendChild(optionNode, chipSpan)
     r.appendChild(selectNode, optionNode)
     chipBgs.add optionNode
+    chipLabels.add chipSpan
 
   createRenderEffect proc() =
     let value = captured.choiceValue(id)
@@ -262,12 +270,17 @@ proc choiceLeaf*(r: FreyaRenderer; vmRef: SettingsVM; itemId: string;
     r.setAttribute(selectNode, "data-value", value)
     for i in 0 ..< childCount(selectNode):
       let optionNode = nthChild(selectNode, i)
+      let labelSpan = chipLabels[i]
       if getAttribute(optionNode, "data-value") == value:
         r.setAttribute(optionNode, "selected", "selected")
         r.setStyle(optionNode, "background", cAccent)
+        r.setStyle(labelSpan, "color", "rgb(255, 255, 255)")
+        r.setStyle(labelSpan, "font-weight", "bold")
       else:
         r.removeAttribute(optionNode, "selected")
         r.setStyle(optionNode, "background", cChipBg)
+        r.setStyle(labelSpan, "color", cTextSecondary)
+        r.setStyle(labelSpan, "font-weight", "normal")
 
   r.addEventListener(selectNode, "click", proc() =
     let picked = getAttribute(selectNode, "data-value")

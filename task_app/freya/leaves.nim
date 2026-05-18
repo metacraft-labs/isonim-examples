@@ -370,15 +370,19 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   r.setStyle(row, "width", "100%")
 
   let toggleBtn = r.createElement("button")
-  let marker = if t.completed: "[x]" else: "[ ]"
+  # Round-10: replace the plain `[ ]`/`[x]` ASCII glyph with a designed
+  # checkbox. Off state: brighter slate fill (rgb 80,82,102) so it reads
+  # as a real control against the row card; on state: indigo accent fill
+  # + white ✓ glyph. The Freya headless raster does not paint CSS
+  # `border` strokes, so the off-state contrast lives entirely in the
+  # fill colour.
+  let marker = if t.completed: "✓" else: ""
   r.setTextContent(toggleBtn, marker)
-  # Round-4: small (~20×20) checkbox-style square. Off → neutral fill;
-  # on → indigo accent. main_align/cross_align centre the marker glyph.
   # M-EVP-14 round-7: pin the toggle's main-axis width so it stays a
   # 20 px square in the headless raster instead of consuming the
   # equal-share allocation.
   r.setAttribute(toggleBtn, "data-fixed-width", "20")
-  let toggleBg = if t.completed: "rgb(124, 122, 237)" else: "rgb(52, 53, 63)"
+  let toggleBg = if t.completed: "rgb(124, 122, 237)" else: "rgb(80, 82, 102)"
   r.setStyle(toggleBtn, "background", toggleBg)
   r.setStyle(toggleBtn, "padding", "0")
   r.setStyle(toggleBtn, "border-radius", "4")
@@ -389,10 +393,10 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   r.setStyle(toggleBtn, "height", "20")
   r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
   r.appendChild(row, toggleBtn)
-  addTextSpan(r, toggleBtn, marker,
-              color = (if t.completed: "rgb(255, 255, 255)"
-                       else: "rgb(160, 162, 176)"),
-              fontSize = "11", fontWeight = "bold")
+  if t.completed:
+    addTextSpan(r, toggleBtn, marker,
+                color = "rgb(255, 255, 255)",
+                fontSize = "12", fontWeight = "bold")
 
   let display =
     if t.completed: t.name & " (done)" else: t.name
@@ -406,10 +410,11 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
 
   let removeBtn = r.createElement("button")
   r.setAttribute(removeBtn, "class", "remove")
-  r.setTextContent(removeBtn, "x")
-  # Round-4: small (~20×20) text-only remove glyph in soft red. No fill
-  # so it reads as a tertiary affordance, not a primary destructive
-  # button.
+  r.setTextContent(removeBtn, "×")
+  # Round-10: switch from a soft-red ASCII "x" to the proper U+00D7
+  # multiplication-sign glyph in the muted secondary text colour, so
+  # the affordance reads as a deliberate tertiary control (matching
+  # the web `.task .remove` rule) rather than a stray red letter.
   # M-EVP-14 round-7: pin the remove glyph's main-axis width to 20 px.
   r.setAttribute(removeBtn, "data-fixed-width", "20")
   r.setStyle(removeBtn, "background", "rgb(29, 29, 40)")
@@ -422,9 +427,9 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   r.setStyle(removeBtn, "height", "20")
   r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
   r.appendChild(row, removeBtn)
-  addTextSpan(r, removeBtn, "x",
-              color = "rgb(224, 128, 128)",
-              fontSize = "14", fontWeight = "bold")
+  addTextSpan(r, removeBtn, "×",
+              color = "rgb(160, 162, 176)",
+              fontSize = "16", fontWeight = "bold")
 
   row
 
@@ -499,6 +504,10 @@ proc summaryBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setStyle(summaryNode, "border-radius", "6")
   r.setStyle(summaryNode, "width", "100%")
   r.setStyle(summaryNode, "height", "30")
+  # Round-10: 12-px margin-top so the summary visually separates from
+  # the last task row. The reviewer flagged the round-9 layout's tight
+  # spacing rhythm break against the dense list above.
+  r.setStyle(summaryNode, "margin-top", "12")
   s.summaryNode = summaryNode
   let row = r.createElement("span")
   r.setStyle(row, "color", "rgb(160, 162, 176)")
