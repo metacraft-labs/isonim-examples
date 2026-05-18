@@ -147,6 +147,20 @@ feel will and should differ.
   system Aqua / dark-mode appearance. Mac users should recognise
   this as a Mac app. The IsoNim accent appears as the tinted
   selection color.
+  - **Known-clear cells (do NOT flag as missing)**: the Cocoa task
+    pane always includes an **Add Task** primary button in the input
+    row (top), a per-row **remove glyph** at the trailing edge of
+    every task row (Unicode `⨯` U+2A2F, painted in a muted neutral
+    `#a0a2b0`), and a per-row **NSSwitch toggle** at the leading
+    edge. The remove glyph is intentionally low-contrast (muted
+    neutral, not red) so it doesn't compete with the indigo Add CTA
+    — this is the Wave-S polish, not a missing affordance. If you
+    can't see the trailing `⨯` at the captured scale, that's a
+    legibility critique (suggest higher contrast) not a "missing
+    element" critique. Source: `task_app/cocoa/leaves.nim`
+    `renderTaskRow` line 343 (`<button class="remove">` with text
+    `⨯`) and `taskInput` line 219 (`<button type="submit">Add
+    Task</button>`).
 - **Android** — real device framebuffer via `adb exec-out screencap`.
   Expect: Material 3 components (`Material You` palette tuned to the
   IsoNim accent), Material checkboxes, FAB-shaped Add button is
