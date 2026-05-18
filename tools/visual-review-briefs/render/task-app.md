@@ -142,6 +142,19 @@ feel will and should differ.
 - **Freya** — Skia-rendered, web-inspired layout. Expect: similar to
   Web visually but rasterised; rounded controls; gradients optional
   but discouraged for the showcase.
+- **TUI** — terminal renderer streaming a cell grid into xterm.js
+  inside the editor preview pane.
+  - **Known-clear accent**: the active filter (`<All>` /
+    `<Active>` / `<Completed>`) is painted in 24-bit-truecolor
+    `#7c7aed` (the IsoNim brand indigo) via a `\x1b[38;2;124;122;237m`
+    SGR sequence emitted by `compositor.parseColorOrDefault`'s
+    `ckRgb` branch. The leaves emit the literal `#7c7aed` (verified
+    in `task_app/tui/leaves.nim` lines 247-249) and the compositor
+    fans that through to xterm.js with `allowProposedApi: true`. At
+    the editor's preview scale the desaturated indigo can read as
+    "muted blue-violet"; if it reads as TEAL (`#06989a`) that is a
+    real regression — check that the compositor build is fresh.
+    Otherwise treat it as the intended brand accent.
 - **Cocoa** — AppKit running in-process on macOS. Expect: native Mac
   controls (`NSButton`, `NSTextField`, `NSTableView`) honouring the
   system Aqua / dark-mode appearance. Mac users should recognise
