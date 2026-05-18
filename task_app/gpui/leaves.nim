@@ -128,7 +128,14 @@ proc taskInput*(r: GpuiRenderer; vm: TaskAppVM): GpuiElement =
   # which all keep the input + add on one row.
   r.setStyle(wrapper, "background", "#1d1d28")
   r.setStyle(wrapper, "padding", "8")
-  r.setStyle(wrapper, "gap", "8")
+  # M-EVP-14 Wave AA (AA-10 gpui-task fix): bump the input-row gap
+  # from 8→16 so the Add Task pill visibly sits at the row's
+  # trailing edge rather than directly flush against the input
+  # placeholder. Round-19 reviewer flagged the previous tight
+  # gap as making Add Task read as if it were part of the input
+  # field. 16 px gives the CTA breathing room while keeping the
+  # row visually balanced.
+  r.setStyle(wrapper, "gap", "16")
   r.setStyle(wrapper, "flex-direction", "row")
   # ``align-items: center`` keeps the input field and the fixed-height
   # Add Task pill vertically centred on the row's baseline. The input

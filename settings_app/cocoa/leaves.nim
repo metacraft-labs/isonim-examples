@@ -109,12 +109,25 @@ when defined(macosx):
     ## PNG instead of a coloured ``[OFF]`` / ``[ON]`` text strip in an
     ## NSTextField (the previous ``<input type="checkbox">`` mapping).
     let node = r.createElement("switch")
-    # NSSwitch's natural height is ~22 px on macOS; round up to 24
-    # so the row reserves a comfortable band.
-    r.setAttribute(node, "data-fixed-height", "24")
-    # Pin a fixed width too so the headless layout pass doesn't
-    # stretch the switch across the full row.
+    # M-EVP-14 Wave AA (AA-3 fix): pin the canonical NSSwitch pill
+    # geometry (44 × 22 px) so the headless layout pass renders the
+    # switch as a recognisable oval pill rather than a tiny blank
+    # square. Round-19 reviewer flagged the Dark mode toggle as
+    # "tiny blank checkbox square rather than an NSSwitch oval
+    # pill". The cocoa renderer's ``applySwitchPillDefaults`` sets
+    # ``setCornerRadius: 11`` on the layer (half of 22 px height)
+    # at element creation; pin the dimensions here so the
+    # adapter's row-fixed-height (64 px) doesn't collapse the
+    # switch into a thin strip.
+    r.setAttribute(node, "data-fixed-height", "22")
     r.setAttribute(node, "data-fixed-width", "44")
+    # Belt-and-braces: also pin explicit width/height styles so
+    # both the live AppKit view and the headless capture path see
+    # the same dimensions even if one branch ignores the
+    # ``data-fixed-*`` attributes.
+    r.setStyle(node, "width", "44")
+    r.setStyle(node, "height", "22")
+    r.setStyle(node, "border-radius", "11")
     # M-EVP-14 Wave T (T-8 fix): tint the on-state in the IsoNim brand
     # indigo instead of the macOS system accent (teal / system-blue
     # on Sonoma). The cocoa renderer's ``color`` style branch now
@@ -342,6 +355,17 @@ when defined(macosx):
     r.setAttribute(node, "class", "settings-group")
     r.setAttribute(node, ComponentPathAttr, SettingsGroupPath)
     r.setAttribute(node, ElementKindAttr, "group")
+    # M-EVP-14 Wave AA (AA-2 fix): the round-19 reviewer flagged
+    # the Editor and Notifications section headers as visually
+    # overlapping the previous group's last row (Font size cut
+    # off by Editor; Line endings cut off by Notifications) due
+    # to inadequate inter-group vertical spacing. Add a 16-px top
+    # margin + 12-px padding-top so each group container sits on
+    # a clear breathing band below the prior group's items. The
+    # cocoa adapter's neutralTint vertical-stack heuristic honours
+    # the per-child `margin-top` style as a leading gap.
+    r.setStyle(node, "margin-top", "16")
+    r.setStyle(node, "padding-top", "12")
     node
 
   proc groupHeaderLeaf*(r: CocoaRenderer; label, description: string;

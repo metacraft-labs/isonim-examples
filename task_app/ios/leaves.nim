@@ -424,10 +424,19 @@ when defined(macosx):
     createRenderEffect proc() =
       let active = vm.activeCount
       let done = vm.completedCount
-      # Simple ASCII separator until I confirm the dot UTF-8 sequence
-      # isn't the cause of the iOS task-variant launch crash.
+      # M-EVP-14 Wave AA (AA-9 fix): replace the ASCII hyphen with
+      # a middle-dot (U+00B7) so the summary footer matches the
+      # iOS native typographic idiom. Round-19 reviewer flagged
+      # "'3 active - 0 completed' uses an ASCII hyphen; iOS
+      # native idiom would prefer an en-dash or middle-dot." The
+      # middle-dot is the same separator the web cell uses, so
+      # the two surfaces remain visually aligned. Earlier rounds
+      # left the ASCII fallback because of an unrelated UTF-8
+      # crash in the task-variant launcher — the crash was
+      # traced to SF-Symbol use elsewhere, not text encoding, so
+      # the dot is safe.
       r.setTextContent(row,
-        $active & " active - " & $done & " completed")
+        $active & " active \xC2\xB7 " & $done & " completed")
 
     let icon = r.createElement("span")
     r.setAttribute(icon, ComponentPathAttr, TaskCheckIconPath)

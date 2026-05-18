@@ -83,6 +83,18 @@ when defined(android) or defined(mockJni):
     r.setStyle(node, "background-color", surfaceCard)
     r.setStyle(node, "border-radius", "8")
     r.setStyle(node, "padding", "12")
+    # M-EVP-14 Wave AA (AA-6 fix): switch to a horizontal flow so the
+    # value-bearing leaf (toggle / number / choice) sits at the
+    # trailing edge of the row instead of stacking below the label.
+    # Round-19 reviewer flagged "Dark mode toggle widget is NOT
+    # visible (right edge of row is empty)" — the previous default
+    # vertical stack placed the switch BELOW the label which read as
+    # absent against the row's trailing edge. With ``flex-direction:
+    # row`` + ``align-items: center`` the switch hugs the right edge
+    # of the card as expected.
+    r.setStyle(node, "flex-direction", "row")
+    r.setStyle(node, "align-items", "center")
+    r.setStyle(node, "gap", "12")
     node
 
   proc labelLeaf*(r: AndroidRenderer; text: string): AndroidElement =
@@ -100,6 +112,10 @@ when defined(android) or defined(mockJni):
     r.setStyle(node, "font-size", "16")
     r.setStyle(node, "font-weight", "500")
     r.setStyle(node, "color", onSurface)
+    # M-EVP-14 Wave AA (AA-6 fix): grow to consume leftover row space
+    # so the trailing widget (switch / chip / stepper) hugs the right
+    # edge rather than packing against the label.
+    r.setStyle(node, "flex-grow", "1")
     node
 
   proc descriptionLeaf*(r: AndroidRenderer; text: string): AndroidElement =
@@ -391,11 +407,21 @@ when defined(android) or defined(mockJni):
           rCaptured.setStyle(chipNode, "background-color", surfaceMuted)
           rCaptured.setStyle(chipNode, "color", accentIndigo)
 
+    # M-EVP-14 Wave AA (AA-6 fix): pin an explicit per-chip width so
+    # the active option doesn't stretch into a "full-width indigo
+    # bar". Round-19 reviewer flagged "Theme 'Default' pill is
+    # rendered as a full-width indigo bar — pill width is not
+    # clamped to one segment." Without an explicit width, M3
+    # MaterialButton sized by `flex-grow` filled the parent and the
+    # active chip painted as a wide indigo band instead of a
+    # segment-sized pill. 92 dp comfortably fits the longest
+    # catalog label ("Solarized") at 13 sp without truncation.
     for opt in options:
       let chip = r.createElement("button")
       r.setAttribute(chip, "class", "settings-choice-chip")
       r.setAttribute(chip, "data-chip", opt)
       r.setTextContent(chip, opt)
+      r.setStyle(chip, "width", "92")
       r.setStyle(chip, "height", "32")
       r.setStyle(chip, "border-radius", "16")
       r.setStyle(chip, "padding", "8")

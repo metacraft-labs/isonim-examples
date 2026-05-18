@@ -172,8 +172,16 @@ when defined(macosx):
       r.setAttribute(host, "data-suffix", suffix)
     r.setStyle(host, "flex-direction", "row")
     r.setStyle(host, "align-items", "center")
-    r.setStyle(host, "gap", "4")
-    r.setStyle(host, "height", "28")
+    # M-EVP-14 Wave AA (AA-10 ios-settings fix): bump the host gap
+    # 4→6 and host height 28→32 so the trailing "+" stepper button
+    # is not clipped by the row's `data-fixed-height` reservation.
+    # Round-19 reviewer flagged the iOS settings "+" button as
+    # appearing clipped on the right edge. The extra 4 px of host
+    # height gives the 28-px circular `+` chip a 2-px breathing
+    # band top + bottom so anti-aliased pixels along its right
+    # edge no longer fall outside the host's clip rect.
+    r.setStyle(host, "gap", "6")
+    r.setStyle(host, "height", "32")
 
     # Hidden input — preserves the parity test contract. Sized to 0
     # so it doesn't occupy visible space on the device.

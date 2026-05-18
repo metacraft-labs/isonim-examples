@@ -522,7 +522,11 @@ body {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  /* M-EVP-14 Wave AA (AA-10 web-task fix): tighten the inter-section
+     rhythm to the 8-px scale. Round-19 reviewer flagged the filter
+     bar → cards rhythm as inconsistent with the 8-px design grid;
+     swap 24px → 16px so the spacing rounds to the 8-px tick. */
+  gap: 16px;
 }
 .app-header { display: flex; flex-direction: column; gap: 6px; }
 .app-title { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: #ECEDF3; }

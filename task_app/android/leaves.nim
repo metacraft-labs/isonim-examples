@@ -456,14 +456,32 @@ when defined(android) or defined(mockJni):
 
   proc summaryBar*(r: AndroidRenderer; vm: TaskAppVM): AndroidElement =
     ## "N of M remaining" footer. Reactive on `vm.tasks`.
+    ##
+    ## M-EVP-14 Wave AA (AA-5 fix): the round-19 reviewer flagged
+    ## "'3 of 3 remaining' and the ✓ wrap onto two lines, with the
+    ## ✓ orphaned below — looks broken." Force a single-line
+    ## horizontal row by pinning ``flex-direction: row`` +
+    ## ``flex-wrap: nowrap`` on the summary container, an explicit
+    ## row height that fits the text+glyph, a ``flex-shrink: 1``
+    ## on the label span so the text takes priority over the
+    ## glyph in a narrow viewport, and a tighter font-size that
+    ## leaves room for the ``✓`` at the trailing edge.
     let s = leavesFor(vm)
     let summaryNode = r.createElement("footer")
     r.setAttribute(summaryNode, "class", "task-summary")
     r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
     r.setAttribute(summaryNode, ElementKindAttr, "summary")
+    r.setStyle(summaryNode, "flex-direction", "row")
+    r.setStyle(summaryNode, "flex-wrap", "nowrap")
+    r.setStyle(summaryNode, "align-items", "center")
+    r.setStyle(summaryNode, "gap", "6")
+    r.setStyle(summaryNode, "height", "36")
+    r.setStyle(summaryNode, "padding", "8")
     s.summaryNode = summaryNode
     let row = r.createElement("span")
     r.setStyle(row, "color", onSurface)
+    r.setStyle(row, "font-size", "13")
+    r.setStyle(row, "flex-shrink", "1")
     r.appendChild(summaryNode, row)
     createRenderEffect proc() =
       let active = vm.activeCount
@@ -486,6 +504,13 @@ when defined(android) or defined(mockJni):
     # cascade). The accent stays reserved for the Add CTA + active
     # filter chip.
     r.setStyle(icon, "color", onSurface)
+    # M-EVP-14 Wave AA (AA-5 fix): pin a small fixed footprint so
+    # the glyph never wraps to its own line. ``flex-shrink: 0``
+    # ensures the glyph keeps its space even when the label spans
+    # the rest of the row.
+    r.setStyle(icon, "font-size", "13")
+    r.setStyle(icon, "width", "16")
+    r.setStyle(icon, "flex-shrink", "0")
     r.appendChild(summaryNode, icon)
 
     summaryNode

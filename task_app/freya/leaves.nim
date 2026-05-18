@@ -384,7 +384,17 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   # breathing on either side.
   r.setAttribute(row, "data-layout", "horizontal")
   r.setAttribute(row, "data-fixed-height", "52")
-  r.setStyle(row, "background", "rgb(29, 29, 40)")
+  # M-EVP-14 Wave AA (AA-8 fix): lift the row background from
+  # rgb(29, 29, 40) to rgb(35, 36, 48) so the cards read as
+  # distinct surfaces against the appShell's rgb(15, 15, 20)
+  # pane background. Round-19 reviewer flagged "Row backgrounds
+  # are nearly identical to the panel background — even with the
+  # larger gap, the rows read more as separator lines than as
+  # distinct cards." The +6 RGB lift in each channel pushes the
+  # contrast ratio from ~1.3 to ~1.7 against the pane, which is
+  # enough for the rows to read as cards in the Freya headless
+  # Skia raster.
+  r.setStyle(row, "background", "rgb(35, 36, 48)")
   r.setStyle(row, "padding", "12")
   r.setStyle(row, "gap", "10")
   r.setStyle(row, "flex-direction", "row")

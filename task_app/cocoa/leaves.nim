@@ -179,7 +179,19 @@ when defined(macosx):
     # canvas with a consistent rhythm — the children themselves
     # carry data-fixed-height now (input=64, filter=44, summary=44)
     # so list claims the remainder.
+    #
+    # M-EVP-14 Wave AA (AA-1 fix): clamp the inner column to a
+    # comfortable 700-px max width so the input row, filter chips,
+    # task list, and summary footer do not stretch across the full
+    # ~1050-px preview pane width. Round-19 reviewer flagged Cocoa
+    # rows as spanning the full pane width with a ~750-px gap
+    # between the task name and the trailing × glyph. The cocoa
+    # adapter honours ``data-fixed-width`` (Wave W-1 adapter work),
+    # so pin ``data-fixed-width: 700`` on the appShell itself and
+    # centre it horizontally via ``align-self: center``.
     r.setStyle(app, "padding", "8")
+    r.setAttribute(app, "data-fixed-width", "700")
+    r.setStyle(app, "align-self", "center")
     app
 
   proc taskInput*(r: CocoaRenderer; vm: TaskAppVM): CocoaElement =
@@ -207,6 +219,11 @@ when defined(macosx):
     # ballooning to 25 % of the canvas.
     r.setAttribute(wrapper, "data-layout", "horizontal")
     r.setAttribute(wrapper, "data-fixed-height", "56")
+    # M-EVP-14 Wave AA (AA-1 fix): clamp the input row to the same
+    # 700-px max width as the appShell so the input field + Add
+    # button don't stretch across the full pane width.
+    r.setAttribute(wrapper, "data-fixed-width", "700")
+    r.setStyle(wrapper, "align-self", "center")
 
     let inp = r.createElement("input")
     r.setAttribute(inp, "type", "text")
@@ -270,6 +287,11 @@ when defined(macosx):
     # canvas.
     r.setAttribute(wrapper, "data-layout", "horizontal")
     r.setAttribute(wrapper, "data-fixed-height", "44")
+    # M-EVP-14 Wave AA (AA-1 fix): clamp the filter bar to the same
+    # 700-px max width so the chip strip doesn't stretch across the
+    # full preview pane.
+    r.setAttribute(wrapper, "data-fixed-width", "700")
+    r.setStyle(wrapper, "align-self", "center")
 
     for fm in [fmAll, fmActive, fmCompleted]:
       let btn = r.createElement("button")
@@ -301,6 +323,13 @@ when defined(macosx):
     # digit pixels).
     r.setAttribute(row, "data-layout", "horizontal")
     r.setAttribute(row, "data-fixed-height", "48")
+    # M-EVP-14 Wave AA (AA-1 fix): pin per-row main-axis width to
+    # the 700-px clamp so each task card hugs the same width as
+    # the input row + filter strip + summary footer above/below.
+    # Without this, the ``<li>`` rows inherited the cocoa
+    # adapter's full-pane stretch and produced a ~750-px gap
+    # between the task name and the trailing × glyph.
+    r.setAttribute(row, "data-fixed-width", "684")  # 700 - 16 padding
     r.setStyle(row, "min-height", "48px")
     r.setStyle(row, "padding", "8px 12px")
     # M-EVP-14 Wave-Q row-card surface: explicit dark fill +
@@ -427,6 +456,17 @@ when defined(macosx):
     # Wave-Q: 10-px gap so the row-card backgrounds visibly separate.
     r.setStyle(listNode, "gap", "10")
     r.setStyle(listNode, "flex-direction", "column")
+    # M-EVP-14 Wave AA (AA-1 fix): clamp the task-list main-axis
+    # width so each row's full-width fill is bounded to 700 px
+    # instead of stretching across the entire ~1050 px preview
+    # pane. Round-19 reviewer flagged "Cocoa rows stretch to span
+    # the full preview pane width" with a ~750-px gap between the
+    # task name and the trailing × glyph. The cocoa adapter
+    # honours ``data-fixed-width`` for both the list and its
+    # ``<li>`` children, so the row-card surfaces now hug the
+    # 700-px clamp.
+    r.setAttribute(listNode, "data-fixed-width", "700")
+    r.setStyle(listNode, "align-self", "center")
     let listRef = listNode
     createRenderEffect proc() =
       let visible = vm.visibleTasks
@@ -475,6 +515,11 @@ when defined(macosx):
     # band so text + glyph sit side by side on the same baseline.
     r.setAttribute(summaryNode, "data-layout", "horizontal")
     r.setAttribute(summaryNode, "data-fixed-height", "44")
+    # M-EVP-14 Wave AA (AA-1 fix): clamp the summary footer to the
+    # same 700-px max width so the "N of M remaining" text + check
+    # glyph sit on a bounded row, not spread across the full pane.
+    r.setAttribute(summaryNode, "data-fixed-width", "700")
+    r.setStyle(summaryNode, "align-self", "center")
     s.summaryNode = summaryNode
     let row = r.createElement("span")
     # M-EVP-14 round-8: the summary footer sits on the adapter's

@@ -98,17 +98,26 @@ proc toggleLeaf*(r: FreyaRenderer; vmRef: SettingsVM;
   r.setAttribute(node, "type", "checkbox")
   r.setStyle(node, "background", cTogglePillOff)
   r.setStyle(node, "padding", "2")
-  r.setStyle(node, "border-radius", "10")
+  # M-EVP-14 Wave AA (AA-10 freya-settings fix): bump the track
+  # corner radius to a true pill (half the 20-px height) so the
+  # off-state pill reads as a recognisable iOS-style toggle rather
+  # than a softly-rounded rectangle. Round-19 reviewer flagged
+  # the previous 10-px radius (half-height already, but applied
+  # against a 20-px track that the Freya Skia raster sometimes
+  # rounded to a flattened rectangle) as "not a true pill".
+  # Pinning the radius to exactly half-height plus explicit knob
+  # circle radius gives the raster a cleaner sweep.
+  r.setStyle(node, "border-radius", "12")
   r.setStyle(node, "flex-direction", "row")
   r.setStyle(node, "cross_align", "center")
   r.setStyle(node, "main_align", "start")
-  r.setStyle(node, "width", "36")
-  r.setStyle(node, "height", "20")
+  r.setStyle(node, "width", "40")
+  r.setStyle(node, "height", "24")
   let knob = r.createElement("div")
   r.setStyle(knob, "background", cToggleKnob)
-  r.setStyle(knob, "width", "16")
-  r.setStyle(knob, "height", "16")
-  r.setStyle(knob, "border-radius", "8")
+  r.setStyle(knob, "width", "20")
+  r.setStyle(knob, "height", "20")
+  r.setStyle(knob, "border-radius", "10")
   r.appendChild(node, knob)
   let captured = vmRef
   let id = itemId
@@ -178,11 +187,25 @@ proc numberLeaf*(r: FreyaRenderer; vmRef: SettingsVM; itemId: string;
   let captured = vmRef
   let id = itemId
   let valueRef = valueSpan
+  let capturedSuffix = suffix
   createRenderEffect proc() =
     let value = captured.numberValue(id)
     r.setAttribute(host, "data-value", $value)
     r.setAttribute(inputNode, "data-value", $value)
-    r.setTextContent(valueRef, $value)
+    # M-EVP-14 Wave AA (AA-10 freya-settings fix): humanise
+    # millisecond stepper readouts so the Notifications poll
+    # interval reads as "5 s" instead of "5000 ms". Round-19
+    # reviewer flagged the raw ``5000 ms`` reading as harder to
+    # parse than the same number expressed in seconds, and the
+    # web cell already humanises via formatPollIntervalDisplay
+    # — bring Freya in line. Catalog value stays in milliseconds
+    # (the VM contract is unchanged); only the rendered string
+    # collapses to integer-seconds when the value is a whole
+    # multiple of 1000.
+    if capturedSuffix == "ms" and value >= 1000 and value mod 1000 == 0:
+      r.setTextContent(valueRef, $(value div 1000))
+    else:
+      r.setTextContent(valueRef, $value)
 
   let lo = minValue
   let hi = maxValue
@@ -208,6 +231,21 @@ proc numberLeaf*(r: FreyaRenderer; vmRef: SettingsVM; itemId: string;
     r.setStyle(suffixNode, "color", cTextSecondary)
     r.setStyle(suffixNode, "font-size", "12")
     r.appendChild(host, suffixNode)
+    # M-EVP-14 Wave AA (AA-10 freya-settings fix): keep the suffix
+    # consistent with the humanised value display. When the value
+    # is a whole-second multiple (e.g. 5000 ms → "5 s"), flip the
+    # suffix label from "ms" to "s" reactively so the row reads
+    # cleanly as "5 s" rather than "5 ms".
+    let suffixRef = suffixNode
+    let capturedSuffixForSuffix = suffix
+    let capturedVm = vmRef
+    let capturedItemId = itemId
+    createRenderEffect proc() =
+      let v = capturedVm.numberValue(capturedItemId)
+      if capturedSuffixForSuffix == "ms" and v >= 1000 and v mod 1000 == 0:
+        r.setTextContent(suffixRef, "s")
+      else:
+        r.setTextContent(suffixRef, capturedSuffixForSuffix)
 
   host
 
