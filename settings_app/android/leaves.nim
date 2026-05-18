@@ -53,12 +53,15 @@ when defined(android) or defined(mockJni):
   # device.
   const
     accentIndigo   = "#7c7aed"
-    onTrackIndigo  = "#7c7aed"
-    offTrackGrey   = "#3a3a52"
     surfaceCard    = "#1d1d28"
     surfaceMuted   = "#2a2a3a"
     onSurface      = "#e6e6f0"
     mutedText      = "#a0a0b8"
+    # M-EVP-14 Wave W-3: ``onTrackIndigo`` / ``offTrackGrey`` previously
+    # styled the manually composed ``<div>`` + thumb switch. The leaf
+    # now emits a real ``<switch>`` routed through Kotlin
+    # ``CustomSwitchView`` which paints both track and thumb itself,
+    # so the per-state palette lives in Kotlin (see CustomSwitchView.kt).
 
   # ----------------------------------------------------------------------------
   # Layout containers
@@ -123,52 +126,26 @@ when defined(android) or defined(mockJni):
 
   proc toggleLeaf*(r: AndroidRenderer; vmRef: SettingsVM;
                    itemId: string): AndroidElement =
-    ## Round-4 fix: drop the flat-pill "OFF"/"ON" label rectangle the
-    ## round-3 leaf rendered (the reviewer flagged it as not reading
-    ## like an M3 switch) and build a real M3 switch shape: an outer
-    ## pill *track* (52 x 32 dp, 16 dp radius) plus an inner round
-    ## *thumb* (24 dp circle) that lives at the leading edge when off
-    ## and the trailing edge when on.  No more inline text; the thumb
-    ## position is the affordance.
-    ##
-    ## The element switches from `<button>` to `<div>` (mapped to
-    ## `LinearLayout`) so it can host the thumb child.  The
-    ## `type="checkbox"` attribute moves with it — the cross-renderer
-    ## parity driver (`tests/test_settings_parity_across_renderers.nim`'s
-    ## `androidToggleOf`) walks the row's last child and matches on
-    ## `getAttribute(last, "type") == "checkbox"`, so the contract is
-    ## preserved.  `setOnClickListener` works on any `View`, so the
-    ## click handler keeps firing into the same code path.
-    let node = r.createElement("div")
+    ## M-EVP-14 Wave W-3: emit a real ``<switch>`` element that the
+    ## Android renderer routes through ``CustomSwitchView`` (a Canvas
+    ## ``onDraw`` subclass on the Kotlin side). Samsung One UI's
+    ## MaterialSwitch theme override silently dropped our brand indigo
+    ## tint, so previous rounds composed a `<div>` + thumb manually.
+    ## ``CustomSwitchView`` paints the rounded-rectangle track and the
+    ## circular thumb directly in Canvas operations, bypassing the
+    ## platform theme entirely. The cross-renderer parity driver still
+    ## walks the row's last child and matches on
+    ## ``getAttribute(last, "type") == "checkbox"`` so the contract is
+    ## preserved.
+    let node = r.createElement("switch")
     r.setAttribute(node, "type", "checkbox")
     r.setAttribute(node, "class", "settings-toggle")
-    # M3 switch track metric — 52 x 32 dp pill.
-    # Round-10: 56x32 dp switch + sync off-track grey.
+    # CustomSwitchView's onMeasure honours explicit width / height
+    # from the layout params; pin to the same 56 x 32 dp footprint
+    # the previous div-composite leaf used so neighbouring rows keep
+    # their visual rhythm.
     r.setStyle(node, "width", "56")
     r.setStyle(node, "height", "32")
-    r.setStyle(node, "border-radius", "16")
-    r.setStyle(node, "background-color", offTrackGrey)
-    r.setStyle(node, "flex-direction", "row")
-
-    # Two spacers + a thumb.  When OFF, the trailing spacer takes all
-    # the slack and the thumb sits at the leading edge; when ON, the
-    # leading spacer takes the slack and the thumb sits at the
-    # trailing edge.  We toggle the spacer widths by toggling their
-    # `flex-grow` weights inside the render effect below.
-    let leadSpacer = r.createElement("div")
-    r.appendChild(node, leadSpacer)
-
-    let thumb = r.createElement("div")
-    # M3 thumb metric — 24 dp circle, indigo when on / muted when off.
-    r.setStyle(thumb, "width", "24")
-    r.setStyle(thumb, "height", "24")
-    r.setStyle(thumb, "border-radius", "12")
-    r.setStyle(thumb, "background-color", "#ffffff")
-    r.appendChild(node, thumb)
-
-    let trailSpacer = r.createElement("div")
-    r.appendChild(node, trailSpacer)
-
     let captured = vmRef
     let id = itemId
     let rCaptured = r
@@ -177,17 +154,9 @@ when defined(android) or defined(mockJni):
       rCaptured.setAttribute(node, "data-value",
                              (if value: "true" else: "false"))
       if value:
-        rCaptured.setAttribute(node, "checked", "checked")
-        rCaptured.setStyle(node, "background-color", onTrackIndigo)
-        # Thumb to the trailing edge.
-        rCaptured.setStyle(leadSpacer, "flex-grow", "1")
-        rCaptured.setStyle(trailSpacer, "flex-grow", "0")
+        rCaptured.setAttribute(node, "checked", "true")
       else:
-        rCaptured.removeAttribute(node, "checked")
-        rCaptured.setStyle(node, "background-color", offTrackGrey)
-        # Thumb to the leading edge.
-        rCaptured.setStyle(leadSpacer, "flex-grow", "0")
-        rCaptured.setStyle(trailSpacer, "flex-grow", "1")
+        rCaptured.setAttribute(node, "checked", "false")
     r.addEventListener(node, "click", proc() =
       let current = rCaptured.getAttribute(node, "data-value") == "true"
       discard captured.setToggle(id, not current))
