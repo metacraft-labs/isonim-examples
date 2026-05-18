@@ -25,7 +25,7 @@
 when defined(macosx):
   import std/strutils
 
-  import isonim/core/computation  # createRenderEffect
+  import isonim/core/computation # createRenderEffect
   import isonim_cocoa/renderer
   import isonim_render_serve/element_tree_attrs
 
@@ -68,6 +68,16 @@ when defined(macosx):
     # band so it doesn't soak up the row's height share and squeeze
     # the widget below to a sliver.
     r.setAttribute(node, "data-fixed-height", "20")
+    # M-EVP-14 round-8: NSTextField's default ``controlTextColor`` is
+    # near-black, and the cocoa adapter's ``neutralTint`` paints
+    # every container in the #18..#3A dark-grey band. Without an
+    # explicit foreground, the label text disappears entirely
+    # (round-7's bezel-less fix only painted button titles white;
+    # ``<label>`` / ``<span>`` / ``<p>`` still inherit the default).
+    # The renderer's ``applyStyle "color"`` branch wires
+    # ``setTextColor:`` for ``ekLabel`` (see
+    # ``isonim-cocoa/src/isonim_cocoa/renderer.nim`` lines 433-442).
+    r.setStyle(node, "color", "#ecedf3")
     node
 
   proc descriptionLeaf*(r: CocoaRenderer; text: string): CocoaElement =
@@ -77,6 +87,13 @@ when defined(macosx):
     # M-EVP-14 round-4: the description is the row's flex child;
     # leaving it unsized so it absorbs any leftover vertical slack
     # without starving the widget below.
+    # M-EVP-14 round-8: pick a dimmer grey foreground so the
+    # description reads as a secondary helper line below the primary
+    # label (same #a3a4ad muted grey the placeholder rows in
+    # ``task_app/cocoa/leaves.nim`` use). Without this, NSTextField
+    # paints the body in black on the adapter's dark surface and
+    # the row collapses to label + invisible-strip + widget.
+    r.setStyle(node, "color", "#a3a4ad")
     node
 
   # ----------------------------------------------------------------------------
@@ -97,10 +114,22 @@ when defined(macosx):
     let captured = vmRef
     let id = itemId
     let rCaptured = r
+    # M-EVP-14 round-8: the toggle's underlying NSTextField paints
+    # its ``stringValue`` (default empty), so the bezel-less branch
+    # only produces a coloured strip with no on/off cue. Pre-stamp
+    # a white foreground for the glyph and let the render effect
+    # below set the actual ON/OFF string.
+    r.setStyle(node, "color", "#ecedf3")
     createRenderEffect proc() =
       let value = captured.toggleValue(id)
       rCaptured.setAttribute(node, "data-value",
                              (if value: "true" else: "false"))
+      # M-EVP-14 round-8: stamp a real glyph into the field so the
+      # toggle reads as a state widget instead of an empty coloured
+      # strip. ``setTextContent`` on an ``ekInput`` lands as
+      # ``setStringValue:`` — see
+      # ``isonim-cocoa/src/isonim_cocoa/renderer.nim`` ~line 760.
+      rCaptured.setTextContent(node, if value: "ON" else: "OFF")
       if value:
         rCaptured.setAttribute(node, "checked", "checked")
         # Round-7 fix: the underlying ekInput (NSTextField) ships a
@@ -177,6 +206,15 @@ when defined(macosx):
       let value = captured.numberValue(id)
       rCaptured.setAttribute(host, "data-value", $value)
       rCaptured.setAttribute(inputNode, "data-value", $value)
+      # M-EVP-14 round-8: previously the leaf only mirrored the VM
+      # value into ``data-value``, which the cocoa renderer ignores —
+      # so the NSTextField stayed empty and the bezel-less branch
+      # produced a flat dark strip with no digits. ``setTextContent``
+      # on an ``ekInput`` lands as ``setStringValue:`` (see
+      # ``isonim-cocoa/src/isonim_cocoa/renderer.nim`` line ~760), so
+      # the bezel-less control finally paints the actual numeric
+      # value over the dark fill.
+      rCaptured.setTextContent(inputNode, $value)
 
     let lo = minValue
     let hi = maxValue
@@ -202,6 +240,11 @@ when defined(macosx):
       # M-EVP-14 round-4: trailing suffix sits in a narrow band so the
       # input bezel claims the row's remaining horizontal slice.
       r.setAttribute(suffixNode, "data-fixed-width", "32")
+      # M-EVP-14 round-8: paint the suffix in the muted secondary
+      # tone matching the description so the unit glyph reads as
+      # auxiliary text instead of disappearing into the dark row
+      # surface.
+      r.setStyle(suffixNode, "color", "#a3a4ad")
       r.appendChild(host, suffixNode)
 
     host
@@ -235,10 +278,27 @@ when defined(macosx):
       r.setTextContent(optionNode, opt)
       r.appendChild(selectNode, optionNode)
 
+    # M-EVP-14 round-8: the cocoa renderer maps ``<select>`` →
+    # ``ekSelect`` (NSPopUpButton) but ``appendChild`` adds the
+    # ``<option>`` children via ``addSubview:`` — NSPopUpButton
+    # ignores those entirely and only renders its own menu-item
+    # titles (populated via ``addItemWithTitle:``). Net effect: the
+    # popup widget paints empty, leaving the row with no visible
+    # current value. As an in-scope cocoa-side workaround, append a
+    # sibling ``<span>`` mirroring the live choice and paint it in
+    # the indigo accent so the user sees which option is selected.
+    # A proper fix would teach the renderer to forward
+    # ``appendChild(<option>)`` to ``popUpAddItem``, but that lives
+    # in ``isonim-cocoa`` and is outside this milestone's scope.
+    let valueLabel = r.createElement("span")
+    r.setAttribute(valueLabel, "class", "settings-choice-value")
+    r.setStyle(valueLabel, "color", "#9d9bff")
+
     createRenderEffect proc() =
       let value = captured.choiceValue(id)
       rCaptured.setAttribute(host, "data-value", value)
       rCaptured.setAttribute(selectNode, "data-value", value)
+      rCaptured.setTextContent(valueLabel, value)
       for i in 0 ..< rCaptured.childCount(selectNode):
         let optionNode = rCaptured.nthChild(selectNode, i)
         if rCaptured.getAttribute(optionNode, "data-value") == value:
@@ -257,6 +317,7 @@ when defined(macosx):
         discard captured.setChoice(id, picked))
 
     r.appendChild(host, selectNode)
+    r.appendChild(host, valueLabel)
     host
 
   # ----------------------------------------------------------------------------
@@ -320,12 +381,22 @@ when defined(macosx):
     # header label is unambiguously heavier than the body item labels.
     r.setStyle(h2, "font-weight", "600")
     r.setStyle(h2, "font-size", "15")
+    # M-EVP-14 round-8: paint the group title in the indigo accent
+    # so the header band reads as a real section divider, not a
+    # faint dark stripe. NSTextField's default ``controlTextColor``
+    # is near-black, which is invisible against the adapter's
+    # ``neutralTint`` palette (#28-#3A grey).
+    r.setStyle(h2, "color", "#9d9bff")
     r.appendChild(host, h2)
 
     if description.len > 0:
       let p = r.createElement("p")
       r.setAttribute(p, "class", "settings-group-header-description")
       r.setTextContent(p, description)
+      # M-EVP-14 round-8: the header description sits directly below
+      # the title on the same dark band; without an explicit
+      # foreground it collapses to black-on-black.
+      r.setStyle(p, "color", "#a3a4ad")
       r.appendChild(host, p)
 
     host

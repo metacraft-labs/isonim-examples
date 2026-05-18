@@ -62,8 +62,8 @@
 when defined(macosx):
   import std/hashes
   import isonim/core/signals
-  import isonim/core/computation  # createRenderEffect
-  import isonim/dsl/components    # forEachKeyed
+  import isonim/core/computation # createRenderEffect
+  import isonim/dsl/components # forEachKeyed
   import isonim_cocoa/renderer
   # `CocoaElement = Id = distinct pointer`; `Id`'s borrowed `==` lives
   # in `isonim_cocoa/objc_runtime`. `forEachKeyed`/`reconcileArrays` is
@@ -312,6 +312,16 @@ when defined(macosx):
     let display =
       if t.completed: t.name & " (done)" else: t.name
     r.setTextContent(label, display)
+    # M-EVP-14 round-8: the cocoa adapter paints task-row containers
+    # with the neutral dark-grey ``neutralTint`` palette (#28282E /
+    # #323238 / #3A3A40 — see ``cocoa_adapter.layoutTreeForCapture``).
+    # NSTextField's default ``controlTextColor`` is near-black, so the
+    # title text painted black on dark = invisible. The renderer's
+    # ``applyStyle "color"`` branch wires ``setTextColor:`` for
+    # ``ekLabel`` (which is what ``<span>`` maps to — see ``tagMap``
+    # in ``isonim-cocoa/src/isonim_cocoa/renderer.nim``), so setting an
+    # explicit foreground here makes the row title legible.
+    r.setStyle(label, "color", "#ecedf3")
     r.appendChild(row, label)
 
     let removeBtn = r.createElement("button")
@@ -333,12 +343,17 @@ when defined(macosx):
   proc placeholderRow(r: CocoaRenderer; vm: TaskAppVM): CocoaElement =
     result = r.createElement("p")
     r.setAttribute(result, "class", "empty")
+    # M-EVP-14 round-8: paint the empty-state placeholder in the
+    # same light foreground used by the row title (see the comment
+    # in ``renderTaskRow``) so the text stays legible on the
+    # adapter's dark ``neutralTint`` surface.
+    r.setStyle(result, "color", "#a3a4ad")
     let placeholderNode = result
     createRenderEffect proc() =
       let placeholder =
         case vm.filter.val
-        of fmAll:       "(no tasks yet)"
-        of fmActive:    "(no active tasks)"
+        of fmAll: "(no tasks yet)"
+        of fmActive: "(no active tasks)"
         of fmCompleted: "(no completed tasks)"
       r.setTextContent(placeholderNode, placeholder)
 
@@ -370,7 +385,7 @@ when defined(macosx):
     forEachKeyed(r, listNode,
       proc(): seq[Task] = vm.visibleTasks,
       proc(item: proc(): Task; index: proc(): int): CocoaElement =
-        renderTaskRow(r, vm, item()))
+      renderTaskRow(r, vm, item()))
 
     listNode
 
@@ -383,6 +398,12 @@ when defined(macosx):
     r.setAttribute(summaryNode, ElementKindAttr, "summary")
     s.summaryNode = summaryNode
     let row = r.createElement("span")
+    # M-EVP-14 round-8: the summary footer sits on the adapter's
+    # ``neutralTint`` palette (dark grey at the bottom of the app
+    # shell). Without an explicit foreground colour, NSTextField
+    # paints the "N of M remaining" copy in near-black and the
+    # whole summary row reads as empty.
+    r.setStyle(row, "color", "#ecedf3")
     r.appendChild(summaryNode, row)
     createRenderEffect proc() =
       let active = vm.activeCount
@@ -400,6 +421,11 @@ when defined(macosx):
     # check mark so the summary's affordance reads as a "tasks
     # completed" indicator instead of an unmoored caret/typo.
     r.setTextContent(icon, "✓")
+    # M-EVP-14 round-8: the check-glyph rides the same dark surface
+    # as the summary footer; tint it with the indigo accent so the
+    # affordance reads as an interactive vector-symbol slot rather
+    # than blending into the background.
+    r.setStyle(icon, "color", "#7c7aed")
     r.appendChild(summaryNode, icon)
 
     summaryNode
