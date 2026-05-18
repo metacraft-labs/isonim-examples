@@ -165,15 +165,14 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   # Round-4: pin a row height (~52 px) so the wrapper does not auto-
   # grow into a 50%-of-canvas band when Freya distributes free space
   # between the four shell children.
-  # M-EVP-14 round-6 note: the headless Freya adapter
-  # (`isonim-render-serve/.../freya_adapter.nim::walkLayout`) ignores
-  # explicit ``width`` styles and always paints children at the
-  # parent's full width — fixing the "stretched controls" reviewer
-  # finding requires the freya adapter to grow ``data-fixed-width``-
-  # style honouring (see the cocoa adapter for the analogous knob).
-  # Leaving ``width: 100%`` here keeps the leaf semantics correct
-  # for the live Freya runtime; the headless raster will inherit the
-  # improvement once the adapter is taught about per-child widths.
+  # M-EVP-14 round-7 fix: the headless Freya adapter
+  # (`isonim-render-serve/.../freya_adapter.nim::walkLayout`) now
+  # honors ``data-layout="horizontal"`` + ``data-fixed-width`` so the
+  # captured raster matches the live Freya runtime's intent. Mark
+  # this wrapper as a horizontal flow so the Add Task button can
+  # claim a fixed 120 px slice along the main axis.
+  r.setAttribute(wrapper, "data-layout", "horizontal")
+  r.setAttribute(wrapper, "data-fixed-height", "52")
   r.setStyle(wrapper, "background", "rgb(29, 29, 40)")
   r.setStyle(wrapper, "padding", "8")
   r.setStyle(wrapper, "gap", "8")
@@ -186,6 +185,9 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   let inp = r.createElement("input")
   r.setAttribute(inp, "type", "text")
   r.setAttribute(inp, "placeholder", "New task...")
+  # M-EVP-14 round-7: the input is the flex child of the horizontal
+  # input row — no ``data-fixed-width`` so it claims the leftover
+  # space after the 120 px Add Task button is reserved.
   # Round-4: pin the input field's height so the placeholder span
   # does not vertically dominate; let the input flex horizontally.
   # Round-5: ``width: fill`` greedily took the whole wrapper row
@@ -235,6 +237,11 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   let addBtn = r.createElement("button")
   r.setAttribute(addBtn, "type", "submit")
   r.setTextContent(addBtn, "Add Task")
+  # M-EVP-14 round-7 fix: pin a 120 px main-axis size for the headless
+  # Freya raster so the captured frame shows a content-hugging button
+  # instead of a ~40 %-of-pane band. The live Freya runtime keeps using
+  # the ``width`` style below.
+  r.setAttribute(addBtn, "data-fixed-width", "120")
   # Round-4: pin width/height so the CTA reads as a real button (not a
   # full-width band). Round-5: the prior 96 px width clipped the
   # button against the right edge because the input row's ``width:
@@ -275,6 +282,12 @@ proc filterBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   # vertically inside the row.
   # Round-5: tighten further so the chip strip is shorter than the
   # task rows (was reading as slightly taller than the 36 px rows).
+  # M-EVP-14 round-7: declare horizontal flow + pin row height so the
+  # headless raster packs the three chips left-to-right at their
+  # natural ~96 px widths instead of stretching each to ~1/3 of the
+  # pane.
+  r.setAttribute(wrapper, "data-layout", "horizontal")
+  r.setAttribute(wrapper, "data-fixed-height", "28")
   r.setStyle(wrapper, "flex-direction", "row")
   r.setStyle(wrapper, "gap", "8")
   r.setStyle(wrapper, "padding", "0")
@@ -285,6 +298,10 @@ proc filterBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
     let btn = r.createElement("button")
     r.setTextContent(btn, $fm)
     r.setAttribute(btn, "data-filter", $fm)
+    # M-EVP-14 round-7 fix: pin a 96 px main-axis size so each chip
+    # packs against its neighbour at content-width instead of being
+    # stretched to a third of the pane by the headless raster.
+    r.setAttribute(btn, "data-fixed-width", "96")
     # Round-4: chip-shaped pill (~80×28). Round-5 follow-up: the
     # reactive selection effect didn't always paint over the baseline
     # `rgb(34, 35, 46)` before the first F-packet was captured, so the
@@ -333,6 +350,11 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   # Card-style row separation. Round-4: pin a row height (~36 px) so the
   # rows pack tightly and the toggle/remove glyphs don't autoscale to
   # ~50 px tall.
+  # M-EVP-14 round-7: horizontal flow + pin a 36 px main-axis height
+  # so the headless adapter keeps each row tight, and the inner
+  # toggle/title/remove children flow left-to-right.
+  r.setAttribute(row, "data-layout", "horizontal")
+  r.setAttribute(row, "data-fixed-height", "36")
   r.setStyle(row, "background", "rgb(29, 29, 40)")
   r.setStyle(row, "padding", "8")
   r.setStyle(row, "gap", "10")
@@ -347,6 +369,10 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   r.setTextContent(toggleBtn, marker)
   # Round-4: small (~20×20) checkbox-style square. Off → neutral fill;
   # on → indigo accent. main_align/cross_align centre the marker glyph.
+  # M-EVP-14 round-7: pin the toggle's main-axis width so it stays a
+  # 20 px square in the headless raster instead of consuming the
+  # equal-share allocation.
+  r.setAttribute(toggleBtn, "data-fixed-width", "20")
   let toggleBg = if t.completed: "rgb(124, 122, 237)" else: "rgb(52, 53, 63)"
   r.setStyle(toggleBtn, "background", toggleBg)
   r.setStyle(toggleBtn, "padding", "0")
@@ -379,6 +405,8 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   # Round-4: small (~20×20) text-only remove glyph in soft red. No fill
   # so it reads as a tertiary affordance, not a primary destructive
   # button.
+  # M-EVP-14 round-7: pin the remove glyph's main-axis width to 20 px.
+  r.setAttribute(removeBtn, "data-fixed-width", "20")
   r.setStyle(removeBtn, "background", "rgb(29, 29, 40)")
   r.setStyle(removeBtn, "padding", "0")
   r.setStyle(removeBtn, "border-radius", "4")
@@ -453,6 +481,10 @@ proc summaryBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setAttribute(summaryNode, ElementKindAttr, "summary")
   # Round-4: pin a summary row height (~30 px) so it reads as a footer
   # caption strip rather than another auto-grown card.
+  # M-EVP-14 round-7: horizontal flow + pin a 30 px main-axis height
+  # so the headless adapter keeps the summary strip thin.
+  r.setAttribute(summaryNode, "data-layout", "horizontal")
+  r.setAttribute(summaryNode, "data-fixed-height", "30")
   r.setStyle(summaryNode, "background", "rgb(29, 29, 40)")
   r.setStyle(summaryNode, "padding", "8")
   r.setStyle(summaryNode, "gap", "8")
@@ -483,6 +515,10 @@ proc summaryBar*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   # Unicode check mark. The web cell omits this leaf entirely, which
   # is why the asymmetry was only visible on the non-web backends.
   r.setTextContent(icon, "✓")
+  # M-EVP-14 round-7: pin the icon's main-axis width so the headless
+  # raster keeps it as a tight glyph at the right edge of the
+  # summary row.
+  r.setAttribute(icon, "data-fixed-width", "16")
   r.setStyle(icon, "color", "rgb(124, 122, 237)")
   r.setStyle(icon, "font-size", "12")
   r.appendChild(summaryNode, icon)
