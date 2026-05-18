@@ -143,11 +143,11 @@ when defined(android) or defined(mockJni):
     r.setAttribute(node, "type", "checkbox")
     r.setAttribute(node, "class", "settings-toggle")
     # M3 switch track metric — 52 x 32 dp pill.
-    r.setStyle(node, "width", "52")
+    # Round-10: 56x32 dp switch + sync off-track grey.
+    r.setStyle(node, "width", "56")
     r.setStyle(node, "height", "32")
     r.setStyle(node, "border-radius", "16")
-    # Horizontal layout so the thumb child can be pushed to the
-    # leading / trailing edge via flex-grow on a sibling spacer.
+    r.setStyle(node, "background-color", offTrackGrey)
     r.setStyle(node, "flex-direction", "row")
 
     # Two spacers + a thumb.  When OFF, the trailing spacer takes all
@@ -457,7 +457,9 @@ when defined(android) or defined(mockJni):
     r.setStyle(node, "background-color", surfaceCard)
     r.setStyle(node, "border-radius", "12")
     r.setStyle(node, "padding", "12")
-    r.setStyle(node, "elevation", "4")
+    # Round-10: drop elevation; M3 dark theme overlay tinted indigo.
+    r.setStyle(node, "flex-direction", "column")
+    r.setStyle(node, "gap", "8")
     node
 
   proc groupHeaderLeaf*(r: AndroidRenderer; label, description: string):

@@ -69,7 +69,11 @@ when defined(android) or defined(mockJni):
     # neutrally between the screen background and the row cards, and
     # combined with the indigo outline + indigo label it now reads as
     # a true outlined chip.
-    chipInactiveBg = "#22232e"
+    # Round-10 wave-Q: inactive chips = canvas bg + muted border/label
+    # so the active indigo chip is unambiguous.
+    chipInactiveBg     = "#111118"
+    chipInactiveBorder = "#3a3a52"
+    chipInactiveLabel  = mutedText
 
   # ----------------------------------------------------------------------------
   # Per-VM bookkeeping (mirrors `tui/leaves.nim`, `web/leaves.nim`,
@@ -146,17 +150,16 @@ when defined(android) or defined(mockJni):
         r.setAttribute(btn, "aria-pressed", "true")
         r.setStyle(btn, "background-color", accentIndigo)
         r.setStyle(btn, "color", "#ffffff")
-        # Active chip: no outline (the filled indigo is the cue).
+        r.setStyle(btn, "border-width", "0")
         r.setStyle(btn, "border-color", accentIndigo)
       else:
         r.setAttribute(btn, "class", "")
         r.removeAttribute(btn, "aria-pressed")
-        # Outlined chip on the near-background surface — indigo only
-        # as the chip *label* and 1-dp outline, no fill tint.
+        # Round-10: muted neutral border + label on inactive chips.
         r.setStyle(btn, "background-color", chipInactiveBg)
-        r.setStyle(btn, "color", accentIndigo)
+        r.setStyle(btn, "color", chipInactiveLabel)
         r.setStyle(btn, "border-width", "1")
-        r.setStyle(btn, "border-color", accentIndigo)
+        r.setStyle(btn, "border-color", chipInactiveBorder)
 
   # ----------------------------------------------------------------------------
   # Layer-1 leaf procs — invoked by views.nim
@@ -215,6 +218,11 @@ when defined(android) or defined(mockJni):
     # Add Task button on the trailing edge stays content-sized.
     r.setStyle(inp, "flex-grow", "1")
     r.setStyle(inp, "height", "48")
+    # Round-10: kill M3 primary-tint wash on EditText.
+    r.setStyle(inp, "background-color", surfaceCard)
+    r.setStyle(inp, "border-radius", "8")
+    r.setStyle(inp, "padding", "12")
+    r.setStyle(inp, "color", onSurface)
     s.inputNode = inp
     r.appendChild(wrapper, inp)
 
@@ -266,9 +274,12 @@ when defined(android) or defined(mockJni):
       r.setAttribute(btn, "data-filter", $fm)
       r.addEventListener(btn, "click", makeFilterClickHandler(vm, fm))
       # M3 chip metrics: 36 dp height, equal share of the row.
+      # Round-10: padding + font tuned so "Completed" fits.
       r.setStyle(btn, "height", "36")
       r.setStyle(btn, "flex-grow", "1")
       r.setStyle(btn, "border-radius", "18")
+      r.setStyle(btn, "padding", "4")
+      r.setStyle(btn, "font-size", "13")
       # Round-5 fix: paint the active-chip treatment synchronously at
       # construction time. The reactive `makeFilterSelectionEffect`
       # below subscribes to `vm.filter.val` and overrides this for any
@@ -286,15 +297,14 @@ when defined(android) or defined(mockJni):
         r.setAttribute(btn, "aria-pressed", "true")
         r.setStyle(btn, "background-color", accentIndigo)
         r.setStyle(btn, "color", "#ffffff")
+        r.setStyle(btn, "border-width", "0")
         r.setStyle(btn, "border-color", accentIndigo)
       else:
-        # Round-6 fix: outlined inactive chip (indigo border, indigo
-        # text, near-background fill) so it reads as unselected next
-        # to the filled-indigo active chip.
+        # Round-10: muted neutral border + label on inactive chips.
         r.setStyle(btn, "background-color", chipInactiveBg)
-        r.setStyle(btn, "color", accentIndigo)
+        r.setStyle(btn, "color", chipInactiveLabel)
         r.setStyle(btn, "border-width", "1")
-        r.setStyle(btn, "border-color", accentIndigo)
+        r.setStyle(btn, "border-color", chipInactiveBorder)
       makeFilterSelectionEffect(r, vm, btn, fm)
       r.appendChild(wrapper, btn)
       s.filterButtons.add btn
@@ -361,8 +371,12 @@ when defined(android) or defined(mockJni):
 
     let removeBtn = r.createElement("button")
     r.setAttribute(removeBtn, "class", "remove")
-    r.setTextContent(removeBtn, "x")
+    # Round-10: × glyph + transparent fill, no MaterialButton plate.
+    r.setTextContent(removeBtn, "\xC3\x97")
     r.setStyle(removeBtn, "color", mutedText)
+    r.setStyle(removeBtn, "background-color", "#00000000")
+    r.setStyle(removeBtn, "width", "32")
+    r.setStyle(removeBtn, "height", "32")
     r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
     r.appendChild(row, removeBtn)
 
