@@ -292,6 +292,64 @@ Quality section above.** Don't grade content perfection in isolation
 — the user judges these PNGs the way they'd judge a real product
 screenshot in a design-system gallery.
 
+## Reviewer Methodology (READ BEFORE SCORING)
+
+This is a strict review aimed at world-class design quality. Score
+honestly — past rounds drifted to leniency and missed real defects.
+
+**Anti-cheat rules**:
+
+1. **Flake detection first**. Before scoring any cell, confirm the
+   rendered content is the **Task App** (input + Add Task + filter
+   chips + 3 seeded tasks + summary), NOT the Settings App
+   (Appearance / Editor / Notifications groups). If you see Settings
+   content in a Task cell: score **1/10**, label it
+   `WRONG-DEMO FLAKE`, do not bother scoring render quality.
+
+2. **Empty-pane check**. If the preview pane is blank / mostly the
+   editor canvas background with no demo content: score **1/10**,
+   label it `EMPTY PANE — DEMO NOT RENDERING`.
+
+3. **Per-dimension annotation**. Comment on EVERY Render Quality
+   dimension (aspect, letterbox, scaling, color, alignment, AA,
+   stretching) for every cell — even when the dimension passes. No
+   omissions. A dimension that you don't mention is treated as a
+   missed check.
+
+4. **World-class anchor**. For each backend, hold the cell against a
+   concrete production app reference and score by the visible gap:
+   - Web → compare to Linear, Polaris docs, Storybook dark mode.
+   - TUI → compare to lazygit, gitui, Textual sample apps.
+   - GPUI → compare to Zed's UI / Linear's panel chrome.
+   - Freya → compare to a published Freya demo or Material 3 dark.
+   - Cocoa → compare to macOS Reminders app or Linear macOS.
+   - Android → compare to Material 3 Tasks template apps.
+   - iOS → compare to Apple's stock Reminders app.
+   If the gap is "obvious" to a senior designer: max **6/10**.
+   If the gap is "small but visible": max **8/10**.
+   If a senior designer would ship it as-is in a production gallery:
+   **10/10**. If you can't confidently say "ship it": NOT 10.
+
+5. **One-strike rule on Render Quality**. Any single Render Quality
+   dimension failure (e.g. visible stretching, off-palette accent,
+   blurred text) caps the cell at **8/10** even if every other
+   dimension is perfect. Two failures cap at **6/10**.
+
+6. **Accent-fidelity check**. The accent indigo must be visibly
+   `#7c7aed`-family. If the "accent" on a chip / CTA / active state
+   is white (no fill), pale lavender, navy, or any shade noticeably
+   different from `#7c7aed`: that is an accent failure, NOT a
+   stylistic choice. -1 minimum.
+
+7. **Counterfactual test for 10/10**: write the sentence "A senior
+   designer at Linear / Apple / Vercel would ship this cell as a
+   production showcase image" out loud. If you hesitate on any
+   word, the cell is NOT 10/10. Drop to the highest score you can
+   confidently assert.
+
+8. **No anchoring to prior scores**. Previous reviewer rounds gave
+   inflated scores. Treat this as a fresh review.
+
 ## How to Report
 
 Begin with an **Editor Chrome** section that applies to all 7 cells
