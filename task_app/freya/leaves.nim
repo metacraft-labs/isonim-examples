@@ -165,6 +165,15 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   # Round-4: pin a row height (~52 px) so the wrapper does not auto-
   # grow into a 50%-of-canvas band when Freya distributes free space
   # between the four shell children.
+  # M-EVP-14 round-6 note: the headless Freya adapter
+  # (`isonim-render-serve/.../freya_adapter.nim::walkLayout`) ignores
+  # explicit ``width`` styles and always paints children at the
+  # parent's full width — fixing the "stretched controls" reviewer
+  # finding requires the freya adapter to grow ``data-fixed-width``-
+  # style honouring (see the cocoa adapter for the analogous knob).
+  # Leaving ``width: 100%`` here keeps the leaf semantics correct
+  # for the live Freya runtime; the headless raster will inherit the
+  # improvement once the adapter is taught about per-child widths.
   r.setStyle(wrapper, "background", "rgb(29, 29, 40)")
   r.setStyle(wrapper, "padding", "8")
   r.setStyle(wrapper, "gap", "8")

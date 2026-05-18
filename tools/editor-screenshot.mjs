@@ -833,6 +833,68 @@ async function waitForTcpPort(port, host, timeoutMs) {
   return false;
 }
 
+// One-shot probe — returns true iff a TCP listener is currently bound
+// on (host, port). Unlike `waitForTcpPort` this does not retry and is
+// safe to call before spawning a launcher to detect a lingering
+// previous-run process holding the port.
+async function isPortInUse(port, host = "127.0.0.1") {
+  return await new Promise((resolve) => {
+    const sock = net.createConnection({ port, host });
+    sock.once("connect", () => { sock.end(); resolve(true); });
+    sock.once("error", () => { resolve(false); });
+  });
+}
+
+// Kill whatever process is currently bound to (host, port). The
+// previous screenshot run can leave detached launchers running across
+// process boundaries (the cleanup handler only runs on a graceful
+// exit; SIGKILL / OOM / `Ctrl-C` mid-shell-pipe all leak children).
+// When the next run boots a launcher on the same port, `spawn()`
+// returns successfully and `waitForTcpPort` sees the OLD launcher's
+// port — which was started with the PREVIOUS run's `--demo=` slug —
+// and the editor reads frames for the WRONG demo. This produces the
+// M-EVP-14 "settings cell shows the task app" / "task cell shows the
+// settings app" wrong-demo flakes the reviewer surfaced.
+//
+// We resolve the holding PID via `lsof -ti:<port>` (BSD/macOS + Linux
+// both ship this binary in the editor dev-shell) and send SIGKILL.
+// `lsof` exits 1 when nothing is bound, which we treat as "nothing
+// to kill" and silently succeed.
+async function reclaimPort(port, host = "127.0.0.1") {
+  if (!(await isPortInUse(port, host))) return { ok: true, killed: [] };
+  return await new Promise((resolve) => {
+    const lsof = spawn("lsof", ["-ti", `:${port}`], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    lsof.stdout.on("data", (b) => { out += b.toString(); });
+    lsof.on("close", async () => {
+      const pids = out.trim().split(/\s+/).filter((p) => /^\d+$/.test(p))
+        .map((p) => parseInt(p, 10));
+      const killed = [];
+      for (const pid of pids) {
+        try {
+          process.kill(pid, "SIGKILL");
+          killed.push(pid);
+        } catch { /* already dead */ }
+      }
+      // Give the kernel a tick to release the bound port.
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if (!(await isPortInUse(port, host))) {
+          resolve({ ok: true, killed });
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      resolve({ ok: false, killed, reason: "port still bound after kill" });
+    });
+    lsof.on("error", () => {
+      resolve({ ok: false, killed: [], reason: "lsof not available" });
+    });
+  });
+}
+
 // iOS auto-launch.
 //
 // iOS aggressively suspends/terminates apps. After ~30 s backgrounded,
@@ -1093,6 +1155,29 @@ async function startLauncher(backend, projectRoot, opts = {}) {
   if (existsSync(staticDir)) {
     args.push("--static", staticDir);
   }
+  // Reclaim the port before spawn. A detached launcher left over from
+  // a previous (possibly crashed / Ctrl-C'd) screenshot run will be
+  // holding the port with the WRONG `--demo=` slug; if we don't
+  // reclaim, `spawn()` succeeds (creates a child that immediately
+  // exits with "Address already in use") and `waitForTcpPort` sees the
+  // OLD launcher's still-bound port. The editor then reads the
+  // previous demo's frame stream, producing the M-EVP-14 wrong-demo
+  // flakes (settings cells rendering task app; task cells rendering
+  // settings app — opposite directions depending on which prior run
+  // most recently leaked which launcher binary).
+  const reclaim = await reclaimPort(spec.port);
+  if (reclaim.killed.length > 0) {
+    console.log(
+      `==> Reclaimed ${backend} port ${spec.port} from stale PID(s): ${reclaim.killed.join(", ")}`,
+    );
+  }
+  if (!reclaim.ok) {
+    return {
+      ok: false,
+      reason:
+        `${backend} launcher cannot bind port ${spec.port}: ${reclaim.reason ?? "unknown"}`,
+    };
+  }
   console.log(
     `==> Starting ${backend} launcher on port ${spec.port}: ${spec.bin} ${args.join(" ")}`,
   );
@@ -1102,9 +1187,13 @@ async function startLauncher(backend, projectRoot, opts = {}) {
     env: { ...process.env, ...envExtra },
   });
   let stderrTail = "";
+  let earlyExit = null; // {code, signal} | null
   proc.stdout.on("data", () => { /* discard */ });
   proc.stderr.on("data", (b) => {
     stderrTail = (stderrTail + b.toString()).slice(-512);
+  });
+  proc.on("exit", (code, signal) => {
+    earlyExit = { code, signal };
   });
   const ok = await waitForTcpPort(spec.port, "127.0.0.1", 15_000);
   if (!ok) {
@@ -1113,6 +1202,21 @@ async function startLauncher(backend, projectRoot, opts = {}) {
       ok: false,
       reason:
         `${backend} launcher did not open port ${spec.port} within 15s` +
+        (stderrTail ? ` (stderr tail: ${stderrTail.trim()})` : ""),
+    };
+  }
+  // Sanity check: the child we just spawned must still be alive when
+  // the port becomes responsive. If the child exited (e.g. because
+  // `reclaimPort` raced and a parallel run booted a competing
+  // launcher between our kill and our spawn), the port we're talking
+  // to is NOT this child's port — abort rather than silently capture
+  // the wrong demo.
+  if (earlyExit !== null) {
+    return {
+      ok: false,
+      reason:
+        `${backend} launcher PID ${proc.pid} exited before binding ` +
+        `port ${spec.port} (code=${earlyExit.code}, signal=${earlyExit.signal})` +
         (stderrTail ? ` (stderr tail: ${stderrTail.trim()})` : ""),
     };
   }
@@ -1684,8 +1788,19 @@ async function main() {
   let cleanedUp = false;
   const killOne = (pid) => {
     if (!pid) return;
+    // Two-phase kill: SIGTERM first (gives the launcher a chance to
+    // flush stdio + drop its bridge socket), then SIGKILL as the
+    // hard backstop. Without the SIGKILL, the Nim `waitFor
+    // s.serve()` blocking call in the bridge can ignore SIGTERM if
+    // the dispatcher is mid-await, leaving the launcher alive past
+    // this run's cleanup and holding the port for the NEXT run's
+    // launcher boot. That's the failure mode that produced the
+    // M-EVP-14 wrong-demo flakes (see `reclaimPort` for the spawn-
+    // time defense; this is the matching teardown-time fix).
     try { process.kill(-pid); } catch { /* group kill missed */ }
     try { process.kill(pid); } catch { /* already dead */ }
+    try { process.kill(-pid, "SIGKILL"); } catch { /* group SIGKILL */ }
+    try { process.kill(pid, "SIGKILL"); } catch { /* already dead */ }
   };
   const cleanup = () => {
     if (cleanedUp) return;
@@ -1696,6 +1811,16 @@ async function main() {
   };
   process.on("SIGINT", () => { cleanup(); process.exit(130); });
   process.on("SIGTERM", () => { cleanup(); process.exit(143); });
+  // SIGHUP fires when the controlling terminal closes (e.g. CI step
+  // teardown). Without this, the SIGINT handler above never runs and
+  // the launcher children survive into the next run. This was the
+  // path that left 5-hour-old `--demo=task` launchers holding ports
+  // 8104/8105 and producing the M-EVP-14 wrong-demo flakes.
+  process.on("SIGHUP", () => { cleanup(); process.exit(129); });
+  // Last-chance synchronous cleanup. `process.on("exit")` runs even
+  // when main() throws and bubbles unhandled, but it cannot use
+  // async APIs — `killOne` is fully synchronous so this is safe.
+  process.on("exit", () => { cleanup(); });
 
   if (!isFiltered && existsSync(outDir)) {
     rmSync(outDir, { recursive: true });
