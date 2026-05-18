@@ -376,7 +376,11 @@ proc choiceLeaf*(r: GpuiRenderer; vmRef: SettingsVM; itemId: string;
     r.setTextContent(optBtn, opt)
     # Pin a content-hugging width so the segments are pills, not
     # stretched bands.
-    r.setStyle(optBtn, "width", "72")
+    # M-EVP-14 Wave-X (X-7 fix): bump 72→96 so longer option labels
+    # (e.g. "Solarized" — 9 glyphs) fit on one line without wrapping
+    # to "Solarize" + "d" inside the segmented control. 96 px covers
+    # the longest catalog option at the GPUI shim's body type metrics.
+    r.setStyle(optBtn, "width", "96")
     r.setStyle(optBtn, "height", "22")
     r.setStyle(optBtn, "padding", "4")
     r.setStyle(optBtn, "border-radius", "4")

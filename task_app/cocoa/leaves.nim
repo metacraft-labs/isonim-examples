@@ -171,6 +171,15 @@ when defined(macosx):
     # F-packet stream byte-identical.
     r.setAttribute(app, ComponentPathAttr, TaskAppPath)
     r.setAttribute(app, ElementKindAttr, "app-shell")
+    # M-EVP-14 Wave-X (X-2 fix): the appShell defaults to vertical
+    # equal-share split (input/filter/list/summary each get ~25 % of
+    # the canvas), which inflated the summary to ~180 px and left a
+    # ~200 px dead band between the last task row and the summary
+    # text. Pin a 4-px outer padding so the cards sit on the dark
+    # canvas with a consistent rhythm — the children themselves
+    # carry data-fixed-height now (input=64, filter=44, summary=44)
+    # so list claims the remainder.
+    r.setStyle(app, "padding", "8")
     app
 
   proc taskInput*(r: CocoaRenderer; vm: TaskAppVM): CocoaElement =
@@ -193,8 +202,11 @@ when defined(macosx):
     # side by side instead of stacking them vertically. The adapter's
     # ``layoutTreeForCapture`` reads ``data-layout="horizontal"`` and
     # switches axis accordingly.
+    # M-EVP-14 Wave-X (X-2 fix): bump fixed height 44→56 so the row
+    # has a comfortable ~56 px slice in the app shell instead of
+    # ballooning to 25 % of the canvas.
     r.setAttribute(wrapper, "data-layout", "horizontal")
-    r.setAttribute(wrapper, "data-fixed-height", "44")
+    r.setAttribute(wrapper, "data-fixed-height", "56")
 
     let inp = r.createElement("input")
     r.setAttribute(inp, "type", "text")
@@ -253,8 +265,11 @@ when defined(macosx):
     # M-EVP-14 round-3: lay the three chips out left-to-right so the
     # filter strip reads as a single horizontal toolbar instead of a
     # vertical stack of equally-sized buttons.
+    # M-EVP-14 Wave-X (X-2 fix): bump fixed height 36→44 so the chip
+    # strip has a comfortable slice without inflating to 25 % of the
+    # canvas.
     r.setAttribute(wrapper, "data-layout", "horizontal")
-    r.setAttribute(wrapper, "data-fixed-height", "36")
+    r.setAttribute(wrapper, "data-fixed-height", "44")
 
     for fm in [fmAll, fmActive, fmCompleted]:
       let btn = r.createElement("button")
@@ -425,6 +440,14 @@ when defined(macosx):
     r.setAttribute(summaryNode, "class", "task-summary")
     r.setAttribute(summaryNode, ComponentPathAttr, SummaryBarPath)
     r.setAttribute(summaryNode, ElementKindAttr, "summary")
+    # M-EVP-14 Wave-X (X-2 fix): without ``data-layout="horizontal"``
+    # the cocoa adapter stacked the summary's two children (the text
+    # span and the vector-symbol ✓ glyph) vertically and gave each
+    # half of the summary's body — the ✓ ended up floating ~90 px
+    # below the text as an orphan glyph. Pin a 44-px-tall horizontal
+    # band so text + glyph sit side by side on the same baseline.
+    r.setAttribute(summaryNode, "data-layout", "horizontal")
+    r.setAttribute(summaryNode, "data-fixed-height", "44")
     s.summaryNode = summaryNode
     let row = r.createElement("span")
     # M-EVP-14 round-8: the summary footer sits on the adapter's
@@ -455,6 +478,10 @@ when defined(macosx):
     # affordance reads as an interactive vector-symbol slot rather
     # than blending into the background.
     r.setStyle(icon, "color", "#7c7aed")
+    # M-EVP-14 Wave-X (X-2 fix): pin a 24-px main-axis width so the
+    # horizontal flow keeps the glyph snug next to the text span
+    # instead of letting it claim the row's flex remainder.
+    r.setAttribute(icon, "data-fixed-width", "24")
     r.appendChild(summaryNode, icon)
 
     summaryNode
