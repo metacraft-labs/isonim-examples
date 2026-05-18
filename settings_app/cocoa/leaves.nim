@@ -167,11 +167,16 @@ when defined(macosx):
     if suffix.len > 0:
       r.setAttribute(host, "data-suffix", suffix)
     r.setAttribute(host, "data-layout", "horizontal")
-    # Round-10 fix: the reviewer flagged the digit + stepper as
-    # "awkwardly stacked/cramped". Bump the host to a comfortable
-    # 28-px band so the NSStepper's two-arrow chrome has vertical
-    # room to draw both arrows distinctly.
-    r.setAttribute(host, "data-fixed-height", "28")
+    # Wave S-3: bump the host band from 28 → 32 px. Round-10's 28 px
+    # left only 24 px of usable child height (the adapter reserves a
+    # 4-px vertical inset, 2 px top + 2 px bottom). NSTextField's
+    # default rendering centred the digits in those 24 px but the
+    # NSStepper's two-arrow chrome is canonically 27 px tall, so the
+    # widget got clipped at the bottom — reading as the "stepper
+    # arrows look stacked / cramped" defect the reviewer flagged. At
+    # 32 px the child slot is 28 px, which gives the stepper a full
+    # band and the digit cell a comfortable vertically-centred baseline.
+    r.setAttribute(host, "data-fixed-height", "32")
 
     # NSTextField for the displayed digit value.
     let inputNode = r.createElement("input")
@@ -283,27 +288,24 @@ when defined(macosx):
       r.setTextContent(optionNode, opt)
       r.appendChild(selectNode, optionNode)
 
-    # M-EVP-14 round-8: the cocoa renderer maps ``<select>`` →
-    # ``ekSelect`` (NSPopUpButton) but ``appendChild`` adds the
-    # ``<option>`` children via ``addSubview:`` — NSPopUpButton
-    # ignores those entirely and only renders its own menu-item
-    # titles (populated via ``addItemWithTitle:``). Net effect: the
-    # popup widget paints empty, leaving the row with no visible
-    # current value. As an in-scope cocoa-side workaround, append a
-    # sibling ``<span>`` mirroring the live choice and paint it in
-    # the indigo accent so the user sees which option is selected.
-    # A proper fix would teach the renderer to forward
-    # ``appendChild(<option>)`` to ``popUpAddItem``, but that lives
-    # in ``isonim-cocoa`` and is outside this milestone's scope.
-    let valueLabel = r.createElement("span")
-    r.setAttribute(valueLabel, "class", "settings-choice-value")
-    r.setStyle(valueLabel, "color", "#9d9bff")
+    # Wave S-3: the previous round-8 workaround appended a sibling
+    # ``<span>`` mirroring ``vm.choiceValue(id)`` because the
+    # ``<option>`` children weren't reaching NSPopUpButton's menu.
+    # That mirror is no longer needed: ``isonim-cocoa@e6b2e7d4``
+    # added ``<option>`` → ``popUpAddItem`` forwarding inside
+    # ``appendChild``, so the NSPopUpButton now paints its real
+    # current-selection title in its own chrome. With both surfaces
+    # painting, the row showed "Default | Default" — the strict
+    # reviewer flagged the duplication as the most visible cocoa
+    # defect in the M-EVP-14 round-10 sweep. Drop the sibling span
+    # and keep only the popup; ``selected`` attribute syncing on
+    # the option nodes still routes to ``selectItemAtIndex:`` via
+    # the renderer's ``applyAttribute`` branch for ekSelect children.
 
     createRenderEffect proc() =
       let value = captured.choiceValue(id)
       rCaptured.setAttribute(host, "data-value", value)
       rCaptured.setAttribute(selectNode, "data-value", value)
-      rCaptured.setTextContent(valueLabel, value)
       for i in 0 ..< rCaptured.childCount(selectNode):
         let optionNode = rCaptured.nthChild(selectNode, i)
         if rCaptured.getAttribute(optionNode, "data-value") == value:
@@ -322,7 +324,6 @@ when defined(macosx):
         discard captured.setChoice(id, picked))
 
     r.appendChild(host, selectNode)
-    r.appendChild(host, valueLabel)
     host
 
   # ----------------------------------------------------------------------------
