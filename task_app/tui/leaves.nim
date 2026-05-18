@@ -167,33 +167,80 @@ proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
       b.setSelected(i == want)
 
   # Visual filter row — single horizontal line with active mode in <>.
+  #
+  # Wave S-1: the line is broken up into a sequence of text-node
+  # children so the active option's text can carry its own
+  # `color: bright_magenta` style. The compositor's `tnkText` fusion
+  # branch (`isonim-tui@89fa44a`) honours per-child styles when ANY
+  # child carries an override, emitting one LayoutEntry per child at
+  # adjacent columns on the row. This is the load-bearing wiring for
+  # the M-EVP-14 brand-indigo accent on the active filter chip — the
+  # previous "one big text node + setTextContent" form fused the entire
+  # row into a single styled entry, silently dropping the accent.
   let host = r.createElement("div")
   r.setAttribute(host, "class", "task-filter-bar")
   r.setAttribute(host, ComponentPathAttr, FilterBarPath)
   r.setAttribute(host, ElementKindAttr, "filter-bar")
   let lineNode = r.createElement("div")
-  let txtNode = r.createTextNode("")
-  r.appendChild(lineNode, txtNode)
   r.appendChild(host, lineNode)
+
+  # Children layout (per row, 80 cells outer = 1 + 78 + 1):
+  #   wallL  ` │ `         1 cell
+  #   segAll ` All `/`<All>`        5 cells (always; bracket form
+  #                                          replaces the spaces 1:1)
+  #   sep1   ` | `         3 cells
+  #   segAct ` Active `/`<Active>`  8 cells
+  #   sep2   ` | `         3 cells
+  #   segCom ` Completed `/`<Completed>`  11 cells
+  #   pad    spaces        48 cells (78 - 5 - 3 - 8 - 3 - 11)
+  #   wallR  ` │ `         1 cell
+  let wallL = r.createTextNode("│")
+  let segAll = r.createTextNode("")
+  let sep1 = r.createTextNode(" | ")
+  let segAct = r.createTextNode("")
+  let sep2 = r.createTextNode(" | ")
+  let segCom = r.createTextNode("")
+  let pad = r.createTextNode(repeat(" ", 48))
+  let wallR = r.createTextNode("│")
+  r.appendChild(lineNode, wallL)
+  r.appendChild(lineNode, segAll)
+  r.appendChild(lineNode, sep1)
+  r.appendChild(lineNode, segAct)
+  r.appendChild(lineNode, sep2)
+  r.appendChild(lineNode, segCom)
+  r.appendChild(lineNode, pad)
+  r.appendChild(lineNode, wallR)
+
+  # The compositor's per-segment fusion only fires when at least one
+  # child has a style override. Pin a no-op style on the walls so the
+  # `anyChildStyled` check stays `true` regardless of which segment is
+  # active (otherwise the inactive-state row would silently re-collapse
+  # into a single LayoutEntry and the next active-state render would
+  # have to re-establish per-segment layout, which thrashes the strip
+  # cache). The fg colour we set here ("default") matches the row's
+  # inherited style so it has no visual effect.
+  r.setStyle(wallL, "color", "default")
+  r.setStyle(wallR, "color", "default")
+
   proc labelFor(active: FilterMode; name: string; mine: FilterMode): string =
     if active == mine: "<" & name & ">"
     else: " " & name & " "
+
   createRenderEffect proc() =
     let active = vm.filter.val
-    let parts = labelFor(active, "All", fmAll) & " | " &
-                labelFor(active, "Active", fmActive) & " | " &
-                labelFor(active, "Completed", fmCompleted)
-    # M-EVP-14 round-3 polish: wrap the filter row in `│CONTENT│`
-    # walls (no interior padding) so it lines up with the input box
-    # (34 cells outer width: `│` + 32 inner + `│`) and the task list.
-    # Round-2 had this row paint with no walls at all, which read as a
-    # visual gap between the bordered input box above and the bordered
-    # list below. The bracket form was tightened (`<X>` instead of
-    # `< X >`, single-space inactive padding) so the worst-case row
-    # ("All | Active | <Completed>", 30 cells) fits inside the
-    # 32-cell inner width.
-    # Wave R: inner width 32 → 78 (matches taskInput + taskList).
-    r.setTextContent(txtNode, "│" & padOrTruncate(parts, 78) & "│")
+    r.setTextContent(segAll, labelFor(active, "All", fmAll))
+    r.setTextContent(segAct, labelFor(active, "Active", fmActive))
+    r.setTextContent(segCom, labelFor(active, "Completed", fmCompleted))
+    # Reset every segment's foreground then paint the active one with
+    # `bright_magenta` — the closest 16-ANSI to the brand indigo
+    # `#7c7aed`. Sep / pad / walls stay at the row's inherited fg.
+    r.setStyle(segAll, "color", "default")
+    r.setStyle(segAct, "color", "default")
+    r.setStyle(segCom, "color", "default")
+    case active
+    of fmAll:       r.setStyle(segAll, "color", "bright_magenta")
+    of fmActive:    r.setStyle(segAct, "color", "bright_magenta")
+    of fmCompleted: r.setStyle(segCom, "color", "bright_magenta")
   ui(r):
     embedNode(host)
 
