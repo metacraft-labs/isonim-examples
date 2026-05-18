@@ -174,11 +174,18 @@ proc taskInput*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setAttribute(wrapper, "data-layout", "horizontal")
   r.setAttribute(wrapper, "data-fixed-height", "52")
   r.setStyle(wrapper, "background", "rgb(29, 29, 40)")
-  r.setStyle(wrapper, "padding", "8")
-  r.setStyle(wrapper, "gap", "8")
+  # M-EVP-14 Wave T (T-6 fix): align the input-row's horizontal
+  # padding with the task-row's so the left edges of the input
+  # field and each task card sit at exactly the same x. Previously
+  # the input wrapper used padding 8 while task rows used padding
+  # 10, producing a ~2 px drift that round-12 reviewer flagged as
+  # "task rows' left edge floats slightly relative to the input
+  # bar above".
+  r.setStyle(wrapper, "padding", "10")
+  r.setStyle(wrapper, "gap", "10")
   r.setStyle(wrapper, "flex-direction", "row")
   r.setStyle(wrapper, "cross_align", "center")
-  r.setStyle(wrapper, "border-radius", "8")
+  r.setStyle(wrapper, "border-radius", "10")
   r.setStyle(wrapper, "width", "100%")
   r.setStyle(wrapper, "height", "52")
 
@@ -370,13 +377,15 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   r.setStyle(row, "width", "100%")
 
   let toggleBtn = r.createElement("button")
-  # Round-10: replace the plain `[ ]`/`[x]` ASCII glyph with a designed
-  # checkbox. Off state: brighter slate fill (rgb 80,82,102) so it reads
-  # as a real control against the row card; on state: indigo accent fill
-  # + white ✓ glyph. The Freya headless raster does not paint CSS
-  # `border` strokes, so the off-state contrast lives entirely in the
-  # fill colour.
-  let marker = if t.completed: "✓" else: ""
+  # Round-10: designed checkbox with a fill-driven off/on contrast.
+  # M-EVP-14 Wave T (T-6 fix): round-12 reviewer flagged "no visible
+  # toggle glyph on unchecked rows". Paint an explicit empty-box
+  # affordance — a hollow ☐ for off, ✓ for on — so the row's leading
+  # control reads as a recognisable checkbox at any preview scale,
+  # not just a slate-grey square. The Freya headless raster lacks
+  # CSS borders, so the inner-glyph contrast is the only off-state
+  # affordance we get.
+  let marker = if t.completed: "✓" else: "☐"
   r.setTextContent(toggleBtn, marker)
   # M-EVP-14 round-7: pin the toggle's main-axis width so it stays a
   # 20 px square in the headless raster instead of consuming the
@@ -393,10 +402,12 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   r.setStyle(toggleBtn, "height", "20")
   r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
   r.appendChild(row, toggleBtn)
-  if t.completed:
-    addTextSpan(r, toggleBtn, marker,
-                color = "rgb(255, 255, 255)",
-                fontSize = "12", fontWeight = "bold")
+  # Always render the glyph; the on-state white ✓ rides on the indigo
+  # fill, the off-state hollow ☐ rides on the slate fill.
+  addTextSpan(r, toggleBtn, marker,
+              color = (if t.completed: "rgb(255, 255, 255)"
+                       else: "rgb(220, 222, 234)"),
+              fontSize = "14", fontWeight = "bold")
 
   let display =
     if t.completed: t.name & " (done)" else: t.name
