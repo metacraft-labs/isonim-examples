@@ -199,6 +199,16 @@ when defined(macosx):
     let inp = r.createElement("input")
     r.setAttribute(inp, "type", "text")
     r.setAttribute(inp, "placeholder", "New task...")
+    # M-EVP-14 round-7: NSTextField's default bezel paints a white field
+    # background which jars badly against the dark task-app palette
+    # (the round-6 review flagged the white input bezel as "looks like
+    # an unstyled web form"). Setting an explicit background-color here
+    # triggers the renderer's bezel-less branch in ``applyStyle`` (see
+    # ``isonim_cocoa/renderer.nim`` lines 379-432) which drops
+    # ``setBordered:`` + ``setDrawsBackground:`` and lets our dark
+    # surface fill replace the system chrome.
+    r.setStyle(inp, "background-color", "#15161f")
+    r.setStyle(inp, "color", "#ecedf3")
     s.inputNode = inp
     r.appendChild(wrapper, inp)
 
@@ -284,6 +294,17 @@ when defined(macosx):
     # Pin the toggle glyph to a small leading width so the title
     # label can claim the row's central horizontal slice.
     r.setAttribute(toggleBtn, "data-fixed-width", "44")
+    # Round-7 fix: NSButton's default bezel paints the toggle widget
+    # as a *white* rounded square against the dark task-row palette
+    # (reviewer: "checkboxes look like Aqua light-mode chrome
+    # bolted onto a dark surface"). Completed rows additionally get
+    # the indigo accent fill so the toggle visibly tracks state.
+    # Setting ``background-color`` here triggers the renderer's
+    # bezel-less branch (see ``isonim_cocoa/renderer.nim`` lines
+    # 379-432) which drops the white bezel and paints the title in
+    # white on our explicit fill.
+    let toggleBg = if t.completed: "#7c7aed" else: "#1f2030"
+    r.setStyle(toggleBtn, "background-color", toggleBg)
     r.addEventListener(toggleBtn, "click", makeToggleHandler(vm, t.id))
     r.appendChild(row, toggleBtn)
 
@@ -298,6 +319,12 @@ when defined(macosx):
     r.setTextContent(removeBtn, "x")
     # Pin the trailing remove glyph to a small fixed width.
     r.setAttribute(removeBtn, "data-fixed-width", "32")
+    # Round-7 fix: drop the default NSButton bezel so the remove "x"
+    # reads as a subtle dark affordance instead of a bright white
+    # square at the row's trailing edge (mirrors the toggle fix
+    # above; the renderer's bezel-less branch fires when we set an
+    # explicit background-color).
+    r.setStyle(removeBtn, "background-color", "#1f2030")
     r.addEventListener(removeBtn, "click", makeRemoveHandler(vm, t.id))
     r.appendChild(row, removeBtn)
 

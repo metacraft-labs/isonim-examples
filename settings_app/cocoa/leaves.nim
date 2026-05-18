@@ -103,8 +103,20 @@ when defined(macosx):
                              (if value: "true" else: "false"))
       if value:
         rCaptured.setAttribute(node, "checked", "checked")
+        # Round-7 fix: the underlying ekInput (NSTextField) ships a
+        # bright white bezel by default which reads as a giant white
+        # bar inside the otherwise-dark settings card. The renderer
+        # drops the bezel + draws-background when a
+        # ``background-color`` is set (see
+        # ``isonim_cocoa/renderer.nim`` lines 379-432), so we paint
+        # the toggle's "checked" state with the indigo accent and
+        # the unchecked state with a dim neutral fill. The state
+        # cascade through ``createRenderEffect`` keeps the colour in
+        # lockstep with ``vm.toggleValue``.
+        rCaptured.setStyle(node, "background-color", "#7c7aed")
       else:
         rCaptured.removeAttribute(node, "checked")
+        rCaptured.setStyle(node, "background-color", "#1f2030")
     r.addEventListener(node, "click", proc() =
       let current = rCaptured.getAttribute(node, "data-value") == "true"
       discard captured.setToggle(id, not current))
@@ -148,6 +160,15 @@ when defined(macosx):
     r.setAttribute(inputNode, "data-min", $minValue)
     r.setAttribute(inputNode, "data-max", $maxValue)
     r.setAttribute(inputNode, "data-step", $stepValue)
+    # Round-7 fix: drop NSTextField's default white bezel so the
+    # numeric stepper reads as a dark surface instead of a glaring
+    # white bar inside the settings card. ``applyStyle`` swaps
+    # ``setBordered:`` / ``setDrawsBackground:`` off as soon as a
+    # background-color is set (see ``isonim_cocoa/renderer.nim``
+    # lines 379-432); we follow with the foreground text-colour so
+    # the digit value reads against the dark fill.
+    r.setStyle(inputNode, "background-color", "#15161f")
+    r.setStyle(inputNode, "color", "#ecedf3")
 
     let captured = vmRef
     let id = itemId
