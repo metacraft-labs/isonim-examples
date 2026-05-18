@@ -17,6 +17,16 @@
 ## `import isonim/web/web_renderer` in the composition root; every
 ## proc below has a parity overload on `WebRenderer` thanks to the
 ## RendererBackend concept.
+##
+## M-EVP-14 round-8: inline styling matches the cocoa/freya/gpui
+## task-app palette so the leaves carry the same design intent — dark
+## canvas `#0F1117`, card surface `#1d1d28`, accent indigo `#7c7aed`,
+## muted text `#A0A2B0`. Card-chrome rows, content-hugging Add Task
+## CTA, indigo-fill active filter chip, and a small rounded checkbox
+## that flips to indigo fill when the task is completed. The styles
+## live as inline `setStyle` calls (no global stylesheet) because the
+## leaf bundle is the sole carrier of platform-specific look for the
+## web target.
 
 import std/[strutils, tables]
 
@@ -52,6 +62,23 @@ proc resetWebLeaves*() =
   webLeavesTable.setLen(0)
 
 # ----------------------------------------------------------------------------
+# Design tokens — kept in lock-step with the cocoa / freya / gpui leaves
+# so every renderer reaches for the same palette and the cross-backend
+# review reads "same intent, native idiom" instead of "different demo".
+# ----------------------------------------------------------------------------
+
+const
+  ColorCanvas       = "#0F1117"
+  ColorSurface      = "#1d1d28"
+  ColorSurfaceBorder = "#25263A"
+  ColorTextPrimary  = "#E6E6F0"
+  ColorTextMuted    = "#A0A2B0"
+  ColorAccent       = "#7c7aed"
+  ColorWhite        = "#FFFFFF"
+  ColorChipBorder   = "rgba(255, 255, 255, 0.08)"
+  ColorCheckBorder  = "rgba(255, 255, 255, 0.20)"
+
+# ----------------------------------------------------------------------------
 # Closure factories — top-level so loop-variable aliasing can't bite.
 # ----------------------------------------------------------------------------
 
@@ -77,9 +104,22 @@ proc makeRemoveHandler(vm: TaskAppVM; id: int): proc() =
 # ----------------------------------------------------------------------------
 
 proc appShell*(r: MockRenderer; vm: TaskAppVM): MockNode =
+  ## Outer wrapper — dark canvas, default text colour, generous outer
+  ## padding so the first row's card chrome breathes against the pane
+  ## edge. Children (input / filter / list / summary) stack vertically
+  ## with an 8 px rhythm.
   discard vm
-  ui(r):
+  result = ui(r):
     tdiv(class = "task-app")
+  r.setStyle(result, "background-color", ColorCanvas)
+  r.setStyle(result, "color", ColorTextPrimary)
+  r.setStyle(result, "font-family",
+             "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif")
+  r.setStyle(result, "padding", "16px")
+  r.setStyle(result, "display", "flex")
+  r.setStyle(result, "flex-direction", "column")
+  r.setStyle(result, "gap", "12px")
+  r.setStyle(result, "min-height", "100%")
 
 proc taskInput*(r: MockRenderer; vm: TaskAppVM): MockNode =
   ## Text input + add button. The input node is captured via the DSL
@@ -96,6 +136,39 @@ proc taskInput*(r: MockRenderer; vm: TaskAppVM): MockNode =
       button(ref = addBtnRef):
         text "Add Task"
   s.inputNode = inpRef
+
+  # Wrapper — card-style row carrying input + Add CTA side by side.
+  r.setStyle(result, "display", "flex")
+  r.setStyle(result, "align-items", "center")
+  r.setStyle(result, "gap", "10px")
+  r.setStyle(result, "background-color", ColorSurface)
+  r.setStyle(result, "border", "1px solid " & ColorSurfaceBorder)
+  r.setStyle(result, "border-radius", "10px")
+  r.setStyle(result, "padding", "12px 16px")
+
+  # Input field — bezel-less; lives inside the card so the surface and
+  # input share one outer chrome (mirrors freya / cocoa).
+  r.setStyle(inpRef, "flex", "1")
+  r.setStyle(inpRef, "background-color", "transparent")
+  r.setStyle(inpRef, "color", ColorTextPrimary)
+  r.setStyle(inpRef, "border", "0")
+  r.setStyle(inpRef, "outline", "none")
+  r.setStyle(inpRef, "font-size", "14px")
+  r.setStyle(inpRef, "font-family", "inherit")
+
+  # Add Task CTA — content-hugging, indigo accent, white text.
+  r.setStyle(addBtnRef, "background-color", ColorAccent)
+  r.setStyle(addBtnRef, "color", ColorWhite)
+  r.setStyle(addBtnRef, "border", "0")
+  r.setStyle(addBtnRef, "padding", "8px 16px")
+  r.setStyle(addBtnRef, "border-radius", "6px")
+  r.setStyle(addBtnRef, "font-size", "13px")
+  r.setStyle(addBtnRef, "font-weight", "600")
+  r.setStyle(addBtnRef, "font-family", "inherit")
+  r.setStyle(addBtnRef, "cursor", "pointer")
+  r.setStyle(addBtnRef, "min-width", "110px")
+  r.setStyle(addBtnRef, "text-align", "center")
+
   let inputRef = inpRef
   createRenderEffect proc() =
     r.setAttribute(inputRef, "value", vm.inputText.val)
@@ -105,17 +178,25 @@ proc taskInput*(r: MockRenderer; vm: TaskAppVM): MockNode =
 proc makeFilterSelectionEffect(r: MockRenderer; vm: TaskAppVM;
                                btn: MockNode; fm: FilterMode) =
   ## Top-level factory so the captured `fm` / `btn` cannot alias a loop
-  ## variable in `filterBar`.
+  ## variable in `filterBar`. The active chip flips to indigo fill +
+  ## white text; inactive chips fall back to transparent fill with a
+  ## subtle border + muted text.
   createRenderEffect proc() =
     if vm.filter.val == fm:
       r.setAttribute(btn, "aria-pressed", "true")
+      r.setStyle(btn, "background-color", ColorAccent)
+      r.setStyle(btn, "color", ColorWhite)
+      r.setStyle(btn, "border", "1px solid " & ColorAccent)
     else:
       r.removeAttribute(btn, "aria-pressed")
+      r.setStyle(btn, "background-color", "transparent")
+      r.setStyle(btn, "color", ColorTextMuted)
+      r.setStyle(btn, "border", "1px solid " & ColorChipBorder)
 
 proc filterBar*(r: MockRenderer; vm: TaskAppVM): MockNode =
-  ## Three filter buttons. The selected `aria-pressed` attribute is
-  ## driven by a `createRenderEffect` over `vm.filter`, so flipping the
-  ## filter signal updates the buttons without rebuilding the bar.
+  ## Three filter buttons. The active chip's indigo accent is driven by
+  ## a `createRenderEffect` over `vm.filter` so flipping the signal
+  ## updates the chip without rebuilding the bar.
   let s = leavesFor(vm)
   s.filterNodes = @[]
   result = ui(r):
@@ -124,22 +205,41 @@ proc filterBar*(r: MockRenderer; vm: TaskAppVM): MockNode =
         let lbl = $fm
         button:
           text lbl
+
+  # Filter bar layout — content-hugging pill row with 6 px gap.
+  r.setStyle(result, "display", "flex")
+  r.setStyle(result, "gap", "6px")
+  r.setStyle(result, "align-self", "flex-start")
+
   for i, fm in [fmAll, fmActive, fmCompleted]:
     let btn = result.children[i]
     s.filterNodes.add btn
     r.setAttribute(btn, "data-filter", ($fm).toLowerAscii)
+
+    # Pill shape, content-hugging width, 4×12 px padding (8-px rhythm).
+    r.setStyle(btn, "padding", "4px 12px")
+    r.setStyle(btn, "border-radius", "6px")
+    r.setStyle(btn, "font-size", "12px")
+    r.setStyle(btn, "font-weight", "500")
+    r.setStyle(btn, "font-family", "inherit")
+    r.setStyle(btn, "min-width", "80px")
+    r.setStyle(btn, "text-align", "center")
+    r.setStyle(btn, "cursor", "pointer")
+
     makeFilterSelectionEffect(r, vm, btn, fm)
     r.addEventListener(btn, "click",
                        makeFilterClickHandler(vm, fm))
 
 proc renderTaskRow(r: MockRenderer; vm: TaskAppVM; t: Task): MockNode =
-  ## Build a single task row. Each row's marker text / display name /
-  ## per-task handlers are derived once from the task value (the value
-  ## type `Task` is the `forEachKeyed` identity key — task changes
-  ## flow through the keyed-list reconciliation).
+  ## Build a single task row. Each row is its own card surface with
+  ## border-radius 8px and 12×16 px padding; the `task-list` parent
+  ## supplies the 8-px vertical gap between rows. The toggle is a
+  ## small (~20 px) rounded box that flips to indigo fill with a
+  ## white checkmark when the task is completed.
   let taskId = t.id
-  let marker = if t.completed: "[x]" else: "[ ]"
-  let display = if t.completed: t.name & " (done)" else: t.name
+  let completed = t.completed
+  let marker = if completed: "✓" else: ""
+  let display = t.name
   result = ui(r):
     li(`data-task-id` = $taskId):
       button:
@@ -147,10 +247,69 @@ proc renderTaskRow(r: MockRenderer; vm: TaskAppVM; t: Task): MockNode =
       span:
         text display
       button:
-        text "x"
-  r.addEventListener(result.children[0], "click",
+        text "×"
+
+  # Row card surface — distinct from canvas, comfortable inner padding,
+  # 8-px rhythm courtesy of the parent `task-list` gap.
+  r.setStyle(result, "display", "flex")
+  r.setStyle(result, "align-items", "center")
+  r.setStyle(result, "gap", "12px")
+  r.setStyle(result, "background-color", ColorSurface)
+  r.setStyle(result, "border", "1px solid " & ColorSurfaceBorder)
+  r.setStyle(result, "border-radius", "8px")
+  r.setStyle(result, "padding", "12px 16px")
+  r.setStyle(result, "list-style", "none")
+
+  let toggleBtn = result.children[0]
+  # ~20 px rounded checkbox. Completed → indigo fill + white tick.
+  r.setStyle(toggleBtn, "width", "20px")
+  r.setStyle(toggleBtn, "height", "20px")
+  r.setStyle(toggleBtn, "padding", "0")
+  r.setStyle(toggleBtn, "border-radius", "5px")
+  r.setStyle(toggleBtn, "display", "inline-flex")
+  r.setStyle(toggleBtn, "align-items", "center")
+  r.setStyle(toggleBtn, "justify-content", "center")
+  r.setStyle(toggleBtn, "font-size", "12px")
+  r.setStyle(toggleBtn, "font-weight", "700")
+  r.setStyle(toggleBtn, "cursor", "pointer")
+  r.setStyle(toggleBtn, "flex-shrink", "0")
+  if completed:
+    r.setStyle(toggleBtn, "background-color", ColorAccent)
+    r.setStyle(toggleBtn, "border", "1px solid " & ColorAccent)
+    r.setStyle(toggleBtn, "color", ColorWhite)
+  else:
+    r.setStyle(toggleBtn, "background-color", "transparent")
+    r.setStyle(toggleBtn, "border", "1px solid " & ColorCheckBorder)
+    r.setStyle(toggleBtn, "color", "transparent")
+
+  let label = result.children[1]
+  r.setStyle(label, "flex", "1")
+  r.setStyle(label, "font-size", "14px")
+  r.setStyle(label, "line-height", "1.4")
+  if completed:
+    r.setStyle(label, "color", ColorTextMuted)
+    r.setStyle(label, "text-decoration", "line-through")
+  else:
+    r.setStyle(label, "color", ColorTextPrimary)
+    r.setStyle(label, "text-decoration", "none")
+
+  let removeBtn = result.children[2]
+  # Tertiary affordance — small, muted, no background fill.
+  r.setStyle(removeBtn, "width", "20px")
+  r.setStyle(removeBtn, "height", "20px")
+  r.setStyle(removeBtn, "padding", "0")
+  r.setStyle(removeBtn, "background-color", "transparent")
+  r.setStyle(removeBtn, "border", "0")
+  r.setStyle(removeBtn, "color", ColorTextMuted)
+  r.setStyle(removeBtn, "font-size", "16px")
+  r.setStyle(removeBtn, "line-height", "1")
+  r.setStyle(removeBtn, "cursor", "pointer")
+  r.setStyle(removeBtn, "flex-shrink", "0")
+  r.setStyle(removeBtn, "border-radius", "4px")
+
+  r.addEventListener(toggleBtn, "click",
                      makeToggleHandler(vm, taskId))
-  r.addEventListener(result.children[2], "click",
+  r.addEventListener(removeBtn, "click",
                      makeRemoveHandler(vm, taskId))
 
 proc placeholderRow(r: MockRenderer; vm: TaskAppVM): MockNode =
@@ -159,6 +318,12 @@ proc placeholderRow(r: MockRenderer; vm: TaskAppVM): MockNode =
   result = ui(r):
     li()
   r.setStyle(result, "font-style", "italic")
+  r.setStyle(result, "color", ColorTextMuted)
+  r.setStyle(result, "padding", "12px 16px")
+  r.setStyle(result, "background-color", ColorSurface)
+  r.setStyle(result, "border", "1px solid " & ColorSurfaceBorder)
+  r.setStyle(result, "border-radius", "8px")
+  r.setStyle(result, "list-style", "none")
   let row = result
   let txtNode = r.createTextNode("")
   r.appendChild(row, txtNode)
@@ -175,13 +340,22 @@ proc taskList*(r: MockRenderer; vm: TaskAppVM): MockNode =
   ## `vm.visibleTasks` and reconciles the list when tasks are added /
   ## removed / toggled / filtered. An additional `createRenderEffect`
   ## paints / clears the empty-state placeholder so the empty list still
-  ## reports a row.
+  ## reports a row. The 8-px vertical gap between rows is supplied by
+  ## the wrapper's `gap` style — each row carries its own card chrome
+  ## (see `renderTaskRow`).
   let s = leavesFor(vm)
   var listRef: MockNode
   result = ui(r):
     ul(class = "task-list", ref = listRef)
   s.listNode = listRef
   s.listWidth = 30
+
+  r.setStyle(listRef, "display", "flex")
+  r.setStyle(listRef, "flex-direction", "column")
+  r.setStyle(listRef, "gap", "8px")
+  r.setStyle(listRef, "padding", "0")
+  r.setStyle(listRef, "margin", "0")
+  r.setStyle(listRef, "list-style", "none")
 
   var placeholder: MockNode = nil
   let listNode = listRef
@@ -202,12 +376,24 @@ proc taskList*(r: MockRenderer; vm: TaskAppVM): MockNode =
 proc summaryBar*(r: MockRenderer; vm: TaskAppVM): MockNode =
   ## "N of M remaining" footer. The inner span's text is driven by a
   ## `createRenderEffect` over `vm.tasks`, so any mutation surfaces here
-  ## without a rebuild.
+  ## without a rebuild. A 1 px top border separates the summary from the
+  ## task list above (carries the cross-renderer "metadata footer"
+  ## convention through to the web target).
   let s = leavesFor(vm)
   var summaryRef: MockNode
   result = ui(r):
     footer(class = "task-summary", ref = summaryRef)
   s.summaryNode = summaryRef
+
+  r.setStyle(summaryRef, "display", "flex")
+  r.setStyle(summaryRef, "justify-content", "space-between")
+  r.setStyle(summaryRef, "align-items", "center")
+  r.setStyle(summaryRef, "font-size", "12px")
+  r.setStyle(summaryRef, "color", ColorTextMuted)
+  r.setStyle(summaryRef, "padding-top", "12px")
+  r.setStyle(summaryRef, "margin-top", "4px")
+  r.setStyle(summaryRef, "border-top", "1px solid " & ColorSurfaceBorder)
+
   let row = r.createElement("span")
   let txtNode = r.createTextNode("")
   r.appendChild(row, txtNode)

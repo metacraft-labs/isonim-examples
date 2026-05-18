@@ -502,8 +502,8 @@ const previewBaseStyles = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
   height: 100%;
-  background: #0D0E14;
-  color: #ECEDF3;
+  background: #0F1117;
+  color: #E6E6F0;
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
@@ -633,45 +633,49 @@ body { padding: 32px; overflow-y: auto; }
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #15161F;
+  background: #1D1D28;
   border: 1px solid #2A2C3A;
   border-radius: 10px;
   padding: 12px 16px;
 }
-.task-input-glyph { font-size: 14px; color: #6B6F80; }
-.task-input-text { color: #6B6F80; font-size: 13px; flex: 1; }
+.task-input-glyph { font-size: 14px; color: #A0A2B0; }
+.task-input-text { color: #A0A2B0; font-size: 13px; flex: 1; }
 .task-input-cta {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  color: #ECEDF3;
+  color: #FFFFFF;
   background: #7C7AED;
-  padding: 6px 12px;
+  padding: 8px 16px;
   border-radius: 6px;
+  letter-spacing: 0.01em;
 }
 .task-input-submit {
   border: 0;
   font-family: inherit;
   cursor: pointer;
   margin-left: auto;
+  min-width: 110px;
+  text-align: center;
 }
-.task-list { display: flex; flex-direction: column; gap: 2px; }
+.task-list { display: flex; flex-direction: column; gap: 8px; }
 .task {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
-  background: #15161F;
-  border: 1px solid #2A2C3A;
+  padding: 12px 16px;
+  background: #1D1D28;
+  border: 1px solid #25263A;
   border-radius: 8px;
 }
 .task .checkbox {
-  width: 18px; height: 18px;
-  border: 1.5px solid #363849;
+  width: 20px; height: 20px;
+  border: 1.5px solid rgba(255, 255, 255, 0.20);
   border-radius: 5px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: transparent;
 }
 .task.done .checkbox {
   background: #7C7AED;
@@ -679,54 +683,68 @@ body { padding: 32px; overflow-y: auto; }
 }
 .task.done .checkbox::after {
   content: '\\2713';
-  color: #fff;
+  color: #FFFFFF;
   font-size: 12px;
   font-weight: 700;
+  line-height: 1;
 }
-.task .name { font-size: 13px; color: #ECEDF3; flex: 1; }
-.task.done .name { color: #6B6F80; text-decoration: line-through; }
+.task .name { font-size: 14px; color: #E6E6F0; flex: 1; line-height: 1.4; }
+.task.done .name { color: #A0A2B0; text-decoration: line-through; }
 .task .badge {
   font-size: 10px;
   font-weight: 600;
-  color: #9CA0B0;
-  background: #1A1B26;
+  color: #A0A2B0;
+  background: #14151D;
   border: 1px solid #2A2C3A;
   padding: 2px 7px;
   border-radius: 999px;
 }
 .task .remove {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 16px;
   line-height: 1;
-  color: #6B6F80;
-  padding: 0 6px;
+  color: #A0A2B0;
   user-select: none;
+  border-radius: 4px;
+  flex-shrink: 0;
 }
 .filter-bar {
   display: flex;
-  gap: 4px;
-  background: #1A1B26;
-  border-radius: 8px;
-  padding: 4px;
+  gap: 6px;
   align-self: flex-start;
+  padding: 0;
+  background: transparent;
 }
 .filter-bar .pill {
   font-size: 12px;
-  padding: 6px 12px;
+  padding: 4px 12px;
   border-radius: 6px;
-  color: #9CA0B0;
+  color: #A0A2B0;
   font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  min-width: 80px;
+  text-align: center;
 }
 .filter-bar .pill.active {
-  background: #15161F;
-  color: #ECEDF3;
-  box-shadow: 0 1px 0 #2A2C3A inset;
+  background: #7C7AED;
+  color: #FFFFFF;
+  border-color: #7C7AED;
+  box-shadow: none;
 }
 .summary {
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
-  color: #6B6F80;
+  color: #A0A2B0;
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid #25263A;
 }
 .summary .clear {
   color: #7C7AED;
