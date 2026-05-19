@@ -1,4 +1,19 @@
-# Visual Review Brief — Story Selected (wide viewport)
+---
+briefId: chrome.story-selected-wide
+schemaVersion: 1
+kind: chrome
+title: Story Selected — wide viewport
+coversPreviews:
+  - storyRef: { group: "Settings App / Group", name: "Appearance", kind: component, index: 0 }
+    backends: [web]
+captureViewports:
+  - { width: 1920, height: 1080, label: "wide" }
+reviewerSchemaVersion: 1
+scoringDimensions:
+  - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
+relatedBriefs: [chrome.story-selected-laptop]
+---
+
 
 ## What You're Reviewing
 

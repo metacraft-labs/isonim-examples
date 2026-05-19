@@ -1,4 +1,20 @@
-# Visual Review Brief — Settings App Preview
+---
+briefId: render.settings-app
+schemaVersion: 1
+kind: render
+title: Settings App — cross-backend visual review
+coversPreviews:
+  - storyRef: { group: "Settings App / Pages", name: "Preferences", kind: page, index: 0 }
+    backends: [web, tui, gpui, freya, cocoa, android, ios]
+captureViewports:
+  - { width: 1920, height: 1080, label: "wide" }
+reviewerSchemaVersion: 1
+scoringDimensions:
+  - { id: chrome,    label: "Editor Chrome", weight: 0.4, scale: { min: 1, max: 10 } }
+  - { id: rendering, label: "App Rendering", weight: 0.6, scale: { min: 1, max: 10 } }
+relatedBriefs: [render.task-app]
+---
+
 
 ## What You're Reviewing
 

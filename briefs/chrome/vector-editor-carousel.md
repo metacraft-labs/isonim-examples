@@ -1,4 +1,20 @@
-# Visual Review Brief — Vector Editor with Symbol (carousel usage-context)
+---
+briefId: chrome.vector-editor-carousel
+schemaVersion: 1
+kind: chrome
+title: Vector Editor with Symbol — carousel usage-context
+coversPreviews:
+  - storyRef: { group: "Task App / Vector Symbols", name: "Task Check Icon", kind: vectorsymbol, index: 0 }
+    backends: [web]
+captureViewports:
+  - { width: 1920, height: 1080, label: "wide" }
+  - { width: 1440, height: 900, label: "laptop" }
+reviewerSchemaVersion: 1
+scoringDimensions:
+  - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
+relatedBriefs: [chrome.vector-editor-empty, chrome.vector-editor-with-symbol]
+---
+
 
 ## What You're Reviewing
 

@@ -1,4 +1,20 @@
-# Visual Review Brief — Canvas Preview (Edit mode with handles visible)
+---
+briefId: chrome.canvas-preview-edit-mode
+schemaVersion: 1
+kind: chrome
+title: Canvas Preview — Edit mode with handles visible
+coversPreviews:
+  - storyRef: { group: "Task App / TaskList", name: "Two Active", kind: component, index: 1 }
+    backends: [tui]
+captureViewports:
+  - { width: 1920, height: 1080, label: "wide" }
+  - { width: 1440, height: 900, label: "laptop" }
+reviewerSchemaVersion: 1
+scoringDimensions:
+  - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
+relatedBriefs: [chrome.canvas-preview-tui, chrome.canvas-preview-vector-dblclick-open]
+---
+
 
 ## What You're Reviewing
 

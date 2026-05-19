@@ -1324,8 +1324,9 @@ async function startTuiLauncher(projectRoot) {
 //
 //   - Task App → "Task App / Pages / Inbox" pairs with
 //     `seedTaskInboxDefaults` ("Buy groceries", "Walk the dog",
-//     "Ship EX-M14"). The brief in tools/visual-review-briefs/render/
-//     task-app.md references exactly these three tasks.
+//     "Ship EX-M14"). The brief in briefs/render/task-app.md (REV-M1
+//     YAML-frontmatter format, migrated from the legacy freeform tree
+//     by REV-M10) references exactly these three tasks.
 //   - Settings App → "Settings App / Pages / Preferences" pairs with
 //     `buildDemoSettingsCatalog()` (Appearance, Editor, Notifications
 //     each with three items).

@@ -301,7 +301,9 @@ editor-screenshot-size size:
 # scope list (shell + sidebar-quick-nav + story-selected + vector
 # editor variants + canvas-preview variants) and write deterministic
 # screenshots into `screenshots/`. The per-screen design briefs live
-# under `tools/visual-review-briefs/<screen>.md`.
+# under `briefs/chrome/<slug>.md` and `briefs/render/<slug>.md` in the
+# new REV-M1 YAML-frontmatter format (migrated from the legacy freeform
+# tree by REV-M10).
 #
 # Prereqs (the recipe checks; build them yourself if missing):
 #   - `just build-backends`           (TUI launcher for canvas views)

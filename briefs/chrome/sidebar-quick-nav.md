@@ -1,4 +1,20 @@
-# Visual Review Brief — Sidebar Quick-Nav Strip + Search + Empty Category
+---
+briefId: chrome.sidebar-quick-nav
+schemaVersion: 1
+kind: chrome
+title: Sidebar Quick-Nav Strip + Search + Empty Category
+coversPreviews:
+  - storyRef: { group: "Task App / Pages", name: "Inbox", kind: page, index: 0 }
+    backends: [web]
+captureViewports:
+  - { width: 1440, height: 900, label: "laptop" }
+  - { width: 1920, height: 1080, label: "wide" }
+reviewerSchemaVersion: 1
+scoringDimensions:
+  - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
+relatedBriefs: [chrome.shell-wide, chrome.shell-laptop]
+---
+
 
 ## What You're Reviewing
 

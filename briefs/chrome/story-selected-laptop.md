@@ -1,4 +1,19 @@
-# Visual Review Brief — Story Selected (laptop viewport)
+---
+briefId: chrome.story-selected-laptop
+schemaVersion: 1
+kind: chrome
+title: Story Selected — laptop viewport
+coversPreviews:
+  - storyRef: { group: "Settings App / Group", name: "Appearance", kind: component, index: 0 }
+    backends: [web]
+captureViewports:
+  - { width: 1440, height: 900, label: "laptop" }
+reviewerSchemaVersion: 1
+scoringDimensions:
+  - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
+relatedBriefs: [chrome.story-selected-wide]
+---
+
 
 ## What You're Reviewing
 

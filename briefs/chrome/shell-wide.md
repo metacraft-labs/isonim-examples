@@ -1,4 +1,19 @@
-# Visual Review Brief — Editor Shell (wide viewport)
+---
+briefId: chrome.shell-wide
+schemaVersion: 1
+kind: chrome
+title: Editor Shell — wide viewport
+coversPreviews:
+  - storyRef: { group: "Task App / Pages", name: "Inbox", kind: page, index: 0 }
+    backends: [web]
+captureViewports:
+  - { width: 1920, height: 1080, label: "wide" }
+reviewerSchemaVersion: 1
+scoringDimensions:
+  - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
+relatedBriefs: [chrome.shell-laptop, chrome.shell-narrow]
+---
+
 
 ## What You're Reviewing
 

@@ -1,4 +1,20 @@
-# Visual Review Brief — Vector Editor Opened via Canvas Dblclick (M-EVP-11)
+---
+briefId: chrome.canvas-preview-vector-dblclick-open
+schemaVersion: 1
+kind: chrome
+title: Vector Editor Opened via Canvas Dblclick (M-EVP-11)
+coversPreviews:
+  - storyRef: { group: "Task App / Vector Symbols", name: "Task Check Icon", kind: vectorsymbol, index: 0 }
+    backends: [tui]
+captureViewports:
+  - { width: 1920, height: 1080, label: "wide" }
+  - { width: 1440, height: 900, label: "laptop" }
+reviewerSchemaVersion: 1
+scoringDimensions:
+  - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
+relatedBriefs: [chrome.canvas-preview-tui, chrome.canvas-preview-edit-mode]
+---
+
 
 ## What You're Reviewing
 

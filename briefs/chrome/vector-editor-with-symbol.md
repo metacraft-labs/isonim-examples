@@ -1,4 +1,20 @@
-# Visual Review Brief — Vector Editor with Symbol (split usage-context)
+---
+briefId: chrome.vector-editor-with-symbol
+schemaVersion: 1
+kind: chrome
+title: Vector Editor with Symbol — split usage-context
+coversPreviews:
+  - storyRef: { group: "Task App / Vector Symbols", name: "Task Filter Icon", kind: vectorsymbol, index: 1 }
+    backends: [web]
+captureViewports:
+  - { width: 1920, height: 1080, label: "wide" }
+  - { width: 1440, height: 900, label: "laptop" }
+reviewerSchemaVersion: 1
+scoringDimensions:
+  - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
+relatedBriefs: [chrome.vector-editor-empty, chrome.vector-editor-carousel]
+---
+
 
 ## What You're Reviewing
 
