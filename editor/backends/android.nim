@@ -107,22 +107,36 @@ when defined(macosx) or defined(linux):
         "(expected 1 = RGBA_8888). The device may not be returning RGBA " &
         "frames; check `adb shell getprop ro.build.version.sdk` and the " &
         "device's display config.")
-    let outW = src.width
-    let outH = src.height
-    var pixels = newSeq[byte](outW * outH * 4)
-    for y in 0 ..< outH:
-      let srcY = (y * h0) div outH
-      for x in 0 ..< outW:
-        let srcX = (x * w0) div outW
-        let srcOff = headerLen + (srcY * w0 + srcX) * 4
-        let dstOff = (y * outW + x) * 4
-        pixels[dstOff]     = byte(raw[srcOff].byte)
-        pixels[dstOff + 1] = byte(raw[srcOff + 1].byte)
-        pixels[dstOff + 2] = byte(raw[srcOff + 2].byte)
-        pixels[dstOff + 3] = byte(raw[srcOff + 3].byte)
+    # M-EVP-14 NO-STRETCH FIX (Wave AB): emit the device's native
+    # framebuffer dimensions verbatim. The previous loop here did a
+    # nearest-neighbor resize from (w0, h0) to (src.width, src.height) —
+    # but `src.width / height` come from the launcher's `--width/--height`
+    # CLI args (default 800x600; the editor-screenshot tool passes
+    # 1080x720 per Wave Q-A). A portrait device framebuffer (e.g.
+    # 1080x2340) thus got aspect-distorted to landscape (1080x720),
+    # producing the ~3:1 horizontal-squash that the user flagged after
+    # round 20.
+    #
+    # The user's original "no image stretching" rule (saved as
+    # feedback_no_image_stretching.md in memory) explicitly mandates
+    # that real-device backends display their native framebuffer at 1:1
+    # and the preview pane letterboxes (the canvas-mount CSS already
+    # does this — `width: auto; height: auto; max-width/height: 100%`).
+    # Honor that contract here: pass through the device's native
+    # dimensions and pixels with no resampling.
+    #
+    # Mirror the source's recorded width/height so downstream
+    # consumers (the `toAny` wrapper, the resizing sink) see the
+    # actual framebuffer dimensions, not the stale CLI defaults.
+    src.width = w0
+    src.height = h0
+    var pixels = newSeq[byte](w0 * h0 * 4)
+    let payloadStart = headerLen
+    for i in 0 ..< w0 * h0 * 4:
+      pixels[i] = byte(raw[payloadStart + i].byte)
     Frame(kind: fkFull,
           flags: FrameFlags(isDiff: false, isVideo: false),
-          width: outW, height: outH, pixels: pixels)
+          width: w0, height: h0, pixels: pixels)
 
   proc toAny*(src: AdbScreencapFrameSource): AnyFrameSource =
     let captured = src
