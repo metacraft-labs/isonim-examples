@@ -5,22 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>IsoNim Examples Editor</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- RS-M13: vendored xterm.js (pinned via
-         isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt). The
-         editor-build recipe copies the vendor directory into
-         build/editor/vendor/xterm/. The TUI preview path mounts a
-         live xterm.js Terminal inside `<div data-tui-terminal="true">`
-         and feeds the D-packet stream from the
-         `isonim-examples-tui-term` launcher into `term.write(...)`. -->
-    <link rel="stylesheet" href="vendor/xterm/xterm.css" />
-    <script src="vendor/xterm/xterm.js"></script>
-    <!-- TBAR-M4: vendored TipTap + marked UMD bundle (pinned via
-         isonim/src/isonim/editor/vendor/tiptap/MANIFEST.txt). The
-         editor-build recipe copies the vendor directory into
-         build/editor/vendor/tiptap/. The spec pane mounts a read-
-         only TipTap editor on the active brief's markdown body via
-         `window.IsoNimTipTap.mountViewer(...)`. -->
-    <script src="vendor/tiptap/isonim-tiptap.umd.min.js"></script>
+    <!-- TBAR-M5b: vendored TipTap + xterm UMD bundles produced by
+         the ``editor-vendor`` Nix derivation
+         (``isonim/nix/editor-vendor.nix``).  The editor-build recipe
+         copies them into ``build/editor/vendor/``.  Each bundle
+         attaches its library to a named ``globalThis`` namespace
+         consumed by the per-library Nim FFI modules under
+         ``isonim/src/isonim/editor/vendor/``:
+           * ``tiptap.umd.js``  → ``globalThis.TipTap`` + ``TipTapStarterKit`` +
+                                  ``TipTapMarkdown``
+           * ``xterm.umd.js``   → ``globalThis.XtermTerminal`` + the
+                                  legacy ``window.Terminal`` alias.
+         The xterm.css is copied next to xterm.umd.js since xterm
+         5.3.0 still ships its terminal styles as a separate
+         stylesheet rather than self-injecting them. -->
+    <link rel="stylesheet" href="vendor/xterm.css" />
+    <script src="vendor/xterm.umd.js"></script>
+    <script src="vendor/tiptap.umd.js"></script>
     <style>
       *,
       *::before,

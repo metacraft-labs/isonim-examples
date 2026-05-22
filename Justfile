@@ -256,29 +256,31 @@ build-backends-ios:
 
 # Build the editor (Nim → JS).
 #
-# RS-M13: copies the vendored xterm.js bundle into build/editor/
-# alongside editor.js so the editor's TUI preview path can mount an
-# xterm.js Terminal without a runtime CDN fetch. The vendor source-
-# of-truth + SHA pin lives in
-# ../isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt.
+# TBAR-M5b: the editor's runtime JS dependencies (TipTap + xterm)
+# are produced by the ``editor-vendor`` Nix derivation in the sibling
+# ``isonim/`` repo (``nix build ~/metacraft/isonim#editor-vendor``).
+# This recipe pulls the bundle out of the Nix store via ``nix build
+# --print-out-paths`` and ``cp -L``s the files into build/editor/
+# vendor/. The recipe MUST NOT invoke yarn / npm directly — all JS
+# dependency resolution happens inside the Nix derivation, which is
+# content-addressed on yarn.lock + the esbuild script so the bundle
+# only rebuilds when those inputs change.
 editor-build:
-    @mkdir -p build/editor build/editor/vendor/xterm build/editor/vendor/tiptap
+    @mkdir -p build/editor build/editor/vendor
     nim js -o:build/editor/editor.js editor/main.nim
     cp editor/index.html build/editor/index.html
-    cp ../isonim/src/isonim/editor/vendor/xterm/xterm.js \
-        build/editor/vendor/xterm/xterm.js
-    cp ../isonim/src/isonim/editor/vendor/xterm/xterm.css \
-        build/editor/vendor/xterm/xterm.css
-    cp ../isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt \
-        build/editor/vendor/xterm/MANIFEST.txt
-    # TBAR-M4: copy the vendored TipTap UMD bundle (+ markdown
-    # rendering via marked) into build/editor/vendor/tiptap/. The
-    # source-of-truth + SHA pin lives in
-    # ../isonim/src/isonim/editor/vendor/tiptap/MANIFEST.txt.
-    cp ../isonim/src/isonim/editor/vendor/tiptap/isonim-tiptap.umd.min.js \
-        build/editor/vendor/tiptap/isonim-tiptap.umd.min.js
-    cp ../isonim/src/isonim/editor/vendor/tiptap/MANIFEST.txt \
-        build/editor/vendor/tiptap/MANIFEST.txt
+    @echo "[editor-build] pulling editor-vendor bundle from Nix"
+    @vendor_out=$(nix --extra-experimental-features 'nix-command flakes' \
+        build --no-link --print-out-paths \
+        ../isonim#editor-vendor); \
+     cp -L "$vendor_out/tiptap.umd.js" build/editor/vendor/tiptap.umd.js; \
+     cp -L "$vendor_out/xterm.umd.js"  build/editor/vendor/xterm.umd.js; \
+     cp -L "$vendor_out/xterm.css"     build/editor/vendor/xterm.css; \
+     cp -L "$vendor_out/MANIFEST.txt"  build/editor/vendor/MANIFEST.txt
+    @chmod u+w build/editor/vendor/tiptap.umd.js \
+                build/editor/vendor/xterm.umd.js \
+                build/editor/vendor/xterm.css \
+                build/editor/vendor/MANIFEST.txt
     @echo "Built: build/editor/ - open build/editor/index.html"
 
 # Serve the editor at http://localhost:8091, proxying /bridge/<backend>
