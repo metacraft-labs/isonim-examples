@@ -16,6 +16,16 @@ switch("path", "$config/../nim-everywhere/src")
 switch("path", "$config/../nim-stew")
 switch("path", "$config/../nim-faststreams")
 
+# Phase C — the editor's design-review subsystem imports ``nim_agents``
+# (transitively ``nim_acp`` + ``nim_agent_harbor``) via
+# ``editor/design_review/editor_agent_adapter.nim``.  Resolving the
+# sibling-repo facades here keeps ``nim c`` and ``nim js`` consistent
+# regardless of how the build is invoked (``just editor-build``,
+# direct ``nim``, IDE).
+switch("path", "$config/../nim-agents/src")
+switch("path", "$config/../nim-acp/src")
+switch("path", "$config/../nim-agent-harbor/src")
+
 # Additional paths for the EX-M1 cross-renderer compile-check tests:
 # we need `isonim_tui/renderer` for the TerminalRenderer leaf surface,
 # and the renderer transitively pulls a couple of nim-termctl modules.
