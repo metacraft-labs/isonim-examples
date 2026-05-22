@@ -15,7 +15,7 @@
 // The editor JS bundle is responsible for producing `ws://<location.host>/bridge/<backend>`
 // URLs (see `bridgeUrlForBackend` in src/isonim/editor/streaming_preview.nim).
 
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { connect as tcpConnect } from 'node:net';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,20 @@ const PORT = Number.parseInt(process.env.PORT || '8091', 10);
 const ROOT = process.env.EDITOR_STATIC_ROOT
   ? process.env.EDITOR_STATIC_ROOT
   : join(dirname(fileURLToPath(import.meta.url)), '..', 'build', 'editor');
+
+// Daemon HTTP API proxy — forwards /api/* to the local isonim-review
+// daemon (default 127.0.0.1:8113). Lets the editor JS bundle call
+// /api/design-review/*, /api/agent/*, /api/campaign/* via the SAME
+// origin as the editor, so:
+//   * cross-machine access works (the daemon stays bound to loopback,
+//     this server is the only listener exposed to the LAN);
+//   * the browser never makes a cross-port fetch (no CORS headers
+//     required on the daemon).
+const DAEMON_HOST = process.env.ISONIM_DAEMON_HOST || '127.0.0.1';
+const DAEMON_PORT = Number.parseInt(
+  process.env.ISONIM_DAEMON_PORT || '8113',
+  10,
+);
 
 // Per-backend launcher port table — must match
 // `bridgePortForBackend` in src/isonim/editor/streaming_preview.nim.
@@ -84,17 +98,73 @@ async function safePath(reqUrl) {
   }
 }
 
+// Proxy /api/* HTTP requests to the daemon. Streams request and
+// response bodies bidirectionally; preserves headers verbatim except
+// for `host`, which we rewrite to the daemon's address so the daemon
+// sees the request as local.
+function proxyToDaemon(req, res) {
+  const headers = { ...req.headers };
+  delete headers.host;
+  headers.host = `${DAEMON_HOST}:${DAEMON_PORT}`;
+
+  const upstream = httpRequest(
+    {
+      host: DAEMON_HOST,
+      port: DAEMON_PORT,
+      method: req.method,
+      path: req.url,
+      headers,
+    },
+    (upRes) => {
+      res.writeHead(upRes.statusCode || 502, upRes.headers);
+      upRes.pipe(res);
+    },
+  );
+  upstream.on('error', (e) => {
+    if (!res.headersSent) {
+      res.writeHead(502, { 'content-type': 'text/plain' });
+    }
+    res.end(`daemon proxy error: ${e.message}`);
+  });
+  req.pipe(upstream);
+}
+
+// Rewrite `index.html` on the fly to inject a `<meta
+// name="isonim-review-api">` tag pointing at this same-origin server,
+// so the editor's `daemon_discovery` resolves to the proxy rather than
+// to `<location.host-without-port>:8113` (the latter only works when
+// the daemon is bound to the LAN, which it isn't by default).
+function injectDaemonMeta(html, host) {
+  const apiBase = `http://${host}`;
+  const tag = `<meta name="isonim-review-api" content="${apiBase}">`;
+  return html.replace(/<head>/i, `<head>\n    ${tag}`);
+}
+
 const server = createServer(async (req, res) => {
-  const full = await safePath(req.url);
+  const url = req.url || '/';
+  // Daemon HTTP API proxy — anything under /api/* goes to the daemon.
+  if (url.startsWith('/api/')) {
+    proxyToDaemon(req, res);
+    return;
+  }
+
+  const full = await safePath(url);
   if (!full) {
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('not found');
     return;
   }
   try {
-    const body = await readFile(full);
+    let body = await readFile(full);
+    const contentType = mimeFor(full);
+    // Inject the daemon meta tag into the index page so the editor
+    // bundle's daemon discovery resolves to this same-origin server.
+    if (full.endsWith('index.html')) {
+      const host = req.headers.host || `${DAEMON_HOST}:${PORT}`;
+      body = Buffer.from(injectDaemonMeta(body.toString('utf-8'), host), 'utf-8');
+    }
     res.writeHead(200, {
-      'content-type': mimeFor(full),
+      'content-type': contentType,
       'cache-control': 'no-store',
     });
     res.end(body);
@@ -171,6 +241,7 @@ server.on('upgrade', (req, clientSocket, head) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[editor-server] serving ${ROOT} on http://0.0.0.0:${PORT}`);
+  console.log(`[editor-server] /api/* -> ${DAEMON_HOST}:${DAEMON_PORT}  (isonim-review daemon)`);
   console.log(`[editor-server] bridge routes:`);
   for (const [k, v] of Object.entries(BRIDGE_PORTS)) {
     if (k === 'tui-term') {
