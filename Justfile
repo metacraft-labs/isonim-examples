@@ -262,9 +262,8 @@ build-backends-ios:
 # of-truth + SHA pin lives in
 # ../isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt.
 editor-build:
-    @mkdir -p build/editor build/editor/vendor/xterm
-    nim js --path:. --path:../isonim/src --path:../nim-everywhere/src \
-        -o:build/editor/editor.js editor/main.nim
+    @mkdir -p build/editor build/editor/vendor/xterm build/editor/vendor/tiptap
+    nim js -o:build/editor/editor.js editor/main.nim
     cp editor/index.html build/editor/index.html
     cp ../isonim/src/isonim/editor/vendor/xterm/xterm.js \
         build/editor/vendor/xterm/xterm.js
@@ -272,6 +271,14 @@ editor-build:
         build/editor/vendor/xterm/xterm.css
     cp ../isonim/src/isonim/editor/vendor/xterm/MANIFEST.txt \
         build/editor/vendor/xterm/MANIFEST.txt
+    # TBAR-M4: copy the vendored TipTap UMD bundle (+ markdown
+    # rendering via marked) into build/editor/vendor/tiptap/. The
+    # source-of-truth + SHA pin lives in
+    # ../isonim/src/isonim/editor/vendor/tiptap/MANIFEST.txt.
+    cp ../isonim/src/isonim/editor/vendor/tiptap/isonim-tiptap.umd.min.js \
+        build/editor/vendor/tiptap/isonim-tiptap.umd.min.js
+    cp ../isonim/src/isonim/editor/vendor/tiptap/MANIFEST.txt \
+        build/editor/vendor/tiptap/MANIFEST.txt
     @echo "Built: build/editor/ - open build/editor/index.html"
 
 # Serve the editor at http://localhost:8091, proxying /bridge/<backend>
@@ -281,6 +288,34 @@ editor-build:
 editor-serve: editor-build build-backends
     @echo "Serving editor on http://0.0.0.0:8091 (with /bridge/* WS proxy)"
     node tools/editor-server.mjs
+
+# Like `editor-serve` but also background-starts the per-backend
+# launcher subprocesses so the live preview pane actually streams
+# frames. Without the launchers, the editor's `/bridge/<backend>` WS
+# proxy connects to a port with no listener and the preview renders
+# black. The launchers bind to 127.0.0.1; the editor-server.mjs proxy
+# is the only LAN-facing listener.
+#
+# Cocoa launcher runs only on macOS; iOS/Android launchers are skipped
+# unconditionally (no simulator/device wiring). Ctrl-C in the editor
+# server kills the whole process group so children get torn down too.
+editor-serve-all: editor-build build-backends
+    @echo "Starting per-backend launchers + editor-server.mjs (Ctrl-C to stop all)"
+    @set -euo pipefail; \
+     trap 'kill 0 2>/dev/null; wait 2>/dev/null' EXIT INT TERM; \
+     build/backends/isonim-examples-tui-term --port 8112 \
+       > /tmp/isonim-launcher-tui-term.log 2>&1 & \
+     build/backends/isonim-examples-gpui --port 8103 --demo task \
+       > /tmp/isonim-launcher-gpui.log 2>&1 & \
+     build/backends/isonim-examples-freya --port 8104 --demo task \
+       > /tmp/isonim-launcher-freya.log 2>&1 & \
+     if [ "$(uname -s)" = "Darwin" ] && \
+        [ -x build/backends/isonim-examples-cocoa ]; then \
+       build/backends/isonim-examples-cocoa --port 8105 --demo task \
+         > /tmp/isonim-launcher-cocoa.log 2>&1 & \
+     fi; \
+     echo "  launcher logs in /tmp/isonim-launcher-*.log"; \
+     node tools/editor-server.mjs
 
 # Screenshot all editor views at all sizes -> build/editor/screenshots/.
 editor-screenshot:

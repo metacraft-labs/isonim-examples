@@ -14,6 +14,13 @@
          `isonim-examples-tui-term` launcher into `term.write(...)`. -->
     <link rel="stylesheet" href="vendor/xterm/xterm.css" />
     <script src="vendor/xterm/xterm.js"></script>
+    <!-- TBAR-M4: vendored TipTap + marked UMD bundle (pinned via
+         isonim/src/isonim/editor/vendor/tiptap/MANIFEST.txt). The
+         editor-build recipe copies the vendor directory into
+         build/editor/vendor/tiptap/. The spec pane mounts a read-
+         only TipTap editor on the active brief's markdown body via
+         `window.IsoNimTipTap.mountViewer(...)`. -->
+    <script src="vendor/tiptap/isonim-tiptap.umd.min.js"></script>
     <style>
       *,
       *::before,
