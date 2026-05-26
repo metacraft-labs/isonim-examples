@@ -11,7 +11,7 @@ captureViewports:
 reviewerSchemaVersion: 1
 scoringDimensions:
   - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
-relatedBriefs: [chrome.shell-wide, chrome.shell-laptop]
+relatedBriefs: [chrome.shell-wide, chrome.shell-laptop, chrome.spec-pane-view, chrome.spec-pane-comment, chrome.spec-pane-edit]
 ---
 
 
@@ -31,9 +31,15 @@ Captured by `editor-screenshot.mjs` view `shell` at viewport
   are reachable.
 - Sidebar quick-nav strip must still be visible OR demonstrably
   reachable through a toggle / accordion.
-- Chrome bar chip clusters may wrap onto two rows; if so, the wrap
-  must align cleanly (no orphan single chips).
+- Chrome bar chip clusters (the four CHRM-M2 ChoiceGroup clusters:
+  backend / surface / viewport / mode) may wrap onto two rows; if so,
+  the wrap must align cleanly (no orphan single chips).
+- ChoiceGroup pills must collapse gracefully — the chevron-popup
+  variant on the viewport cluster is preferred over wrapping pills
+  if room is tight.
 - No horizontal scroll on the root viewport.
+- No in-pane Preview/Brief mode-toggle row anywhere (CHRM-M2 deleted
+  it; the Surface cluster in the chrome bar is the only switch).
 
 ## What is Expected on the Screenshot
 
@@ -56,10 +62,15 @@ Captured by `editor-screenshot.mjs` view `shell` at viewport
 
 ### Centre column
 
-- Chrome bar present with at least the **backend** and **mode**
-  clusters reachable (viewport cluster may collapse into a dropdown
-  / overflow menu at this size).
-- Active backend chip highlighted with accent.
+- Chrome bar present with at least the **backend**, **surface**, and
+  **mode** ChoiceGroup clusters reachable (viewport cluster
+  legitimately collapses into its chevron popup at this size).
+- All clusters read as the same widget family (CHRM-M2 unification
+  must still be apparent at narrow density).
+- Active backend pill highlighted with accent.
+- Surface cluster's Preview pill active by default; the 2-pill
+  segmented control should not visibly collide with the other
+  clusters even at this density.
 
 ### Inspector
 

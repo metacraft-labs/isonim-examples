@@ -11,7 +11,7 @@ captureViewports:
 reviewerSchemaVersion: 1
 scoringDimensions:
   - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
-relatedBriefs: [chrome.shell-wide, chrome.shell-narrow]
+relatedBriefs: [chrome.shell-wide, chrome.shell-narrow, chrome.spec-pane-view, chrome.spec-pane-comment, chrome.spec-pane-edit]
 ---
 
 
@@ -29,12 +29,17 @@ Captured by `editor-screenshot.mjs` view `shell` at viewport
 - **Three-panel shell** stays visible (sidebar + centre + inspector).
   No panel collapses at this viewport.
 - All chrome chips remain on a **single row** in the chrome bar; chip
-  clusters should not wrap if at all avoidable.
+  clusters should not wrap if at all avoidable. The four CHRM-M2
+  ChoiceGroup clusters (`backend / surface / viewport / mode`) plus
+  the trailing-edge "Review this preview" + 🕘 history buttons all
+  fit on one row at this viewport.
 - Sidebar quick-nav strip stays in **one horizontal row** of five
   icons. Icons may shrink slightly but must remain visually distinct
   and have ≥ 24 × 24 px hit targets.
 - Inspector keeps tab labels visible even if its inner content reflows.
 - 4 / 8 px spacing rhythm preserved; no element looks cramped.
+- No in-pane Preview/Brief mode-toggle row visible anywhere
+  (CHRM-M2 deleted it).
 
 ## Color Expectations
 
@@ -60,13 +65,23 @@ greys for inactive chips and disabled categories.
 ### Centre column
 
 - Exactly one `[data-preview-chrome-bar="true"]` toolbar at the top.
-- Three toolbar clusters (`backend`, `viewport`, `mode`) all on a
-  single row.
-- All six backend chips visible; the active backend (default Web)
-  highlighted with the accent.
-- All three mode chips visible (View / Comment / Edit); active mode
-  (View by default) highlighted.
+- **Four** ChoiceGroup toolbar clusters (CHRM-M2) on a single row in
+  this order: `backend`, `surface`, `viewport`, `mode`. Each cluster
+  carries `data-toolbar-cluster="<id>"`. Every cluster reads as a
+  pill-group from the same widget family — no mixed widget chrome.
+- Backend cluster: segmented ChoiceGroup chips for all built backends;
+  the active backend (default Web) highlighted with the accent.
+- Surface cluster: 2-pill segmented control labelled
+  **Preview / Spec** (also `[data-preview-surface-switch="true"]`).
+  Preview pill active on default landing.
+- Viewport cluster: chevron-popup ChoiceGroup; current viewport label
+  visible with a small chevron icon.
+- Mode cluster: segmented ChoiceGroup with three pills
+  (View / Comment / Edit); View highlighted by default.
+- Trailing-edge: "Review this preview" + 🕘 history button (the
+  history button may be hidden when the active brief has no history).
 - NO view-switcher; NO left/right edge strips.
+- NO in-pane Preview/Brief mode-toggle row anywhere in the view body.
 - Below the chrome bar: empty-state preview or storyboard
   mini-previews.
 

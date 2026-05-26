@@ -140,6 +140,68 @@ export async function clickBackendChip(page, backendLabel) {
 }
 
 // ---------------------------------------------------------------------------
+// CHRM-M3 helpers — surface + mode chip clicks for the spec-pane views.
+//
+// Both clusters are CHRM-M2 ChoiceGroup segmented controls; pills are
+// addressed by positional index inside the cluster (see e2e_editor_
+// topbar_surface_switch.mjs + e2e_editor_spec_edit_mode.mjs).
+//
+//   Surface cluster: data-preview-surface-switch="true"
+//     - pill 0 = Preview
+//     - pill 1 = Spec
+//   Mode cluster: data-toolbar-cluster="mode"
+//     - pill 0 = View
+//     - pill 1 = Comment
+//     - pill 2 = Edit
+// ---------------------------------------------------------------------------
+
+const SURFACE_INDEX = { Preview: 0, Spec: 1 };
+const MODE_INDEX = { View: 0, Comment: 1, Edit: 2 };
+
+export async function clickSurfaceChip(page, surfaceLabel) {
+  const idx = SURFACE_INDEX[surfaceLabel];
+  if (idx === undefined) {
+    throw new Error(`clickSurfaceChip: unknown surface "${surfaceLabel}"`);
+  }
+  const pill = page
+    .locator(
+      `[data-preview-surface-switch="true"] [data-choice-group-pill="${idx}"]`,
+    )
+    .first();
+  await pill.waitFor({ state: "visible", timeout: 10_000 });
+  await pill.click();
+  // Wait for the reactive cascade to flip aria-pressed on the target
+  // pill. CHRM-M2 segmented-choice mounts mirror surfaceSig onto
+  // aria-pressed.
+  await page
+    .locator(
+      `[data-preview-surface-switch="true"] [data-choice-group-pill="${idx}"][aria-pressed="true"]`,
+    )
+    .first()
+    .waitFor({ state: "attached", timeout: 5_000 });
+}
+
+export async function clickModeChip(page, modeLabel) {
+  const idx = MODE_INDEX[modeLabel];
+  if (idx === undefined) {
+    throw new Error(`clickModeChip: unknown mode "${modeLabel}"`);
+  }
+  const pill = page
+    .locator(
+      `[data-toolbar-cluster="mode"] [data-choice-group-pill="${idx}"]`,
+    )
+    .first();
+  await pill.waitFor({ state: "visible", timeout: 10_000 });
+  await pill.click();
+  await page
+    .locator(
+      `[data-toolbar-cluster="mode"] [data-choice-group-pill="${idx}"][aria-pressed="true"]`,
+    )
+    .first()
+    .waitFor({ state: "attached", timeout: 5_000 });
+}
+
+// ---------------------------------------------------------------------------
 // Iframe state probes
 //
 // The editor shell mounts ALL view components (storyboard, component
@@ -306,6 +368,170 @@ export const views = {
     },
     expectedStory: "Settings App / Group/Appearance",
     expectedBackend: "pbTui",
+  },
+
+  // ------------------------------------------------------------------------
+  // CHRM-M3: spec-pane surfaces (View / Comment / Edit).
+  //
+  // Each setup:
+  //   1. Ensures Pages section is expanded (it already is by default,
+  //      but the guard protects against future default changes).
+  //   2. Ensures the Task App / Pages group is expanded.
+  //   3. Selects the Inbox story (the canonical brief-having story).
+  //   4. Flips the top-bar Surface chip to Spec; the spec pane mounts
+  //      reactively and TipTap renders the brief markdown.
+  //   5. (Comment/Edit) Flips the mode chip to the target mode.
+  //   6. (Comment) Programmatically selects a paragraph in the TipTap
+  //      DOM so the comment popover opens.
+  //
+  // The brief render is decoupled from the per-backend launchers — Web
+  // is the only backend whose iframe matters here, and the spec pane
+  // does not display an iframe (it renders the brief's markdown
+  // through TipTap directly). expectedStory/expectedBackend stay
+  // empty because verifyExpectedState gates on the iframe's data-
+  // attributes; the spec pane's iframe state is undefined.
+  // ------------------------------------------------------------------------
+
+  "spec-pane-view": {
+    description:
+      "Spec pane in View mode — TipTap rendering the Inbox brief markdown",
+    setup: async (page) => {
+      await ensureSectionExpanded(page, "Pages");
+      await ensureGroupExpanded(page, "Task App / Pages");
+      await selectStory(page, "Task App / Pages / Inbox");
+      await clickSurfaceChip(page, "Spec");
+      // Wait for the spec pane to mount and TipTap to attach its host.
+      // Use `attached` because at narrow viewports the centre column
+      // may report the host as hidden until the layout settles.
+      await page
+        .locator('[data-spec-pane-tiptap-host="true"]')
+        .first()
+        .waitFor({ state: "attached", timeout: 10_000 });
+      // Wait until the TipTap host actually has rendered content
+      // (the markdown sync effect ran). Without this, the screenshot
+      // can fire mid-replaceContent and capture an empty pane.
+      await page.waitForFunction(() => {
+        const host = document.querySelector(
+          '[data-spec-pane-tiptap-host="true"]',
+        );
+        if (!host) return false;
+        const pm = host.querySelector(".ProseMirror");
+        if (!pm) return false;
+        return (pm.textContent ?? "").trim().length > 0;
+      }, null, { timeout: 10_000 });
+      // Settle delay so the StarterKit CSS finishes flushing.
+      await page.waitForTimeout(200);
+    },
+    viewports: ["wide", "laptop", "narrow"],
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  "spec-pane-comment": {
+    description:
+      "Spec pane in Comment mode with the comment popover open on a programmatic selection",
+    setup: async (page) => {
+      await ensureSectionExpanded(page, "Pages");
+      await ensureGroupExpanded(page, "Task App / Pages");
+      await selectStory(page, "Task App / Pages / Inbox");
+      await clickSurfaceChip(page, "Spec");
+      await page
+        .locator('[data-spec-pane-tiptap-host="true"]')
+        .first()
+        .waitFor({ state: "attached", timeout: 10_000 });
+      // Wait for rendered content before flipping mode — TipTap's
+      // markdown sync effect must run first.
+      await page.waitForFunction(() => {
+        const host = document.querySelector(
+          '[data-spec-pane-tiptap-host="true"]',
+        );
+        if (!host) return false;
+        const pm = host.querySelector(".ProseMirror");
+        return pm && (pm.textContent ?? "").trim().length > 0;
+      }, null, { timeout: 10_000 });
+      await clickModeChip(page, "Comment");
+      // Select a paragraph in the rendered ProseMirror DOM so the
+      // comment popover opens. We pick the first <p> whose text is
+      // long enough to make the selection visible in the screenshot.
+      await page.evaluate(() => {
+        const host = document.querySelector(
+          '[data-spec-pane-tiptap-host="true"]',
+        );
+        if (!host) throw new Error("spec-pane host missing");
+        const pm = host.querySelector(".ProseMirror");
+        if (!pm) throw new Error("ProseMirror root missing");
+        const paragraphs = Array.from(pm.querySelectorAll("p"));
+        const target = paragraphs.find(
+          (p) => (p.textContent ?? "").trim().length > 40,
+        ) ?? paragraphs[0];
+        if (!target) throw new Error("no paragraph available for selection");
+        // Scroll the target into view so the popover anchors inside
+        // the captured viewport.
+        target.scrollIntoView({ behavior: "instant", block: "center" });
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        sel.addRange(range);
+        // The CommentPopoverVM listens for selectionchange on the
+        // editor (TipTap exposes onSelectionUpdate). Some browsers
+        // fire selectionchange asynchronously when the selection is
+        // built programmatically; dispatch a synchronous one for
+        // determinism.
+        document.dispatchEvent(new Event("selectionchange", {
+          bubbles: true,
+        }));
+        // Also nudge TipTap's editor: setting the selection on the
+        // contenteditable host fires `mouseup` listeners that many
+        // popover libraries hook into.
+        target.dispatchEvent(new MouseEvent("mouseup", {
+          bubbles: true,
+          cancelable: true,
+        }));
+      });
+      // Wait for the popover to mount + become visible.
+      await page
+        .locator('[data-spec-comment-popover]')
+        .first()
+        .waitFor({ state: "visible", timeout: 5_000 });
+      await page.waitForTimeout(200);
+    },
+    viewports: ["wide", "laptop"],
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  "spec-pane-edit": {
+    description:
+      "Spec pane in Edit mode with the CHRM-M4 formatting toolbar visible",
+    setup: async (page) => {
+      await ensureSectionExpanded(page, "Pages");
+      await ensureGroupExpanded(page, "Task App / Pages");
+      await selectStory(page, "Task App / Pages / Inbox");
+      await clickSurfaceChip(page, "Spec");
+      await page
+        .locator('[data-spec-pane-tiptap-host="true"]')
+        .first()
+        .waitFor({ state: "attached", timeout: 10_000 });
+      await page.waitForFunction(() => {
+        const host = document.querySelector(
+          '[data-spec-pane-tiptap-host="true"]',
+        );
+        if (!host) return false;
+        const pm = host.querySelector(".ProseMirror");
+        return pm && (pm.textContent ?? "").trim().length > 0;
+      }, null, { timeout: 10_000 });
+      await clickModeChip(page, "Edit");
+      // Wait for the CHRM-M4 toolbar to mount.
+      await page
+        .locator('[data-spec-editor-toolbar="true"]')
+        .first()
+        .waitFor({ state: "visible", timeout: 5_000 });
+      await page.waitForTimeout(200);
+    },
+    viewports: ["wide", "laptop", "narrow"],
+    expectedStory: "",
+    expectedBackend: "",
   },
 
   // ------------------------------------------------------------------------
