@@ -56,10 +56,13 @@
         line-height: 1.6;
         color: #E8E9F0;
         /* Constrain prose to a comfortable reading column. 760 px
-         * approximates 60-80ch at 14 px body. Centred via auto
-         * margins; the surrounding spec pane keeps its own padding. */
+         * approximates 60-80ch at 14 px body. Wave B: left-align
+         * via `margin: 0` instead of `margin: 0 auto` so the prose
+         * hugs the spec pane's left padding and the chrome bar's
+         * trailing-edge controls don't visually disconnect from
+         * the reading column. */
         max-width: 760px;
-        margin: 0 auto;
+        margin: 0;
         padding-bottom: 32px;
       }
       [data-spec-pane-tiptap-host="true"] .ProseMirror:focus {
@@ -199,6 +202,14 @@
         background: #1D1D28;
         font-weight: 600;
       }
+      /* Wave B: align the CHRM-M4 formatting toolbar with the prose
+       * column below it. Without this the toolbar sits at column-start
+       * while the prose (which has its own max-width) feels visually
+       * disconnected. 760 px max-width matches the ProseMirror. */
+      [data-spec-editor-toolbar="true"] {
+        max-width: 760px;
+      }
+
       /* Custom scrollbar for the spec pane wrapper. */
       [data-spec-pane-tiptap="true"]::-webkit-scrollbar {
         width: 10px;
