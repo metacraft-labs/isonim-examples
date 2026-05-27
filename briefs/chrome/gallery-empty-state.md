@@ -9,6 +9,7 @@ coversPreviews:
 captureViewports:
   - { width: 1920, height: 1080, label: "wide" }
   - { width: 1440, height: 900,  label: "laptop" }
+  - { width: 375,  height: 812,  label: "narrow" }
 reviewerSchemaVersion: 1
 scoringDimensions:
   - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
@@ -27,13 +28,21 @@ selected story's brief, the overlay shows an empty-state panel
 instead of a tile grid.
 
 Captured by `editor-screenshot.mjs` view `gallery-empty-state` at
-viewports `wide`, `laptop`: files
-`screenshots/gallery-empty-state-{wide,laptop}.png`.
+viewports `wide`, `laptop`, `narrow`: files
+`screenshots/gallery-empty-state-{wide,laptop,narrow}.png`.
 
-Narrow viewport (375 px) is intentionally out of scope for CHRM-M6 —
-the editor chrome collapses to sidebar-only at narrow widths, making
-the gallery unreachable. A drawer / modal collapse for narrow widths
-is tracked as a separate architectural follow-up.
+CHRM-M7 closes the narrow-viewport gap: at ≤768 px widths the
+editor collapses to sidebar-only and the chrome bar (which holds
+the chrome-resident 🕘 history button) is hidden. The narrow build
+surfaces a duplicate history button in the sidebar header
+(class `editor-sidebar-history-narrow`, attribute
+`data-design-review-history-button-sidebar="true"`); clicking it
+mounts the gallery as a full-viewport modal drawer attached to
+`<body>` with `position: fixed`, `inset: 56px 0 0 0`, and an
+explicit close chip (`data-design-review-gallery-close="true"`) in
+the top-right corner. The host carries
+`data-gallery-mount-mode="drawer"` at narrow widths;
+`data-gallery-mount-mode="inline"` at wide/laptop.
 
 ## Design Goals
 
@@ -66,10 +75,17 @@ is tracked as a separate architectural follow-up.
 - **Status footer** reads `<briefId> · 0 captures` in a muted tone
   at the bottom of the overlay, so the reviewer always knows which
   brief the gallery is bound to.
-- **Narrow viewport (375 px)**: deferred. See the note in
-  "What You're Reviewing" — narrow-width gallery is a separate
-  architectural follow-up (drawer / modal collapse) that CHRM-M6
-  does not attempt.
+- **Narrow viewport (375 px)** (CHRM-M7): the gallery mounts as a
+  full-viewport modal drawer attached to `<body>` (`position: fixed;
+  inset: 56px 0 0 0;`) so it overlays the sidebar rather than living
+  inside the (hidden) centre column. The 56 px top inset leaves the
+  sidebar header strip (search input + the sidebar-resident history
+  button) visible so the user retains a sense of location. The
+  drawer's top-right corner carries a 32 × 32 px close chip
+  (`data-design-review-gallery-close="true"`) since ESC isn't
+  reliable on touch devices. The empty-state heading + subtitle copy
+  is identical to wide/laptop; the status footer is identical;
+  status footer and toolbar may stack on two rows if needed.
 
 ## Color Expectations
 

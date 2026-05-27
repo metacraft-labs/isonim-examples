@@ -1344,11 +1344,16 @@ export const views = {
         .first()
         .waitFor({ state: "visible", timeout: 10_000 });
     },
-    // CHRM-M6 Wave C — narrow viewport (375 px) dropped: the editor
-    // chrome collapses to sidebar-only at narrow widths, so the
-    // gallery overlay is unreachable. A drawer / modal collapse for
-    // narrow widths is tracked as a separate architectural follow-up.
-    viewports: ["wide", "laptop"],
+    // CHRM-M7 — narrow viewport (375 px) re-enabled. At narrow widths
+    // the editor's CSS collapses the centre column to display:none, so
+    // the chrome-bar history button is unreachable. CHRM-M7 surfaces a
+    // sidebar-resident history button and re-parents the gallery host
+    // to <body> with position:fixed so the overlay still mounts. The
+    // ``clickHistoryButton`` helper above uses ``state: "attached"`` +
+    // ``dispatchEvent`` so it still fires the handler on the
+    // chrome-bar button regardless of visibility (and the
+    // narrow-resident sidebar button drives the same signal anyway).
+    viewports: ["wide", "laptop", "narrow"],
     expectedStory: "",
     expectedBackend: "",
   },
@@ -1409,11 +1414,10 @@ export const views = {
         // captures.
       }
     },
-    // CHRM-M6 Wave C — narrow viewport (375 px) dropped: the editor
-    // chrome collapses to sidebar-only at narrow widths, so the
-    // gallery overlay is unreachable. A drawer / modal collapse for
-    // narrow widths is tracked as a separate architectural follow-up.
-    viewports: ["wide", "laptop"],
+    // CHRM-M7 — narrow viewport (375 px) re-enabled. See the
+    // gallery-empty-state view declaration above for the rationale +
+    // mechanism (sidebar history button + drawer mount-mode).
+    viewports: ["wide", "laptop", "narrow"],
     expectedStory: "",
     expectedBackend: "",
   },

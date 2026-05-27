@@ -9,6 +9,7 @@ coversPreviews:
 captureViewports:
   - { width: 1920, height: 1080, label: "wide" }
   - { width: 1440, height: 900,  label: "laptop" }
+  - { width: 375,  height: 812,  label: "narrow" }
 reviewerSchemaVersion: 1
 scoringDimensions:
   - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
@@ -32,13 +33,18 @@ treatment:
 
 Captured by `editor-screenshot.mjs` views `gallery-grid` and
 `gallery-full-tab` at the listed viewports: files
-`screenshots/gallery-grid-{wide,laptop}.png` and
-`screenshots/gallery-full-tab-{wide,laptop}.png`.
+`screenshots/gallery-grid-{wide,laptop,narrow}.png` and
+`screenshots/gallery-full-tab-{wide,laptop,narrow}.png`.
 
-Narrow viewport (375 px) is intentionally out of scope for CHRM-M6 —
-the editor chrome collapses to sidebar-only at narrow widths, making
-the gallery unreachable. A drawer / modal collapse for narrow widths
-is tracked as a separate architectural follow-up.
+CHRM-M7 closes the narrow-viewport gap: at ≤768 px widths the
+gallery mounts as a full-viewport modal drawer attached to `<body>`
+with `position: fixed`, `inset: 56px 0 0 0`, summoned from the
+sidebar-resident history button
+(`data-design-review-history-button-sidebar="true"`). The host
+carries `data-gallery-mount-mode="drawer"` at narrow widths and
+`data-gallery-mount-mode="inline"` at wide/laptop. A 32 × 32 px
+close chip lives at the drawer's top-right corner so touch users
+can dismiss without ESC.
 
 ## Design Goals
 
@@ -71,10 +77,18 @@ is tracked as a separate architectural follow-up.
   family as the mode chips) positioned at the top-left of the
   overlay body, with ≥8 px vertical breathing room from the
   toolbar above.
-- **Narrow viewport (375 px)**: deferred. See the note in
-  "What You're Reviewing" — narrow-width gallery is a separate
-  architectural follow-up (drawer / modal collapse) that CHRM-M6
-  does not attempt.
+- **Narrow viewport (375 px)** (CHRM-M7): the gallery mounts as a
+  full-viewport modal drawer (`position: fixed`,
+  `inset: 56px 0 0 0`, `z-index: 9000`) re-parented to `<body>` so
+  it paints above the sidebar (the centre column it normally lives
+  in is hidden at narrow widths via the `@media (max-width: 768px)`
+  CSS rule). The 56 px top inset leaves the sidebar header strip
+  visible so the user keeps a sense of location. Tile grid may
+  reflow to a single tile per row at this width; the toolbar may
+  wrap onto two rows. Status footer and back button are unchanged.
+  A visible 32 × 32 px close chip
+  (`data-design-review-gallery-close="true"`) anchors the
+  drawer's top-right corner.
 
 ## Color Expectations
 
