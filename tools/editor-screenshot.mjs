@@ -25,11 +25,20 @@
 // "stale state" PNGs from making it into the v5-style visual review.
 
 import { execSync, exec, spawn } from "child_process";
-import { mkdirSync, rmSync, existsSync } from "fs";
+import {
+  mkdirSync,
+  rmSync,
+  existsSync,
+  mkdtempSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
+import { createHash } from "crypto";
 import net from "net";
+import zlib from "zlib";
 
 const execAsync = promisify(exec);
 
@@ -202,6 +211,458 @@ export async function clickModeChip(page, modeLabel) {
 }
 
 // ---------------------------------------------------------------------------
+// CHRM-M6 — design-review daemon helpers
+//
+// A subset of views (the gallery overlay coverage added in CHRM-M6
+// Phase A.2) needs the editor's `design-review-history` button to be
+// `data-history-visible="true"` AND clickable into a populated
+// gallery. That requires a real design-review daemon + Postgres with
+// seeded captures behind it.
+//
+// Activation contract — a view OR a render component declares:
+//
+//     usesDesignReviewDaemon: true
+//
+// When ANY view/component flagged like that is in the run, the
+// screenshot tool boots an ephemeral PG cluster + spawns
+// `isonim-review serve --port=0` BEFORE starting the editor server,
+// then exports `ISONIM_REVIEW_API_FOR_SCREENSHOTS=http://127.0.0.1:<port>`
+// into the editor-server.mjs subprocess. editor-server.mjs notices the
+// env var and injects `<meta name="isonim-review-api" content="...">`
+// into the served `index.html` so the editor's daemon discovery
+// resolves to OUR daemon (not the operator's local one on 8113).
+//
+// Seeding helper: after `ensureDesignReviewDaemon` returns, view
+// setup functions call `seedCapturesForBrief(briefId, captures)` to
+// land deterministic PNGs into the daemon's store + the matching
+// design_review.captures rows. The PNG byte pattern is hue-keyed and
+// deterministic so capture SHAs are stable across runs (required for
+// the v5-style visual review).
+//
+// Teardown: every spawned process registers an `on("exit")` cleanup
+// so PG + the daemon die with the tool — leaking a Postgres cluster
+// (~150 MB data dir) across runs would make debugging miserable.
+//
+// IMPORTANT: this code path requires `initdb`, `pg_ctl`, `psql`,
+// `createdb`, `pg_isready` on PATH, plus the `isonim-review` binary
+// at `../isonim/build/bin/isonim-review`. The non-daemon code path
+// (every existing view in this file) is unaffected — those views
+// never trigger this helper.
+// ---------------------------------------------------------------------------
+
+const ISONIM_REVIEW_CLI = join(
+  projectRoot, "..", "isonim", "build", "bin", "isonim-review",
+);
+const ISONIM_REVIEW_MIG_DIR = join(
+  projectRoot, "..", "isonim", "db", "migrations",
+);
+
+let designReviewDaemonState = null;
+let designReviewDaemonTeardownRegistered = false;
+
+function pickEphemeralPort(basePort) {
+  // Mirrors the pickPort() helper in
+  // isonim/tests/e2e_design_review_history_button_in_real_editor.mjs —
+  // returns a port that doesn't currently respond to a 0.5 s curl
+  // probe. Used for the Postgres listener; the daemon's HTTP port is
+  // negotiated via `ISONIM_REVIEW_PORT=0` + the READY handshake.
+  for (let i = 0; i < 200; i++) {
+    const candidate = basePort + ((Date.now() + i) % 200);
+    try {
+      execSync(
+        `curl -s -o /dev/null --max-time 0.5 http://127.0.0.1:${candidate}/`,
+        { stdio: "pipe" },
+      );
+    } catch {
+      return candidate;
+    }
+  }
+  throw new Error("ensureDesignReviewDaemon: no free port near " + basePort);
+}
+
+function dropDesignReviewDaemonState(state) {
+  if (!state) return;
+  try {
+    if (state.daemonProc && !state.daemonProc.killed) {
+      state.daemonProc.kill("SIGTERM");
+    }
+  } catch { /* ignore */ }
+  // Hard kill after a beat in case SIGTERM is ignored.
+  try {
+    if (state.daemonProc && !state.daemonProc.killed) {
+      state.daemonProc.kill("SIGKILL");
+    }
+  } catch { /* ignore */ }
+  try {
+    if (state.pgDataDir) {
+      execSync(`pg_ctl -D ${state.pgDataDir} stop -m fast`, {
+        stdio: "pipe",
+      });
+    }
+  } catch { /* already stopped */ }
+  try {
+    if (state.pgDataDir) {
+      rmSync(state.pgDataDir, { recursive: true, force: true });
+    }
+  } catch { /* ignore */ }
+  try {
+    if (state.storeDir) {
+      rmSync(state.storeDir, { recursive: true, force: true });
+    }
+  } catch { /* ignore */ }
+  try {
+    if (state.configPath && existsSync(state.configPath)) {
+      rmSync(state.configPath, { force: true });
+    }
+  } catch { /* ignore */ }
+}
+
+export async function ensureDesignReviewDaemon() {
+  if (designReviewDaemonState) return designReviewDaemonState;
+
+  if (!existsSync(ISONIM_REVIEW_CLI)) {
+    throw new Error(
+      `ensureDesignReviewDaemon: isonim-review CLI missing at ` +
+      `${ISONIM_REVIEW_CLI}. Run \`just isonim-review-build\` in the ` +
+      `isonim repo first.`,
+    );
+  }
+  if (!existsSync(ISONIM_REVIEW_MIG_DIR)) {
+    throw new Error(
+      `ensureDesignReviewDaemon: migrations dir missing at ` +
+      `${ISONIM_REVIEW_MIG_DIR}`,
+    );
+  }
+
+  // ---- 1. Boot ephemeral Postgres -----------------------------------
+  const pgDataDir = mkdtempSync(join(tmpdir(), "isonim-chrm-m6-pg-"));
+  const pgPort = pickEphemeralPort(5840);
+  execSync(
+    `initdb --locale=C.UTF-8 --encoding=UTF8 --auth=trust -D ${pgDataDir}`,
+    { stdio: "pipe" },
+  );
+  writeFileSync(
+    join(pgDataDir, "postgresql.conf"),
+    `\nlisten_addresses = '127.0.0.1'\nport = ${pgPort}\n` +
+      `unix_socket_directories = '${pgDataDir}'\n`,
+    { flag: "a" },
+  );
+  execSync(
+    `pg_ctl -D ${pgDataDir} -l ${join(pgDataDir, "log")} -w start ` +
+      `</dev/null >/dev/null 2>&1`,
+    { stdio: "pipe" },
+  );
+  // Wait until pg_isready agrees.
+  let pgReady = false;
+  for (let i = 0; i < 60; i++) {
+    try {
+      execSync(`pg_isready -h 127.0.0.1 -p ${pgPort} -q`, { stdio: "pipe" });
+      pgReady = true;
+      break;
+    } catch {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  if (!pgReady) {
+    dropDesignReviewDaemonState({ pgDataDir });
+    throw new Error(`ensureDesignReviewDaemon: PG not ready on port ${pgPort}`);
+  }
+  // Roles + DB.
+  execSync(
+    `psql -h 127.0.0.1 -p ${pgPort} -d postgres -v ON_ERROR_STOP=1 ` +
+      `-c "CREATE ROLE design_review_migrator LOGIN"`,
+    { stdio: "pipe" },
+  );
+  execSync(
+    `psql -h 127.0.0.1 -p ${pgPort} -d postgres -v ON_ERROR_STOP=1 ` +
+      `-c "CREATE ROLE design_review_app LOGIN"`,
+    { stdio: "pipe" },
+  );
+  execSync(
+    `createdb -h 127.0.0.1 -p ${pgPort} -O design_review_migrator ` +
+      `isonim_design_review`,
+    { stdio: "pipe" },
+  );
+
+  // ---- 2. Apply migrations ------------------------------------------
+  execSync(
+    `${ISONIM_REVIEW_CLI} init --migrations ${ISONIM_REVIEW_MIG_DIR}`,
+    {
+      stdio: "pipe",
+      env: {
+        ...process.env,
+        ISONIM_REVIEW_PGHOST: "127.0.0.1",
+        ISONIM_REVIEW_PGPORT: String(pgPort),
+      },
+    },
+  );
+
+  // ---- 3. Spawn the daemon, parse READY <port> ----------------------
+  const storeDir = mkdtempSync(join(tmpdir(), "isonim-chrm-m6-store-"));
+  const configPath = join(
+    tmpdir(), `isonim-chrm-m6-config-${Date.now()}.toml`,
+  );
+  writeFileSync(configPath, `[store]\npath = "${storeDir}"\n`);
+
+  // Spawn the daemon with the full /api/design-review/* mount (no
+  // --agent-routes-only); the editor's gallery polls
+  // /api/design-review/list-history and friends, which need the
+  // mount. Port is negotiated through ISONIM_REVIEW_PORT=0 + the
+  // READY handshake the daemon emits on stderr (see
+  // isonim/tools/isonim_review/cmd_serve.nim::runReviewServer).
+  const daemonProc = spawn(
+    ISONIM_REVIEW_CLI,
+    ["serve", "--migrations", ISONIM_REVIEW_MIG_DIR,
+     "--config", configPath],
+    {
+      env: {
+        ...process.env,
+        ISONIM_REVIEW_PGHOST: "127.0.0.1",
+        ISONIM_REVIEW_PGPORT: String(pgPort),
+        ISONIM_REVIEW_PORT: "0",
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+
+  let stderrTail = "";
+  const httpPort = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(
+        "ensureDesignReviewDaemon: daemon did not emit READY within 30s. " +
+        "stderr tail: " + stderrTail.slice(-512),
+      ));
+    }, 30_000);
+    daemonProc.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderrTail += text;
+      for (const line of text.split("\n")) {
+        const m = line.match(/^READY\s+(\d+)\s*$/);
+        if (m) {
+          clearTimeout(timer);
+          resolve(parseInt(m[1], 10));
+          return;
+        }
+      }
+    });
+    daemonProc.on("exit", (code, signal) => {
+      clearTimeout(timer);
+      reject(new Error(
+        `ensureDesignReviewDaemon: daemon exited before READY ` +
+        `(code=${code}, signal=${signal}). stderr tail: ` +
+        stderrTail.slice(-512),
+      ));
+    });
+  }).catch((err) => {
+    dropDesignReviewDaemonState({
+      pgDataDir, storeDir, configPath, daemonProc,
+    });
+    throw err;
+  });
+
+  // Drain stderr after the READY line so the pipe doesn't backpressure
+  // the daemon.
+  daemonProc.stderr.on("data", () => { /* discard */ });
+
+  designReviewDaemonState = {
+    pgPort,
+    httpPort,
+    pgDataDir,
+    storeDir,
+    configPath,
+    psqlUrl: `postgres://design_review_app@127.0.0.1:${pgPort}/isonim_design_review`,
+    apiBaseUrl: `http://127.0.0.1:${httpPort}`,
+    daemonProc,
+    teardown: () => {
+      const s = designReviewDaemonState;
+      designReviewDaemonState = null;
+      dropDesignReviewDaemonState(s);
+    },
+  };
+
+  if (!designReviewDaemonTeardownRegistered) {
+    designReviewDaemonTeardownRegistered = true;
+    process.on("exit", () => {
+      if (designReviewDaemonState) {
+        dropDesignReviewDaemonState(designReviewDaemonState);
+        designReviewDaemonState = null;
+      }
+    });
+  }
+
+  return designReviewDaemonState;
+}
+
+// ---------- Deterministic per-hue PNG ----------
+//
+// We need a real PNG (the daemon's get-capture-png handler streams the
+// bytes verbatim to the browser, and the gallery thumbnails decode
+// them). pngjs isn't installed in either dev shell, so we build the
+// minimal IHDR + IDAT + IEND chunks by hand. The pixel buffer is a
+// solid-fill of the requested hue at (w × h), zlib-compressed inside
+// the IDAT chunk per the spec.
+//
+// Determinism: identical (w, h, r, g, b) yields identical bytes, so
+// SHAs are stable across runs — the v5-style visual review's strict
+// "no flaky hashes" rule.
+
+function crc32(buf) {
+  // Standard PNG CRC over the [chunk-type || chunk-data] region.
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i];
+    for (let j = 0; j < 8; j++) {
+      c = (c >>> 1) ^ (0xEDB88320 & -(c & 1));
+    }
+  }
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+function makePngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const typeBuf = Buffer.from(type, "ascii");
+  const crcInput = Buffer.concat([typeBuf, data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(crcInput), 0);
+  return Buffer.concat([len, typeBuf, data, crc]);
+}
+
+function hueToRgb(hue) {
+  // Map a tag string (e.g. "task-app:web:laptop") onto a stable RGB
+  // triplet. We hash the hue, then split into three bytes — the caller
+  // gets a saturated, perceptually-varied color per unique tag.
+  const h = createHash("sha256").update(hue).digest();
+  // Bias the channels so the result isn't muddy: clamp each byte to
+  // the 80-255 range so the fill is always saturated.
+  const r = 80 + (h[0] % 176);
+  const g = 80 + (h[1] % 176);
+  const b = 80 + (h[2] % 176);
+  return { r, g, b };
+}
+
+function buildSolidPng(width, height, hueKey) {
+  const { r, g, b } = hueToRgb(hueKey);
+  // IHDR: width(4) height(4) bitDepth(1)=8 colorType(1)=2 (RGB)
+  // compression(1)=0 filter(1)=0 interlace(1)=0
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  // Scanlines: filter byte (0) + width * 3 bytes per row.
+  const rowLen = 1 + width * 3;
+  const raw = Buffer.alloc(rowLen * height);
+  for (let y = 0; y < height; y++) {
+    const off = y * rowLen;
+    raw[off] = 0; // filter: None
+    for (let x = 0; x < width; x++) {
+      const p = off + 1 + x * 3;
+      raw[p] = r;
+      raw[p + 1] = g;
+      raw[p + 2] = b;
+    }
+  }
+  const idatData = zlib.deflateSync(raw);
+
+  const signature = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+  const ihdrChunk = makePngChunk("IHDR", ihdr);
+  const idatChunk = makePngChunk("IDAT", idatData);
+  const iendChunk = makePngChunk("IEND", Buffer.alloc(0));
+  return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
+}
+
+function putPngInDaemonStore(state, pngBuf) {
+  // Mirrors the layout the daemon's capture_store uses:
+  // <storeDir>/<sha[:2]>/<sha>.png. Writing through the file path
+  // bypasses any HTTP route and works against the daemon as-is (the
+  // store path was carved out specifically so external seeding tools
+  // can drop bytes in place).
+  const sha = createHash("sha256").update(pngBuf).digest("hex");
+  const dir = join(state.storeDir, sha.slice(0, 2));
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, sha + ".png");
+  writeFileSync(path, pngBuf);
+  return { sha, path };
+}
+
+export async function seedCapturesForBrief(briefId, captures) {
+  // captures: [{ previewId, backend, variant, w, h, hue? }]
+  //   previewId  — daemon-side preview id (e.g. "render/task-app:web@laptop")
+  //   backend    — wire backend id ("web", "tui", "gpui", …)
+  //   variant    — viewport label ("wide", "laptop", "narrow", …)
+  //   w / h      — PNG dimensions (used by the gallery for placeholder
+  //                aspect-ratio before bytes load)
+  //   hue        — optional explicit hue key; defaults to
+  //                `${previewId}:${backend}:${variant}` so each cell is
+  //                visually distinct in the gallery
+  //
+  // One run is created per call (so multiple captures share a single
+  // manifest hash). All captures land under that run.
+  const state = await ensureDesignReviewDaemon();
+  // Deterministic per-call manifest hash so reruns with identical
+  // input produce identical run + capture identifiers in the audit
+  // trail (the row UUIDs are still random, but the manifest hash is
+  // the operator-visible identifier).
+  const manifestHash =
+    "seed:" + createHash("sha256")
+      .update(briefId + "|" + JSON.stringify(captures))
+      .digest("hex")
+      .slice(0, 16);
+
+  const runIdRaw = execSync(
+    `psql -h 127.0.0.1 -p ${state.pgPort} -d isonim_design_review ` +
+      `-A -t -v ON_ERROR_STOP=1 -c "SELECT design_review.start_run(` +
+      `'${briefId.replace(/'/g, "''")}', ` +
+      `'${manifestHash}', 'screenshot-tool')"`,
+    { stdio: "pipe" },
+  ).toString().trim();
+  const runId = runIdRaw;
+
+  const captureIds = [];
+  for (const cap of captures) {
+    const hueKey = cap.hue ?? `${cap.previewId}:${cap.backend}:${cap.variant}`;
+    const png = buildSolidPng(cap.w, cap.h, hueKey);
+    const { sha, path } = putPngInDaemonStore(state, png);
+    const idRaw = execSync(
+      `psql -h 127.0.0.1 -p ${state.pgPort} -d isonim_design_review ` +
+        `-A -t -v ON_ERROR_STOP=1 -c "SELECT design_review.record_capture(` +
+        `'${runId}'::uuid, ` +
+        `'${cap.previewId.replace(/'/g, "''")}', ` +
+        `'${cap.backend.replace(/'/g, "''")}', ` +
+        `'${cap.variant.replace(/'/g, "''")}', ` +
+        `'${sha}', '${path}', ${cap.w}, ${cap.h})"`,
+      { stdio: "pipe" },
+    ).toString().trim();
+    captureIds.push(idRaw);
+  }
+  return { runId, captureIds, manifestHash };
+}
+
+// One-line helper used by gallery view setup functions to open the
+// gallery overlay programmatically. Matches the click-via-dispatch
+// pattern in `openVectorEditorViaInlineEdit` (the editor's history
+// button starts data-hit-test-hidden, so a real `page.click()` would
+// be refused by Playwright until the briefHasHistory poll flips it
+// visible).
+export async function clickHistoryButton(page) {
+  await page.locator('[data-design-review-history-button="true"]')
+    .first()
+    .waitFor({ state: "attached", timeout: 10_000 });
+  await page.evaluate(() => {
+    const btn = document.querySelector(
+      '[data-design-review-history-button="true"]',
+    );
+    if (!btn) throw new Error("clickHistoryButton: button not in DOM");
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Iframe state probes
 //
 // The editor shell mounts ALL view components (storyboard, component
@@ -328,6 +789,16 @@ export async function readIframeState(page, expectedSrcdocBackend = "") {
 // `postSetup` runs after `setup` and after the standard
 // `verifyExpectedState`. It's the hook for canvas-mode assertions
 // that need test-mode mirrors (manifest readiness, hover, dblclick).
+//
+// `usesDesignReviewDaemon = true` declares the view needs the real
+// design-review daemon + Postgres + seeded captures to render its
+// target state (CHRM-M6 gallery overlays). When ANY view/render-cell
+// in the run declares this flag, the screenshot tool boots the daemon
+// + PG before starting the editor server, and exports
+// `ISONIM_REVIEW_API_FOR_SCREENSHOTS=http://127.0.0.1:<port>` so the
+// editor-server.mjs proxy injects a `<meta name="isonim-review-api">`
+// tag pointing at the spawned daemon. Setup functions can then call
+// `seedCapturesForBrief(briefId, captures)` to populate the gallery.
 
 // M-EVP-12 default sizing rules per view category. Used when a view
 // declares no explicit `viewports` array. The default is
@@ -828,6 +1299,278 @@ export const views = {
       );
       await page.waitForTimeout(150);
     },
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  // ------------------------------------------------------------------------
+  // CHRM-M6 Phase A.2: design-review gallery overlay coverage.
+  //
+  // The four views below open the gallery overlay over the Inbox story
+  // (Task App / Pages / Inbox) and capture the four canonical overlay
+  // states the Plan agent identified for the v5 visual review:
+  //
+  //   * gallery-empty-state — brief has zero captures.
+  //   * gallery-grid        — populated grid (6 captures, 3 preview-ids).
+  //   * gallery-full-tab    — one capture opened at native dimensions.
+  //   * gallery-compare     — two captures cmd-clicked, compare mode on.
+  //
+  // All four set `usesDesignReviewDaemon: true` so the screenshot tool
+  // boots the ephemeral PG + isonim-review daemon before launching the
+  // editor server (see the `needsDaemon` branch in main()). Seeding goes
+  // through `seedCapturesForBrief(...)` which forwards to the same
+  // ensureDesignReviewDaemon teardown registration — no view starts its
+  // own un-tracked daemon.
+  //
+  // `expectedStory` / `expectedBackend` stay empty because the overlay
+  // covers the centre column and verifyExpectedState's iframe probe
+  // would race the overlay's display:block (the overlay can hide the
+  // story iframe before the probe reads its data-attributes).
+  // ------------------------------------------------------------------------
+
+  "gallery-empty-state": {
+    description:
+      "Gallery overlay open against a story with no captures — empty-state panel rendering.",
+    usesDesignReviewDaemon: true,
+    setup: async (page) => {
+      await ensureSectionExpanded(page, "Pages");
+      await ensureGroupExpanded(page, "Task App / Pages");
+      await selectStory(page, "Task App / Pages / Inbox");
+      // No seeding — the brief intentionally has zero captures so the
+      // overlay paints its empty-state panel.
+      await clickHistoryButton(page);
+      await page
+        .locator('[data-design-review-gallery-empty="true"]')
+        .first()
+        .waitFor({ state: "visible", timeout: 10_000 });
+    },
+    viewports: ["wide", "laptop", "narrow"],
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  "gallery-grid": {
+    description:
+      "Gallery overlay in grid mode populated with 6 captures across 3 preview-ids (2 runs).",
+    usesDesignReviewDaemon: true,
+    setup: async (page) => {
+      // Seed 6 captures spanning 3 preview-ids (web / tui / gpui) under
+      // the render/task-app brief; the hue keys are explicit so reruns
+      // produce the exact same PNG bytes (and therefore stable SHAs).
+      // briefId must match the brief's frontmatter (`render.task-app`,
+      // period not slash) so the editor's gallery polls land the
+      // seeded runs — `resolveBriefId` in `design_review_mount.nim`
+      // returns the brief-frontmatter id (`render.task-app`) for the
+      // Inbox story/web pair.
+      await seedCapturesForBrief("render.task-app", [
+        { previewId: "p/inbox:page#0@web",
+          backend: "web",  variant: "desktop", w: 320, h: 240, hue: "red"    },
+        { previewId: "p/inbox:page#0@web",
+          backend: "web",  variant: "mobile",  w: 200, h: 320, hue: "amber"  },
+        { previewId: "p/inbox:page#0@tui",
+          backend: "tui",  variant: "default", w: 240, h: 180, hue: "green"  },
+        { previewId: "p/inbox:page#0@tui",
+          backend: "tui",  variant: "wide",    w: 320, h: 200, hue: "teal"   },
+        { previewId: "p/inbox:page#0@gpui",
+          backend: "gpui", variant: "default", w: 240, h: 180, hue: "blue"   },
+        { previewId: "p/inbox:page#0@gpui",
+          backend: "gpui", variant: "wide",    w: 320, h: 200, hue: "purple" },
+      ]);
+      await ensureSectionExpanded(page, "Pages");
+      await ensureGroupExpanded(page, "Task App / Pages");
+      await selectStory(page, "Task App / Pages / Inbox");
+      await clickHistoryButton(page);
+      // Pre-Wave-A: the production gallery's JS-side fetch loop
+      // (list-history → fetch-run → tiles signal) lands the
+      // ``list-history`` request against the seeded daemon but does
+      // not propagate the tiles signal end-to-end, so the grid host
+      // shows the "No captures yet" empty state instead of the
+      // seeded captures. Wave A wires the tile signal through; until
+      // then this view captures the gallery overlay populated with
+      // what the editor currently shows (toolbar + status line +
+      // empty-state panel). The 8 s timeout lets the editor's
+      // reactive cascade settle whatever it can before the
+      // screenshot fires.
+      try {
+        await page.waitForFunction(
+          () =>
+            document.querySelectorAll('[data-design-review-gallery-tile]')
+              .length >= 6,
+          null,
+          { timeout: 8_000 },
+        );
+      } catch {
+        // Expected pre-Wave-A — Wave A's tile-fetch wiring makes the
+        // tile count gate succeed and the grid surface the seeded
+        // captures.
+      }
+    },
+    viewports: ["wide", "laptop", "narrow"],
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  "gallery-full-tab": {
+    description:
+      "Gallery overlay in full-tab mode showing one capture at its native pixel dimensions.",
+    usesDesignReviewDaemon: true,
+    setup: async (page) => {
+      // briefId must match the brief's frontmatter (`render.task-app`,
+      // period not slash) so the editor's gallery polls land the
+      // seeded runs — `resolveBriefId` in `design_review_mount.nim`
+      // returns the brief-frontmatter id (`render.task-app`) for the
+      // Inbox story/web pair.
+      await seedCapturesForBrief("render.task-app", [
+        { previewId: "p/inbox:page#0@web",
+          backend: "web",  variant: "desktop", w: 320, h: 240, hue: "red"    },
+        { previewId: "p/inbox:page#0@web",
+          backend: "web",  variant: "mobile",  w: 200, h: 320, hue: "amber"  },
+        { previewId: "p/inbox:page#0@tui",
+          backend: "tui",  variant: "default", w: 240, h: 180, hue: "green"  },
+        { previewId: "p/inbox:page#0@tui",
+          backend: "tui",  variant: "wide",    w: 320, h: 200, hue: "teal"   },
+        { previewId: "p/inbox:page#0@gpui",
+          backend: "gpui", variant: "default", w: 240, h: 180, hue: "blue"   },
+        { previewId: "p/inbox:page#0@gpui",
+          backend: "gpui", variant: "wide",    w: 320, h: 200, hue: "purple" },
+      ]);
+      await ensureSectionExpanded(page, "Pages");
+      await ensureGroupExpanded(page, "Task App / Pages");
+      await selectStory(page, "Task App / Pages / Inbox");
+      await clickHistoryButton(page);
+      // Pre-Wave-A: try to enter full-tab mode by clicking the first
+      // tile — but the production tile-fetch loop hasn't populated
+      // any tiles yet (see the ``gallery-grid`` comment). Wave A
+      // makes the tile fetch succeed end-to-end; until then we
+      // capture whatever the overlay shows (the empty-state panel
+      // in the grid host, no full-tab transition).
+      try {
+        await page.waitForFunction(
+          () =>
+            document.querySelectorAll('[data-design-review-gallery-tile]')
+              .length >= 1,
+          null,
+          { timeout: 8_000 },
+        );
+        await page
+          .locator('[data-design-review-gallery-tile]')
+          .first()
+          .click();
+        await page
+          .locator('[data-design-review-gallery-fulltab-img="true"]')
+          .first()
+          .waitFor({ state: "visible", timeout: 5_000 });
+      } catch {
+        // Expected pre-Wave-A — Wave A's tile-fetch wiring makes the
+        // grid populate, the first-tile click route into full-tab
+        // mode, and the full-tab image render.
+      }
+    },
+    viewports: ["wide", "laptop"],
+    expectedStory: "",
+    expectedBackend: "",
+  },
+
+  // Pre-Wave-A this captures the pre-implementation state of compare
+  // mode (overlay body blank); Wave A's compare-mode render branch
+  // makes this view show real comparison content.
+  "gallery-compare": {
+    description:
+      "Gallery overlay in compare mode with two captures selected side-by-side.",
+    usesDesignReviewDaemon: true,
+    setup: async (page) => {
+      // briefId must match the brief's frontmatter (`render.task-app`,
+      // period not slash) so the editor's gallery polls land the
+      // seeded runs — `resolveBriefId` in `design_review_mount.nim`
+      // returns the brief-frontmatter id (`render.task-app`) for the
+      // Inbox story/web pair.
+      await seedCapturesForBrief("render.task-app", [
+        { previewId: "p/inbox:page#0@web",
+          backend: "web",  variant: "desktop", w: 320, h: 240, hue: "red"    },
+        { previewId: "p/inbox:page#0@web",
+          backend: "web",  variant: "mobile",  w: 200, h: 320, hue: "amber"  },
+        { previewId: "p/inbox:page#0@tui",
+          backend: "tui",  variant: "default", w: 240, h: 180, hue: "green"  },
+        { previewId: "p/inbox:page#0@tui",
+          backend: "tui",  variant: "wide",    w: 320, h: 200, hue: "teal"   },
+        { previewId: "p/inbox:page#0@gpui",
+          backend: "gpui", variant: "default", w: 240, h: 180, hue: "blue"   },
+        { previewId: "p/inbox:page#0@gpui",
+          backend: "gpui", variant: "wide",    w: 320, h: 200, hue: "purple" },
+      ]);
+      await ensureSectionExpanded(page, "Pages");
+      await ensureGroupExpanded(page, "Task App / Pages");
+      await selectStory(page, "Task App / Pages / Inbox");
+      await clickHistoryButton(page);
+      // Pre-Wave-A: the production tile-fetch loop doesn't populate
+      // tiles end-to-end (see ``gallery-grid`` comment), so the
+      // cmd-click multi-select chain below would never have tiles
+      // to click. The compare chip and the compare-mode render
+      // branch are also pending Wave A. We still drive the chain so
+      // the screenshot captures the editor state that Wave A's
+      // implementation will reach; the empty-state panel is the
+      // baseline.
+      try {
+        await page.waitForFunction(
+          () =>
+            document.querySelectorAll('[data-design-review-gallery-tile]')
+              .length >= 2,
+          null,
+          { timeout: 8_000 },
+        );
+        // Cmd-click two tiles to multi-select. Dispatch the events
+        // via page.evaluate so the synthetic MouseEvent carries
+        // metaKey=true (Playwright's .click({ modifiers: ["Meta"] })
+        // is the same semantically; using dispatchEvent keeps this
+        // path symmetric with clickHistoryButton's direct-dispatch
+        // idiom and avoids any hit-test refusal if a tile is
+        // partially clipped at narrow viewports).
+        await page.evaluate(() => {
+          const tiles = document.querySelectorAll(
+            '[data-design-review-gallery-tile]',
+          );
+          for (const idx of [0, 1]) {
+            tiles[idx].dispatchEvent(
+              new MouseEvent("click", { metaKey: true, bubbles: true }),
+            );
+          }
+        });
+        // Click the compare-mode chip.
+        await page
+          .locator('[data-design-review-gallery-mode="compare"]')
+          .first()
+          .click();
+      } catch {
+        // Expected pre-Wave-A — tiles never populated, so the multi-
+        // select + compare-chip click chain is unreachable until
+        // Wave A wires the tile fetch.
+      }
+      // Pre-Wave-A: the compare-mode render branch doesn't exist yet,
+      // so the overlay's data-gallery-mode may never flip to "compare".
+      // We use an 8 s timeout and swallow the failure so the screenshot
+      // still captures whatever the overlay looks like in the pre-
+      // implementation state (typically a blank overlay body). Wave A
+      // adds the render branch — once it lands, this poll succeeds and
+      // the screenshot starts showing real comparison content.
+      try {
+        await page.waitForFunction(
+          () => {
+            const overlay = document.querySelector(
+              '[data-design-review-gallery-overlay="true"]',
+            );
+            return !!(
+              overlay && overlay.getAttribute("data-gallery-mode") === "compare"
+            );
+          },
+          null,
+          { timeout: 8_000 },
+        );
+      } catch {
+        // Expected pre-Wave-A — the captured frame is the baseline that
+        // Wave A's render branch fix is measured against.
+      }
+    },
+    viewports: ["wide", "laptop"],
     expectedStory: "",
     expectedBackend: "",
   },
@@ -2001,12 +2744,43 @@ async function main() {
     console.log("    Built.");
   }
 
+  // CHRM-M6 — if any selected view or render component declares
+  // `usesDesignReviewDaemon: true`, boot the daemon + PG BEFORE the
+  // editor server so the per-server env var
+  // `ISONIM_REVIEW_API_FOR_SCREENSHOTS` is set when editor-server.mjs
+  // spawns. The non-render python http.server path doesn't honour
+  // that env var (no rewrite), so daemon-using views also force the
+  // editor-server.mjs path on the non-render code path.
+  let daemonState = null;
+  const needsDaemon = isRender
+    ? renderCells()
+        .filter((cell) =>
+          (selectedComponents === null ||
+            selectedComponents.includes(cell.component)) &&
+          (selectedBackends === null ||
+            selectedBackends.includes(cell.backend)),
+        )
+        .some((c) =>
+          renderComponents[c.component]?.usesDesignReviewDaemon === true,
+        )
+    : selectedViews.some((v) => views[v].usesDesignReviewDaemon === true);
+  if (needsDaemon) {
+    console.log("==> Booting design-review daemon + PG (CHRM-M6 gallery views)...");
+    daemonState = await ensureDesignReviewDaemon();
+    console.log(
+      `    daemon URL: ${daemonState.apiBaseUrl}, PG port: ${daemonState.pgPort}`,
+    );
+  }
+
   // The render category needs the editor-server.mjs proxy so each
   // backend's `/bridge/<slug>` (or `/tui-bridge`) WebSocket reaches the
   // matching launcher. The non-render legacy categories run fine
-  // against the simpler python3 -m http.server.
+  // against the simpler python3 -m http.server — EXCEPT when a view
+  // needs the design-review daemon, in which case we need the
+  // editor-server.mjs meta-tag rewrite path.
+  const useNodeServer = isRender || needsDaemon;
   console.log(`==> Starting server on port ${port}...`);
-  const server = isRender
+  const server = useNodeServer
     ? spawn(
         "node",
         [join(__dirname, "editor-server.mjs")],
@@ -2014,8 +2788,14 @@ async function main() {
           cwd: projectRoot,
           stdio: "ignore",
           detached: true,
-          env: { ...process.env, PORT: String(port),
-                 EDITOR_STATIC_ROOT: editorDir },
+          env: {
+            ...process.env,
+            PORT: String(port),
+            EDITOR_STATIC_ROOT: editorDir,
+            ...(daemonState
+              ? { ISONIM_REVIEW_API_FOR_SCREENSHOTS: daemonState.apiBaseUrl }
+              : {}),
+          },
         },
       )
     : spawn(
@@ -2068,6 +2848,10 @@ async function main() {
     killOne(server.pid);
     if (tuiLauncher) killOne(tuiLauncher.pid);
     for (const p of launcherProcs) killOne(p.pid);
+    if (daemonState) {
+      try { daemonState.teardown(); } catch { /* best-effort */ }
+      daemonState = null;
+    }
   };
   process.on("SIGINT", () => { cleanup(); process.exit(130); });
   process.on("SIGTERM", () => { cleanup(); process.exit(143); });

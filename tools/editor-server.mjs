@@ -134,8 +134,24 @@ function proxyToDaemon(req, res) {
 // so the editor's `daemon_discovery` resolves to the proxy rather than
 // to `<location.host-without-port>:8113` (the latter only works when
 // the daemon is bound to the LAN, which it isn't by default).
+//
+// CHRM-M6 opt-in: when `ISONIM_REVIEW_API_FOR_SCREENSHOTS` is set
+// (the editor-screenshot.mjs daemon path), the meta tag content is
+// REPLACED with that env var's value rather than `http://<host>`. The
+// daemon spawned by editor-screenshot.mjs binds to a per-run ephemeral
+// port (parsed via the READY handshake) — pointing the editor at it
+// directly means the editor's `daemon_discovery` fetches go straight
+// to that daemon (not through the proxy on this server). The daemon
+// already handles CORS preflight for /api/design-review/* so a cross-
+// port fetch works.
+const REVIEW_API_OVERRIDE_FOR_SCREENSHOTS =
+  process.env.ISONIM_REVIEW_API_FOR_SCREENSHOTS || "";
+
 function injectDaemonMeta(html, host) {
-  const apiBase = `http://${host}`;
+  const apiBase =
+    REVIEW_API_OVERRIDE_FOR_SCREENSHOTS.length > 0
+      ? REVIEW_API_OVERRIDE_FOR_SCREENSHOTS
+      : `http://${host}`;
   const tag = `<meta name="isonim-review-api" content="${apiBase}">`;
   return html.replace(/<head>/i, `<head>\n    ${tag}`);
 }

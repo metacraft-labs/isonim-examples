@@ -331,6 +331,18 @@ editor-screenshot-view view:
 editor-screenshot-size size:
     node tools/editor-screenshot.mjs --size {{size}}
 
+# CHRM-M6: screenshot the gallery views (requires the isonim
+# dev shell because Postgres is only available there). The screenshot
+# tool's --view flag is single-valued; iterate per view so the daemon
+# is booted (and torn down) once per invocation against an isolated
+# ephemeral PG cluster.
+editor-screenshot-gallery *FLAGS:
+    @for view in gallery-empty-state gallery-grid gallery-full-tab gallery-compare; do \
+      echo "[editor-screenshot-gallery] $view"; \
+      direnv exec ~/metacraft/isonim node tools/editor-screenshot.mjs \
+        --view $view {{FLAGS}} || exit 1; \
+    done
+
 # --- M-EVP-12: Visual feedback loop coverage ---
 #
 # `test-editor-visual-gates` is the recipe the M-EVP-12 acceptance
