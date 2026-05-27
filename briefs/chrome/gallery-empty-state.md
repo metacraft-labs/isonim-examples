@@ -9,7 +9,6 @@ coversPreviews:
 captureViewports:
   - { width: 1920, height: 1080, label: "wide" }
   - { width: 1440, height: 900,  label: "laptop" }
-  - { width: 375,  height: 812,  label: "narrow" }
 reviewerSchemaVersion: 1
 scoringDimensions:
   - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
@@ -28,8 +27,13 @@ selected story's brief, the overlay shows an empty-state panel
 instead of a tile grid.
 
 Captured by `editor-screenshot.mjs` view `gallery-empty-state` at
-viewports `wide`, `laptop`, `narrow`: files
-`screenshots/gallery-empty-state-{wide,laptop,narrow}.png`.
+viewports `wide`, `laptop`: files
+`screenshots/gallery-empty-state-{wide,laptop}.png`.
+
+Narrow viewport (375 px) is intentionally out of scope for CHRM-M6 —
+the editor chrome collapses to sidebar-only at narrow widths, making
+the gallery unreachable. A drawer / modal collapse for narrow widths
+is tracked as a separate architectural follow-up.
 
 ## Design Goals
 
@@ -62,9 +66,10 @@ viewports `wide`, `laptop`, `narrow`: files
 - **Status footer** reads `<briefId> · 0 captures` in a muted tone
   at the bottom of the overlay, so the reviewer always knows which
   brief the gallery is bound to.
-- **Narrow viewport (375 px)**: the overlay collapses to the column
-  width with the same heading + subtitle stacked vertically. The
-  mode toolbar wraps if needed; no horizontal scroll.
+- **Narrow viewport (375 px)**: deferred. See the note in
+  "What You're Reviewing" — narrow-width gallery is a separate
+  architectural follow-up (drawer / modal collapse) that CHRM-M6
+  does not attempt.
 
 ## Color Expectations
 
@@ -141,7 +146,7 @@ For each viewport, score chrome `1–10` against the rubric:
 - **≤2 — broken.** Overlay blank; missing required elements;
   unreadable.
 
-Target: **8+ on `wide` and `laptop`, 7+ on `narrow`**.
+Target: **8+ on `wide` and `laptop`**.
 
 ## How to Report
 

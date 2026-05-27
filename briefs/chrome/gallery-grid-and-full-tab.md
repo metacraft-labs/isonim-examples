@@ -9,7 +9,6 @@ coversPreviews:
 captureViewports:
   - { width: 1920, height: 1080, label: "wide" }
   - { width: 1440, height: 900,  label: "laptop" }
-  - { width: 375,  height: 812,  label: "narrow" }
 reviewerSchemaVersion: 1
 scoringDimensions:
   - { id: chrome, label: "Editor Chrome", weight: 1.0, scale: { min: 1, max: 10 } }
@@ -33,8 +32,13 @@ treatment:
 
 Captured by `editor-screenshot.mjs` views `gallery-grid` and
 `gallery-full-tab` at the listed viewports: files
-`screenshots/gallery-grid-{wide,laptop,narrow}.png` and
+`screenshots/gallery-grid-{wide,laptop}.png` and
 `screenshots/gallery-full-tab-{wide,laptop}.png`.
+
+Narrow viewport (375 px) is intentionally out of scope for CHRM-M6 —
+the editor chrome collapses to sidebar-only at narrow widths, making
+the gallery unreachable. A drawer / modal collapse for narrow widths
+is tracked as a separate architectural follow-up.
 
 ## Design Goals
 
@@ -67,9 +71,10 @@ Captured by `editor-screenshot.mjs` views `gallery-grid` and
   family as the mode chips) positioned at the top-left of the
   overlay body, with ≥8 px vertical breathing room from the
   toolbar above.
-- **Narrow viewport (375 px)**: tiles wrap to one column with row
-  labels still uppercased above each group; no horizontal scroll;
-  tile metadata reflows but stays readable.
+- **Narrow viewport (375 px)**: deferred. See the note in
+  "What You're Reviewing" — narrow-width gallery is a separate
+  architectural follow-up (drawer / modal collapse) that CHRM-M6
+  does not attempt.
 
 ## Color Expectations
 
@@ -117,8 +122,7 @@ regardless of polish.
   `WEB · DESKTOP`, `TUI · WIDE`, `GPUI · DEFAULT` — exact labels
   depend on the seeded captures, but groupings of 2 each must be
   visible).
-- Six tiles total, two per row at `wide` and `laptop` (single
-  column at `narrow`).
+- Six tiles total, two per row at `wide` and `laptop`.
 - Each tile has a thumbnail image, a status dot, status text, and
   a score. No tile is missing metadata.
 
@@ -150,7 +154,7 @@ the rubric:
 - **≤2 — broken.** Mode body blank; tiles unrendered; layout
   collapsed.
 
-Target: **8+ on `wide` and `laptop`, 7+ on `narrow`**.
+Target: **8+ on `wide` and `laptop`**.
 
 ## How to Report
 

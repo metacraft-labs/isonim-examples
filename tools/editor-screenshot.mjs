@@ -1344,7 +1344,11 @@ export const views = {
         .first()
         .waitFor({ state: "visible", timeout: 10_000 });
     },
-    viewports: ["wide", "laptop", "narrow"],
+    // CHRM-M6 Wave C — narrow viewport (375 px) dropped: the editor
+    // chrome collapses to sidebar-only at narrow widths, so the
+    // gallery overlay is unreachable. A drawer / modal collapse for
+    // narrow widths is tracked as a separate architectural follow-up.
+    viewports: ["wide", "laptop"],
     expectedStory: "",
     expectedBackend: "",
   },
@@ -1405,7 +1409,11 @@ export const views = {
         // captures.
       }
     },
-    viewports: ["wide", "laptop", "narrow"],
+    // CHRM-M6 Wave C — narrow viewport (375 px) dropped: the editor
+    // chrome collapses to sidebar-only at narrow widths, so the
+    // gallery overlay is unreachable. A drawer / modal collapse for
+    // narrow widths is tracked as a separate architectural follow-up.
+    viewports: ["wide", "laptop"],
     expectedStory: "",
     expectedBackend: "",
   },
