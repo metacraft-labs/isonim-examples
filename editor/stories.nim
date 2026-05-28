@@ -26,6 +26,7 @@
 import std/strutils
 
 import isonim/editor/types
+import isonim/editor/views/icons as editor_icons
 
 const
   TaskAppSource* = "task_app/core/vm.nim"
@@ -38,6 +39,8 @@ const
   SettingsAppToggleSource* = "settings_app/components/toggle_item.nim"
   SettingsAppChoiceSource* = "settings_app/components/choice_item.nim"
   SettingsAppNumberSource* = "settings_app/components/number_item.nim"
+  EditorChromeIconsViewsSource* = "editor_chrome/core/views.nim"
+  EditorChromeIconsVmSource* = "editor_chrome/core/vm.nim"
 
   DemoEditorWorkspaceSource* = "isonim-examples/editor/stories.nim"
 
@@ -59,6 +62,7 @@ func sourceFileFor*(group, name: string; kind: StoryKind): string =
     of "Settings App / ToggleItem": SettingsAppToggleSource
     of "Settings App / ChoiceItem": SettingsAppChoiceSource
     of "Settings App / NumberItem": SettingsAppNumberSource
+    of "Editor Chrome / Icons": EditorChromeIconsViewsSource
     else: TaskAppViewsSource
   of skPage:
     case group
@@ -94,6 +98,7 @@ func appOf*(group: string): string =
   ## Best-effort recovery of the parent demo app from a story group.
   if group.startsWith("Task App"): "task_app"
   elif group.startsWith("Settings App"): "settings_app"
+  elif group.startsWith("Editor Chrome"): "editor_chrome"
   else: ""
 
 # ---------------------------------------------------------------------------
@@ -282,6 +287,28 @@ proc buildDemoStoryGroups*(): seq[StoryGroup] =
       StoryItem(name: "Clamped",
                 description: "Value rejected below min, snapped to 10",
                 kind: skComponent, group: "Settings App / NumberItem"),
+    ])
+
+  # ---- Editor Chrome / Icons (2026-05-28) -------------------------------
+  # The chrome-icons showcase renders the editor's right-sidebar tab bar
+  # (wrench + N robots + plus, with overlaid status dots and a legend)
+  # against any of the eight icon sets registered in
+  # ``isonim/src/isonim/editor/views/icons.nim``. The preview embeds a
+  # ``<select>`` picker driven by inline JS so the user can swap icon
+  # sets without recompiling — the Component Properties panel below
+  # surfaces the same controls through the editor's auto-schema
+  # mechanism.
+  #
+  # Preview-only: the live editor's sidebar keeps using the in-house
+  # set via the ``wrenchSvg`` / ``robotSvg`` / ``plusSvg`` aliases in
+  # icons.nim.
+  groups.add StoryGroup(
+    name: "Editor Chrome / Icons", kind: skComponent, expanded: true,
+    description: "Eight icon sets compared in the editor's sidebar tab bar mock.",
+    items: @[
+      StoryItem(name: "Sidebar Tab Bar",
+                description: "Wrench + N robots + plus, with status dots, against the chosen icon set.",
+                kind: skComponent, group: "Editor Chrome / Icons"),
     ])
 
   # ---- 4. Patterns -------------------------------------------------------
@@ -1206,6 +1233,218 @@ func renderSettingsComponentHtml(group, name: string): string =
 </div>
 """
 
+func renderChromeIconsBarHtml(set: editor_icons.IconSet): string =
+  ## Build the visible tab-bar row for a given icon set. The structure
+  ## mirrors what ``editor_chrome/core/views.nim`` produces:
+  ## wrench + three robots (with status dots) + plus. The middle robot
+  ## carries the ``active`` class so the accent fill matches the live
+  ## editor's chrome.
+  result = "<div class=\"ci-bar\" role=\"toolbar\" data-icon-set=\""
+  result.add set.id
+  result.add "\">"
+  result.add "<button type=\"button\" class=\"ci-btn ci-wrench\" aria-label=\"Manual\">"
+  result.add set.wrench
+  result.add "</button>"
+  for i in 0 ..< 3:
+    let activeAttr = if i == 1: " data-active=\"true\"" else: ""
+    let dotKind =
+      if i == 0: "ci-status-active"
+      elif i == 1: "ci-status-attention"
+      else: "ci-status-idle"
+    result.add "<button type=\"button\" class=\"ci-btn ci-bot\""
+    result.add activeAttr
+    result.add " aria-label=\"Chat "
+    result.add $(i + 1)
+    result.add "\">"
+    result.add set.bot
+    result.add "<span class=\"ci-status "
+    result.add dotKind
+    result.add "\"></span></button>"
+  result.add "<button type=\"button\" class=\"ci-btn ci-plus\" aria-label=\"New chat\">"
+  result.add set.plus
+  result.add "</button>"
+  result.add "</div>"
+
+func renderChromeIconsShowcaseHtml(): string =
+  ## Build the chrome-icons showcase fragment: a header card explaining
+  ## the picker, a ``<select>`` whose ``change`` event flips a CSS
+  ## ``data-icon-set`` attribute on the wrapper (vanilla JS, no external
+  ## deps), one bar per set (hidden except for the active one), and a
+  ## legend strip showing the active set's name + license.
+  ##
+  ## The picker is *in addition to* the editor's Component Properties
+  ## panel below the preview — the panel exposes the same ``iconSet``
+  ## field via the editor's auto-schema, but the in-iframe ``<select>``
+  ## gives the user immediate feedback without a round-trip through the
+  ## editor framework's mutation pipeline.
+  var optionsHtml = ""
+  var barsHtml = ""
+  var legendHtml = ""
+  for set in editor_icons.iconSets:
+    optionsHtml.add "<option value=\""
+    optionsHtml.add set.id
+    optionsHtml.add "\""
+    if set.id == "in-house":
+      optionsHtml.add " selected"
+    optionsHtml.add ">"
+    optionsHtml.add set.label
+    optionsHtml.add "</option>"
+
+    barsHtml.add "<div class=\"ci-stage\" data-stage=\""
+    barsHtml.add set.id
+    barsHtml.add "\">"
+    barsHtml.add renderChromeIconsBarHtml(set)
+    barsHtml.add "</div>"
+
+    legendHtml.add "<div class=\"ci-legend-entry\" data-stage=\""
+    legendHtml.add set.id
+    legendHtml.add "\">"
+    legendHtml.add "<span class=\"ci-legend-label\">"
+    legendHtml.add set.label
+    legendHtml.add "</span><span class=\"ci-legend-license\">"
+    legendHtml.add set.license
+    legendHtml.add "</span></div>"
+
+  """
+<style>
+.ci-host {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px;
+  background: #15161F;
+  border: 1px solid #2A2C3A;
+  border-radius: 12px;
+  color: #ECEDF3;
+}
+.ci-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #9CA0B0;
+}
+.ci-controls label { font-weight: 500; color: #ECEDF3; }
+.ci-controls select {
+  background: #1A1B26;
+  color: #ECEDF3;
+  border: 1px solid #2A2C3A;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 13px;
+}
+.ci-stage {
+  display: none;
+  padding: 18px;
+  background: #0F1117;
+  border: 1px dashed #2A2C3A;
+  border-radius: 10px;
+}
+.ci-host[data-active-set="in-house"]  .ci-stage[data-stage="in-house"],
+.ci-host[data-active-set="lucide"]    .ci-stage[data-stage="lucide"],
+.ci-host[data-active-set="heroicons"] .ci-stage[data-stage="heroicons"],
+.ci-host[data-active-set="feather"]   .ci-stage[data-stage="feather"],
+.ci-host[data-active-set="phosphor"]  .ci-stage[data-stage="phosphor"],
+.ci-host[data-active-set="tabler"]    .ci-stage[data-stage="tabler"],
+.ci-host[data-active-set="bootstrap"] .ci-stage[data-stage="bootstrap"],
+.ci-host[data-active-set="material"]  .ci-stage[data-stage="material"] {
+  display: block;
+}
+.ci-host[data-active-set="in-house"]  .ci-legend-entry[data-stage="in-house"],
+.ci-host[data-active-set="lucide"]    .ci-legend-entry[data-stage="lucide"],
+.ci-host[data-active-set="heroicons"] .ci-legend-entry[data-stage="heroicons"],
+.ci-host[data-active-set="feather"]   .ci-legend-entry[data-stage="feather"],
+.ci-host[data-active-set="phosphor"]  .ci-legend-entry[data-stage="phosphor"],
+.ci-host[data-active-set="tabler"]    .ci-legend-entry[data-stage="tabler"],
+.ci-host[data-active-set="bootstrap"] .ci-legend-entry[data-stage="bootstrap"],
+.ci-host[data-active-set="material"]  .ci-legend-entry[data-stage="material"] {
+  display: flex;
+}
+.ci-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #1A1B26;
+  border: 1px solid #2A2C3A;
+  border-radius: 10px;
+  padding: 8px 10px;
+  width: max-content;
+}
+.ci-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #9CA0B0;
+  padding: 6px;
+  cursor: default;
+}
+.ci-btn svg { width: 18px; height: 18px; display: block; }
+.ci-btn[data-active="true"] {
+  background: #272752;
+  color: #ECEDF3;
+  border-color: #3A3A6B;
+}
+.ci-wrench { color: #C8CAD6; }
+.ci-plus { color: #7C7AED; }
+.ci-status {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid #15161F;
+}
+.ci-status-active    { background: #4CAF50; }
+.ci-status-attention { background: #FFB74D; }
+.ci-status-idle      { background: #6B6F80; }
+.ci-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.ci-legend-entry {
+  display: none;
+  align-items: baseline;
+  gap: 10px;
+}
+.ci-legend-label { color: #ECEDF3; font-weight: 500; }
+.ci-legend-license { color: #6B6F80; font-size: 11px; }
+.ci-note {
+  font-size: 11px;
+  color: #6B6F80;
+  line-height: 1.5;
+}
+</style>
+<div class="ci-host" data-active-set="in-house" id="ci-host">
+  <div class="ci-controls">
+    <label for="ci-picker">Icon set</label>
+    <select id="ci-picker">""" & optionsHtml & """</select>
+  </div>
+  """ & barsHtml & """
+  <div class="ci-legend">""" & legendHtml & """</div>
+  <div class="ci-note">Preview-only — the live editor sidebar keeps using the in-house set via the wrenchSvg / robotSvg / plusSvg aliases in icons.nim.</div>
+</div>
+<script>
+(function () {
+  var host = document.getElementById('ci-host');
+  var picker = document.getElementById('ci-picker');
+  if (!host || !picker) return;
+  picker.addEventListener('change', function (ev) {
+    host.setAttribute('data-active-set', ev.target.value);
+  });
+})();
+</script>
+"""
+
 proc renderPreviewContentHtml(item: StoryItem): string =
   ## Build the rich showcase HTML for an item. The output is a fragment
   ## (no <html>/<body>); `previewDocumentHtmlFor` wraps it.
@@ -1228,6 +1467,8 @@ proc renderPreviewContentHtml(item: StoryItem): string =
   of skComponent:
     if item.group.startsWith("Task App"):
       renderTaskComponentHtml(item.name)
+    elif item.group == "Editor Chrome / Icons":
+      renderChromeIconsShowcaseHtml()
     else:
       renderSettingsComponentHtml(item.group, item.name)
   of skPattern:
