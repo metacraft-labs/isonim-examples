@@ -19,6 +19,7 @@ when defined(macosx):
 
   import isonim_render_serve
   import isonim_render_serve/adapters/cocoa_adapter
+  import isonim_render_serve/adapters/cocoa_input_adapter
 
   import task_app/core/vm as task_vm
   import task_app/main_cocoa as task_cocoa
@@ -64,16 +65,23 @@ when defined(macosx):
             buildCocoaElementTreeManifest(capturedRoot,
               dynamicW, dynamicH))
 
-      let resizingSink = newAnyInputSink(
-        proc(event: InputEvent) {.gcsafe.} =
-          if event.kind != iekResize: return
-          if event.width <= 0 or event.height <= 0: return
-          if event.width == dynamicW and event.height == dynamicH: return
-          {.cast(gcsafe).}:
-            dynamicW = event.width
-            dynamicH = event.height
-            src.width = dynamicW
-            src.height = dynamicH)
+      # EPP-M7. See ``backends/gpui.nim`` for the rationale.
+      let onResize = proc(w, h: int) {.gcsafe.} =
+        if w <= 0 or h <= 0: return
+        if w == dynamicW and h == dynamicH: return
+        {.cast(gcsafe).}:
+          dynamicW = w
+          dynamicH = h
+          src.width = dynamicW
+          src.height = dynamicH
+
+      let capturedHitRoot = capturedRoot
+      let hitTester = proc(x, y: int): CocoaElement {.gcsafe.} =
+        {.cast(gcsafe).}:
+          capturedHitRoot
+      let inputAdapter = newCocoaInputSink(r, hitTester)
+      let dispatchingSink = newDispatchingLauncherSink(onResize,
+                                                       inputAdapter.toAny())
 
       let captTaskVm = taskAppVm
       let captSettingsVm = settingsAppVm
@@ -93,7 +101,7 @@ when defined(macosx):
           else:
             applyTaskMutation(captTaskVm, target, key, value, scope)
       let storySink = newStoryDispatchSink(mountFn, applyFn,
-                                           inner = resizingSink)
+                                           inner = dispatchingSink)
       runDemoBridgeWith(cfg, src.toAny(), provider,
                         storySink.toAnyInputSink())
       dispose()

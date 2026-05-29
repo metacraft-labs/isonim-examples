@@ -32,6 +32,8 @@ when defined(macosx) or defined(linux):
   when defined(mockJni):
     import isonim/core/owner
 
+    import isonim_render_serve/adapters/android_input_adapter
+
     import task_app/core/vm as task_vm
     import task_app/main_android as task_android
     import settings_app/core/vm as settings_vm
@@ -202,16 +204,23 @@ when defined(macosx) or defined(linux):
               buildAndroidElementTreeManifest(capturedRoot,
                 dynamicW, dynamicH))
 
-        let resizingSink = newAnyInputSink(
-          proc(event: InputEvent) {.gcsafe.} =
-            if event.kind != iekResize: return
-            if event.width <= 0 or event.height <= 0: return
-            if event.width == dynamicW and event.height == dynamicH: return
-            {.cast(gcsafe).}:
-              dynamicW = event.width
-              dynamicH = event.height
-              src.width = dynamicW
-              src.height = dynamicH)
+        # EPP-M7. See ``backends/gpui.nim`` for the rationale.
+        let onResize = proc(w, h: int) {.gcsafe.} =
+          if w <= 0 or h <= 0: return
+          if w == dynamicW and h == dynamicH: return
+          {.cast(gcsafe).}:
+            dynamicW = w
+            dynamicH = h
+            src.width = dynamicW
+            src.height = dynamicH
+
+        let capturedHitRoot = capturedRoot
+        let hitTester = proc(x, y: int): AndroidElement {.gcsafe.} =
+          {.cast(gcsafe).}:
+            capturedHitRoot
+        let inputAdapter = newAndroidInputSink(mockR, hitTester)
+        let dispatchingSink = newDispatchingLauncherSink(onResize,
+                                                         inputAdapter.toAny())
 
         let captTaskVm = taskAppVm
         let captSettingsVm = settingsAppVm
@@ -231,7 +240,7 @@ when defined(macosx) or defined(linux):
             else:
               applyTaskMutation(captTaskVm, target, key, value, scope)
         let storySink = newStoryDispatchSink(mountFn, applyFn,
-                                             inner = resizingSink)
+                                             inner = dispatchingSink)
         runDemoBridgeWith(cfg, src.toAny(), provider,
                           storySink.toAnyInputSink())
         dispose()

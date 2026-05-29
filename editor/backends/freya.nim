@@ -17,6 +17,7 @@ import isonim/core/owner
 
 import isonim_render_serve
 import isonim_render_serve/adapters/freya_adapter
+import isonim_render_serve/adapters/freya_input_adapter
 
 import task_app/core/vm as task_vm
 import task_app/main_freya as task_freya
@@ -66,16 +67,25 @@ proc runFreyaDemo(cfg: LauncherConfig) =
           buildFreyaElementTreeManifest(capturedRoot,
             dynamicW, dynamicH))
 
-    let resizingSink = newAnyInputSink(
-      proc(event: InputEvent) {.gcsafe.} =
-        if event.kind != iekResize: return
-        if event.width <= 0 or event.height <= 0: return
-        if event.width == dynamicW and event.height == dynamicH: return
-        {.cast(gcsafe).}:
-          dynamicW = event.width
-          dynamicH = event.height
-          src.width = dynamicW
-          src.height = dynamicH)
+    # EPP-M7. See ``backends/gpui.nim`` for the rationale; this
+    # mirrors that shape exactly so mouse + keyboard reach the Freya
+    # leaves via the shadow-tree ``fireEvent`` table.
+    let onResize = proc(w, h: int) {.gcsafe.} =
+      if w <= 0 or h <= 0: return
+      if w == dynamicW and h == dynamicH: return
+      {.cast(gcsafe).}:
+        dynamicW = w
+        dynamicH = h
+        src.width = dynamicW
+        src.height = dynamicH
+
+    let capturedHitRoot = capturedRoot
+    let hitTester = proc(x, y: int): FreyaElement {.gcsafe.} =
+      {.cast(gcsafe).}:
+        capturedHitRoot
+    let inputAdapter = newFreyaInputSink(hitTester)
+    let dispatchingSink = newDispatchingLauncherSink(onResize,
+                                                     inputAdapter.toAny())
 
     let captTaskVm = taskAppVm
     let captSettingsVm = settingsAppVm
@@ -95,7 +105,7 @@ proc runFreyaDemo(cfg: LauncherConfig) =
         else:
           applyTaskMutation(captTaskVm, target, key, value, scope)
     let storySink = newStoryDispatchSink(mountFn, applyFn,
-                                         inner = resizingSink)
+                                         inner = dispatchingSink)
     runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink())
     dispose()
 
