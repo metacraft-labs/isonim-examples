@@ -109,9 +109,33 @@ when defined(macosx):
             applyTaskMutation(captTaskVm, target, key, value, scope)
       let storySink = newStoryDispatchSink(mountFn, applyFn,
                                            inner = dispatchingSink)
+
+      # EPP-M5. Resolve the encoder preference against the host's
+      # capability. The launcher's CLI flag ``--encoder h264`` opts in;
+      # without it the launcher stays on the EPP-M4 raw-RGBA F-packet
+      # path. ``selectEncoderKind`` degrades automatically when
+      # VideoToolbox is unreachable so the launcher never has to gate
+      # on ``when defined(macosx)``.
+      let encoderKind = resolveEncoderKind(cfg)
+      var encoderHandle: H264EncoderHandle = nil
+      if encoderKind == ekH264:
+        encoderHandle = newH264EncoderHandle(dynamicW, dynamicH,
+                                              cfg.bitrate)
+        if encoderHandle == nil:
+          # Hardware encoder construction failed at the last mile
+          # (rare — selectEncoderKind already probed the host). Surface
+          # the degradation so the launcher transcript shows the
+          # fallback.
+          echo "[cocoa launcher] VideoToolbox encoder init failed; ",
+               "falling back to raw RGBA F-packet path."
+      let resolvedEncoder =
+        if encoderHandle != nil: ekH264 else: ekRawRgba
+
       runDemoBridgeWith(cfg, src.toAny(), provider,
                         storySink.toAnyInputSink(),
-                        capturePath = captureLabel)
+                        capturePath = captureLabel,
+                        encoder = resolvedEncoder,
+                        encoderHandle = encoderHandle)
       dispose()
 
   proc runDemoBridge*(backend: string) =

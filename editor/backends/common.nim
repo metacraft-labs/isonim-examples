@@ -28,6 +28,17 @@ type
     fps*: int
     staticDir*: string
     demo*: string     ## "task" | "settings" — selects which demo to mount.
+    encoder*: string  ## EPP-M5: "" / "raw_rgba" (default F-packet path),
+                       ## "h264" / "h264_videotoolbox" activates the
+                       ## VideoToolbox V-packet path. The launcher
+                       ## composition validates against host capability
+                       ## via ``selectEncoderKind`` and silently
+                       ## degrades to ``ekRawRgba`` on hosts without a
+                       ## hardware H.264 encoder.
+    bitrate*: int     ## EPP-M5: H.264 ``AverageBitRate`` target in
+                       ## bits/sec. Defaults to 2_000_000 (2 Mbps)
+                       ## matching the EPP-M5 brief. Ignored when
+                       ## the launcher resolves to ``ekRawRgba``.
 
 proc parseLauncherArgs*(backendOverride: string;
                         defaultDemo = "task"): LauncherConfig =
@@ -42,7 +53,9 @@ proc parseLauncherArgs*(backendOverride: string;
     height: 0,
     fps: 12,
     staticDir: "static",
-    demo: defaultDemo)
+    demo: defaultDemo,
+    encoder: "",
+    bitrate: 2_000_000)
   var i = 1
   while i <= paramCount():
     let arg = paramStr(i)
@@ -62,12 +75,22 @@ proc parseLauncherArgs*(backendOverride: string;
     of "--component":
       # Accepted for forward compat with `launchBridge` argv shaping.
       inc i; discard
+    of "--encoder":
+      # EPP-M5: ``--encoder h264`` opts into the VideoToolbox path;
+      # ``--encoder raw_rgba`` keeps the F-packet baseline (default).
+      inc i; result.encoder = paramStr(i)
+    of "--bitrate":
+      inc i; result.bitrate = parseInt(paramStr(i))
     else:
       # Accept both `--demo=task` and `--demo task`.
       if arg.startsWith("--demo="):
         result.demo = arg.substr(len("--demo="))
       elif arg == "--demo":
         inc i; result.demo = paramStr(i)
+      elif arg.startsWith("--encoder="):
+        result.encoder = arg.substr(len("--encoder="))
+      elif arg.startsWith("--bitrate="):
+        result.bitrate = parseInt(arg.substr(len("--bitrate=")))
       else:
         # Tolerate unknown flags so adapter authors can extend the CLI
         # per-renderer without forcing a global recompile.
@@ -86,10 +109,25 @@ proc resolveStaticDir*(cfgStatic: string): string =
     return fallback
   cfgStatic # last resort — bridge will 404 the canvas page
 
+proc resolveEncoderKind*(cfg: LauncherConfig): EncoderKind =
+  ## Map the CLI string to an ``EncoderKind`` and degrade to
+  ## ``ekRawRgba`` when the host has no hardware H.264 encoder.
+  ## Centralised here so every launcher binary applies the same
+  ## fallback policy.
+  let prefer =
+    case cfg.encoder
+    of "h264", "h264_videotoolbox", "vt":
+      ekH264
+    else:
+      ekRawRgba
+  selectEncoderKind(prefer)
+
 proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
                        elementTree: ElementTreeProvider = nil;
                        inputSink: AnyInputSink = nil;
-                       capturePath: string = "") =
+                       capturePath: string = "";
+                       encoder: EncoderKind = ekRawRgba;
+                       encoderHandle: H264EncoderHandle = nil) =
   ## Boot the WebSocket bridge against an already-constructed frame
   ## source. Launchers call this after they've assembled a real demo
   ## frame source (TUI rasterizer / GPUI adapter / Freya adapter / web
@@ -119,9 +157,12 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
     inputSink: sink,
     frameSource: source,
     elementTree: elementTree,
-    capturePath: capturePath)
+    capturePath: capturePath,
+    encoder: encoder,
+    encoderHandle: encoderHandle)
   let s = newServer(bridgeCfg)
   echo "isonim-examples-", cfg.backend, " demo=", cfg.demo,
     " listening on http://127.0.0.1:", cfg.port,
-    " (", source.width, "x", source.height, " @ ", cfg.fps, " fps)"
+    " (", source.width, "x", source.height, " @ ", cfg.fps, " fps",
+    ", encoder=", encoderKindName(encoder), ")"
   waitFor s.serve()
