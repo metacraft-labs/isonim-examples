@@ -89,22 +89,26 @@ proc runGpuiDemo(cfg: LauncherConfig) =
 
     # Hit-test the GPUI element tree. Mirrors the manifest-walking
     # logic the F-packet raster already uses
-    # (``gpui_adapter.buildGpuiElementTreeManifest``). For EPP-M7 we
-    # take the simplest possible route: hit-test against the manifest
-    # rebuilt on every click so the per-launcher input adapter can
-    # resolve coordinates to an element. The adapter clamps to the
-    # nearest deepest containing element.
+    # (``gpui_adapter.buildGpuiElementTreeManifest``).
+    #
+    # EPP-M12: the legacy ``hitTester`` routed every click to the
+    # composition root, which has no registered ``"click"`` handler —
+    # so the click was silently dropped and no VM mutation followed.
+    # The new ``hitChain`` callback walks the same ``buildLayoutRects``
+    # the rasteriser paints from and returns every shadow-tree node
+    # whose rect contains the click coordinate (deepest first). The
+    # input adapter then fires ``"click"`` on each candidate; the
+    # one with a registered Nim closure (filter pill, task row,
+    # add button) handles the click, mutates the VM, and the
+    # reactive graph repaints on the next frame.
     let capturedHitRoot = capturedRoot
     let hitTester = proc(x, y: int): GpuiElement {.gcsafe.} =
       {.cast(gcsafe).}:
-        # Without a real layout query the GPUI shim exposes, the
-        # simplest correct hit-test routes every click to the
-        # composition root. Per-launcher hit-testing landed at RS-M2;
-        # EPP-M7 doesn't change it. The composition root receives
-        # the click and dispatches via its own ``onClick`` Nim
-        # closure (already wired by every demo's Layer-4 root).
         capturedHitRoot
-    let inputAdapter = newGpuiInputSink(hitTester)
+    let hitChain = proc(x, y: int): seq[GpuiElement] {.gcsafe.} =
+      {.cast(gcsafe).}:
+        hitTestPath(capturedHitRoot, dynamicW, dynamicH, x, y)
+    let inputAdapter = newGpuiInputSink(hitTester, hitChain)
     let dispatchingSink = newDispatchingLauncherSink(onResize,
                                                      inputAdapter.toAny())
 

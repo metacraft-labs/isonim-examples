@@ -82,11 +82,21 @@ when defined(macosx):
           src.width = dynamicW
           src.height = dynamicH
 
+      # EPP-M12. See ``backends/gpui.nim`` for the rationale. The
+      # ``hitChain`` callback walks the same layout pass the
+      # rasteriser uses so every shadow-tree node that contains the
+      # click coordinate receives a ``fireEvent("click", ...)`` —
+      # deepest first.
       let capturedHitRoot = capturedRoot
+      let capturedRenderer = r
       let hitTester = proc(x, y: int): CocoaElement {.gcsafe.} =
         {.cast(gcsafe).}:
           capturedHitRoot
-      let inputAdapter = newCocoaInputSink(r, hitTester)
+      let hitChain = proc(x, y: int): seq[CocoaElement] {.gcsafe.} =
+        {.cast(gcsafe).}:
+          hitTestPath(capturedRenderer, capturedHitRoot,
+                      dynamicW, dynamicH, x, y)
+      let inputAdapter = newCocoaInputSink(r, hitTester, hitChain)
       let dispatchingSink = newDispatchingLauncherSink(onResize,
                                                        inputAdapter.toAny())
 

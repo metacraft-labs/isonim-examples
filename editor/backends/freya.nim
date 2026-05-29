@@ -79,11 +79,19 @@ proc runFreyaDemo(cfg: LauncherConfig) =
         src.width = dynamicW
         src.height = dynamicH
 
+    # EPP-M12. See ``backends/gpui.nim`` for the rationale. The
+    # ``hitChain`` callback returns every shadow-tree node whose
+    # synthetic-layout rect contains the click coordinate (deepest
+    # first); the input adapter fires ``"click"`` on each so the
+    # ancestor that owns the Nim handler runs and mutates the VM.
     let capturedHitRoot = capturedRoot
     let hitTester = proc(x, y: int): FreyaElement {.gcsafe.} =
       {.cast(gcsafe).}:
         capturedHitRoot
-    let inputAdapter = newFreyaInputSink(hitTester)
+    let hitChain = proc(x, y: int): seq[FreyaElement] {.gcsafe.} =
+      {.cast(gcsafe).}:
+        hitTestPath(capturedHitRoot, dynamicW, dynamicH, x, y)
+    let inputAdapter = newFreyaInputSink(hitTester, hitChain)
     let dispatchingSink = newDispatchingLauncherSink(onResize,
                                                      inputAdapter.toAny())
 
