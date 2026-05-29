@@ -88,7 +88,8 @@ proc resolveStaticDir*(cfgStatic: string): string =
 
 proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
                        elementTree: ElementTreeProvider = nil;
-                       inputSink: AnyInputSink = nil) =
+                       inputSink: AnyInputSink = nil;
+                       capturePath: string = "") =
   ## Boot the WebSocket bridge against an already-constructed frame
   ## source. Launchers call this after they've assembled a real demo
   ## frame source (TUI rasterizer / GPUI adapter / Freya adapter / web
@@ -100,6 +101,12 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
   ## that need to react to inbound I packets pass a non-nil
   ## `inputSink` (e.g. the TUI launcher's resize-aware sink that
   ## forwards `iekResize` events to the harness).
+  ##
+  ## EPP-M4: ``capturePath`` is the optional self-describing
+  ## identifier the Cocoa launcher passes (``"metal"`` /
+  ## ``"appkit"``) so the browser-side e2e test can verify which
+  ## capture helper produced the streamed frames. Other launchers
+  ## leave it empty.
   let sink =
     if inputSink != nil: inputSink
     else: newBufferedInputSink().toAny()
@@ -111,7 +118,8 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
     maxFrames: 0,
     inputSink: sink,
     frameSource: source,
-    elementTree: elementTree)
+    elementTree: elementTree,
+    capturePath: capturePath)
   let s = newServer(bridgeCfg)
   echo "isonim-examples-", cfg.backend, " demo=", cfg.demo,
     " listening on http://127.0.0.1:", cfg.port,

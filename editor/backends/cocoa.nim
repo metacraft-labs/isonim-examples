@@ -57,6 +57,13 @@ when defined(macosx):
       var dynamicH = h
 
       let src = newCocoaFrameSource(r, root, dynamicW, dynamicH)
+      # EPP-M4: ``newCocoaFrameSource`` resolves a ``ccpMetal``
+      # preference to ``ccpAppKit`` automatically when the host has
+      # no Metal device. ``src.capturePath`` is the path the launcher
+      # will actually use this session; forward the human-readable
+      # label to the bridge so the hello capability bag advertises
+      # ``cocoaCapturePath`` to the browser-side e2e harness.
+      let captureLabel = capturePathName(src.capturePath)
       let capturedRoot = root
 
       let provider = ElementTreeProvider(
@@ -103,7 +110,8 @@ when defined(macosx):
       let storySink = newStoryDispatchSink(mountFn, applyFn,
                                            inner = dispatchingSink)
       runDemoBridgeWith(cfg, src.toAny(), provider,
-                        storySink.toAnyInputSink())
+                        storySink.toAnyInputSink(),
+                        capturePath = captureLabel)
       dispose()
 
   proc runDemoBridge*(backend: string) =
