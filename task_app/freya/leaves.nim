@@ -360,6 +360,15 @@ proc renderTaskRow(r: FreyaRenderer; vm: TaskAppVM; t: Task): FreyaElement =
   r.setAttribute(row, "data-task-id", $t.id)
   r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
   r.setAttribute(row, ElementKindAttr, "row")
+  # FUH-M2 Phase A. See ``task_app/gpui/leaves.nim`` for the
+  # rationale; hover handlers flip ``ElementKindAttr`` between
+  # ``"row"`` and ``"row-hovered"`` to make hover-induced layout
+  # mutations observable via the ETS-M2 sparse delta encoder.
+  let rowRef = row
+  r.addEventListener(row, "mouseenter", proc() =
+    r.setAttribute(rowRef, ElementKindAttr, "row-hovered"))
+  r.addEventListener(row, "mouseleave", proc() =
+    r.setAttribute(rowRef, ElementKindAttr, "row"))
   if t.completed:
     r.setAttribute(row, "class", "completed")
   # Card-style row separation. Round-4: pin a row height (~36 px) so the

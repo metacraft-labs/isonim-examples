@@ -314,6 +314,15 @@ when defined(macosx):
     r.setAttribute(row, "data-task-id", $t.id)
     r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
     r.setAttribute(row, ElementKindAttr, "row")
+    # FUH-M2 Phase A. See ``task_app/gpui/leaves.nim`` for the
+    # rationale; hover handlers flip ``ElementKindAttr`` between
+    # ``"row"`` and ``"row-hovered"`` to make hover-induced layout
+    # mutations observable via the ETS-M2 sparse delta encoder.
+    let rowRef = row
+    r.addEventListener(row, "mouseenter", proc() =
+      r.setAttribute(rowRef, ElementKindAttr, "row-hovered"))
+    r.addEventListener(row, "mouseleave", proc() =
+      r.setAttribute(rowRef, ElementKindAttr, "row"))
     # M-EVP-14 round-3: arrange the toggle marker, the title label,
     # and the trailing remove glyph horizontally instead of stacking
     # them vertically. The ``data-fixed-height`` reservation gives

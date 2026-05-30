@@ -214,11 +214,23 @@ when defined(macosx) or defined(linux):
             src.width = dynamicW
             src.height = dynamicH
 
+        # FUH-M2. Mirror the GPUI / Freya / Cocoa hitChain wiring per
+        # the FUH-M1 audit § 1.1: the legacy ``hitTester`` routes
+        # every click to the composition root (no handler), so the
+        # adapter falls back to the chain walk-up. ``hitChain``
+        # delegates to ``android_adapter.hitTestPath`` which mirrors
+        # the EPP-M12 contract — every shadow-tree node whose rect
+        # contains ``(x, y)`` is returned deepest-first.
         let capturedHitRoot = capturedRoot
+        let capturedRenderer = mockR
         let hitTester = proc(x, y: int): AndroidElement {.gcsafe.} =
           {.cast(gcsafe).}:
             capturedHitRoot
-        let inputAdapter = newAndroidInputSink(mockR, hitTester)
+        let hitChain = proc(x, y: int): seq[AndroidElement] {.gcsafe.} =
+          {.cast(gcsafe).}:
+            hitTestPath(capturedRenderer, capturedHitRoot,
+                        dynamicW, dynamicH, x, y)
+        let inputAdapter = newAndroidInputSink(mockR, hitTester, hitChain)
         let dispatchingSink = newDispatchingLauncherSink(onResize,
                                                          inputAdapter.toAny())
 

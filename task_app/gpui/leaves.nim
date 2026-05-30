@@ -268,6 +268,17 @@ proc renderTaskRow(r: GpuiRenderer; vm: TaskAppVM; t: Task): GpuiElement =
   r.setAttribute(row, "data-task-id", $t.id)
   r.setAttribute(row, ComponentPathAttr, taskRowPath(t.id))
   r.setAttribute(row, ElementKindAttr, "row")
+  # FUH-M2 Phase A. Hover handlers flip ``ElementKindAttr`` between
+  # ``"row"`` and ``"row-hovered"`` so the ETS-M2 delta encoder emits
+  # a sparse ``{op:"update", id, kind}`` op per hover transition. The
+  # FUH-M1 audit § 5.2 documents the contract — task_app is the demo
+  # case that makes hover-induced layout mutations observable; other
+  # apps (settings_app etc.) stay hover-static.
+  let rowRef = row
+  r.addEventListener(row, "mouseenter", proc() =
+    r.setAttribute(rowRef, ElementKindAttr, "row-hovered"))
+  r.addEventListener(row, "mouseleave", proc() =
+    r.setAttribute(rowRef, ElementKindAttr, "row"))
   if t.completed:
     r.setAttribute(row, "class", "completed")
   # Round-3 review: rows were ~60 px tall in round-2 because every leaf
