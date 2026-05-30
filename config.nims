@@ -110,6 +110,15 @@ switch("path", "$config/../isonim-tui-serve/src")
 # the W path silently degrades to V (or F).
 switch("define", "withCodecWebP")
 
+# FUH-M5: in-process libwebp encoder. Default-on so every per-backend
+# launcher prefers the direct API call over the ~133 ms ffmpeg
+# subprocess spawn (FUH-M4 audit § 5). The launcher-side runtime
+# probe in ``adapters/webp_libwebp_ffi.isLibwebpAvailable`` falls
+# back to the subprocess path when ``libwebp.dylib`` /
+# ``libwebp.so.7`` can't be loaded; toggle off via
+# ``--define:withInProcessWebP=false`` if needed.
+switch("define", "withInProcessWebP")
+
 # ETS-M3 Part B: enable the ``element-tree-delta`` wire path by
 # default for every launcher built from this repo (gpui / freya /
 # cocoa / android). Each backend reads ``when defined(withElementTreeDelta)``

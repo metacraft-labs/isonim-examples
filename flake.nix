@@ -64,6 +64,21 @@
                 # the runtime library here so leaf-driving tests link.
                 tree-sitter
                 pkg-config
+                # FUH-M5: each per-backend launcher (`build/backends/
+                # isonim-examples-{cocoa,gpui,freya,...}`) compiles in
+                # the FUH-M5 in-process WebP encoder via the path-
+                # imported ``isonim-render-serve`` adapter. The FFI in
+                # ``adapters/webp_libwebp_ffi.nim`` resolves
+                # ``libwebp.dylib`` / ``libwebp.so.7`` at compile time
+                # via ``pkg-config --variable=libdir libwebp`` and
+                # bakes the absolute Nix-store path into the
+                # ``{.dynlib.}`` pragma — necessary on macOS because
+                # SIP strips ``DYLD_FALLBACK_LIBRARY_PATH`` from child
+                # processes the editor's Playwright tests spawn.
+                # Without ``libwebp`` here the FFI falls back to bare
+                # SONAME lookup and the spawned launcher fails with
+                # ``[cocoa-webp] could not load: libwebp.dylib``.
+                libwebp
                 # EX-M14: the demo editor's `just editor-serve` target
                 # uses python3's http.server to serve the static bundle
                 # on port 8091, and the Playwright spec under
@@ -163,6 +178,24 @@
               if [ -d "$PWD/../isonim-freya/rust/target/debug" ]; then
                 export LD_LIBRARY_PATH="$PWD/../isonim-freya/rust/target/debug''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               fi
+              # FUH-M5: make libwebp.dylib loadable from spawned
+              # launcher binaries. macOS strips DYLD_* on SIP-aware
+              # binaries; setting it here covers the in-shell direct
+              # ``nim c -r`` invocations and the editor-build chain
+              # that runs from this shell. The compile-time pkg-
+              # config path bake-in in
+              # ``isonim-render-serve/.../webp_libwebp_ffi.nim`` is
+              # the load-bearing fix for spawn-from-node scenarios.
+              ${
+                if pkgs.stdenv.isDarwin then
+                  ''
+                    export DYLD_FALLBACK_LIBRARY_PATH="${pkgs.libwebp}/lib''${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+                  ''
+                else
+                  ''
+                    export LD_LIBRARY_PATH="${pkgs.libwebp}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                  ''
+              }
               echo "isonim-examples dev shell - nim $(nim --version 2>&1 | head -1)"
             '';
           };
