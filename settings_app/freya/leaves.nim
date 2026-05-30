@@ -45,6 +45,29 @@ proc itemContainerLeaf*(r: FreyaRenderer): FreyaElement =
   # EX-M23b: component-path annotation; identical string to GPUI + TUI.
   r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
   r.setAttribute(node, ElementKindAttr, "row")
+  # EMC-M3: click-state kind flip + visible accent paint. Mirrors
+  # task_app/freya/leaves.nim's FUH-M2 hover handler pattern but on
+  # the ``click`` event so the FUH-M8 fingerprint probe can detect
+  # a visible pixel mutation within the 33 ms gate.
+  #
+  # Two mutations fire per click:
+  # * ``ElementKindAttr`` → ``"row-pressed"`` emits a sparse
+  #   ``{op:"update", id, kind}`` op through the ETS-M2 delta encoder
+  #   (the M-packet kind field changes; manifest hash flips).
+  # * ``background: rgb(124, 122, 237)`` (indigo accent) via
+  #   ``setStyle`` is honoured by the ``-d:useFreyaHeadless`` real-Skia
+  #   pipeline — Skia paints the rect with the requested fill so the
+  #   click-target ROI gets a visible colour swap. The synthetic
+  #   ``freya_adapter`` fallback collapses ``div`` to a fixed colour
+  #   regardless of class, so the style mutation is the lever that
+  #   moves pixels for either pipeline.
+  #
+  # Persistent post-click state (no revert) — the matrix only
+  # measures the click→visible delta.
+  let nodeRef = node
+  r.addEventListener(node, "click", proc() =
+    r.setAttribute(nodeRef, ElementKindAttr, "row-pressed")
+    r.setStyle(nodeRef, "background", cAccent))
   # Round-4: tighten the per-item gap+padding so all three cards fit
   # in the default viewport. Column direction stays (label /
   # description / control stacked) because the shared component

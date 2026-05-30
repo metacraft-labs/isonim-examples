@@ -27,6 +27,38 @@ proc itemContainerLeaf*(r: GpuiRenderer): GpuiElement =
   # cross-renderer ``componentPath`` set identical.
   r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
   r.setAttribute(node, ElementKindAttr, "row")
+  # EMC-M3: click-state kind flip + visible accent paint. Mirrors
+  # task_app/gpui/leaves.nim's FUH-M2 hover handler pattern but on
+  # the ``click`` event so the FUH-M8 fingerprint probe (which asserts
+  # a visible pixel mutation within 33 ms of a click on a manifest-
+  # resolvable element) can detect the click landing. The
+  # settings_app previously had no click-state class anywhere; the
+  # most-prominent interactable on a settings catalog is the row
+  # itself (the row wraps the toggle / number / choice widget plus
+  # its label + description).
+  #
+  # Three mutations fire per click:
+  # * ``ElementKindAttr`` → ``"row-pressed"`` triggers a sparse
+  #   ``{op:"update", id, kind}`` op through the ETS-M2 delta encoder
+  #   (the M-packet kind field changes; the manifest hash flips).
+  # * ``aria-pressed`` → ``"true"`` is read by the GPUI synthetic
+  #   rasteriser (``gpui_adapter.colourForTag``) which then paints the
+  #   row band in the indigo accent — needed for the fallback synthetic
+  #   path on non-Darwin builds.
+  # * ``background: #7c7aed`` (indigo) via ``setStyle`` is honoured by
+  #   the ``-d:useGpuiHeadless`` real-Zed pipeline (``apply_styles_to_div``
+  #   in ``isonim-gpui/rust/.../gpui_app.rs``). On macOS the matrix
+  #   exercises the real headless path, so a style mutation is what
+  #   ultimately moves pixels. Combined the three mutations cover both
+  #   the synthetic and the real-Zed pipelines.
+  #
+  # The state is persistent (no revert) — a settled post-click visible
+  # mutation is what the matrix's click-response criterion measures.
+  let nodeRef = node
+  r.addEventListener(node, "click", proc() =
+    r.setAttribute(nodeRef, ElementKindAttr, "row-pressed")
+    r.setAttribute(nodeRef, "aria-pressed", "true")
+    r.setStyle(nodeRef, "background", "#7c7aed"))
   # RS-M14 Phase 2 styling: the real headless renderer captures only
   # what the leaves explicitly request. See the matching note in
   # ``task_app/gpui/leaves.nim``. The shim's renderer maps CSS-like

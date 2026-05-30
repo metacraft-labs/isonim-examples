@@ -49,6 +49,28 @@ when defined(macosx):
     # F-packet shape stays comparable.
     r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
     r.setAttribute(node, ElementKindAttr, "row")
+    # EMC-M3: click-state kind flip + visible accent paint. Mirrors
+    # task_app/cocoa/leaves.nim's FUH-M2 hover handler pattern but on
+    # the ``click`` event so the FUH-M8 fingerprint probe can detect
+    # a visible pixel mutation within the 33 ms gate.
+    #
+    # Two mutations fire per click:
+    # * ``ElementKindAttr`` → ``"row-pressed"`` emits a sparse delta
+    #   op via the ETS-M2 encoder (M-packet kind field changes).
+    # * ``background-color: #7c7aed`` (indigo accent) via ``setStyle``
+    #   routes through the Cocoa renderer's ``applyStyle "background"``
+    #   branch to ``-[CALayer setBackgroundColor:]``. The RS-M5
+    #   ``bitmapImageRepForCachingDisplayInRect:`` capture then paints
+    #   the row band in the accent colour, so the click ROI fingerprint
+    #   on the real AppKit surface changes immediately.
+    #
+    # Persistent post-click state — the matrix's click-response
+    # criterion only measures the click→visible delta.
+    let nodeRef = node
+    let rCaptured = r
+    r.addEventListener(node, "click", proc() =
+      rCaptured.setAttribute(nodeRef, ElementKindAttr, "row-pressed")
+      rCaptured.setStyle(nodeRef, "background-color", "#7c7aed"))
     # M-EVP-14 round-4: bump the row's fixed slice to ~64 px so the
     # label / description / widget triplet inside each row can each
     # claim a real vertical band (round-3 sized the row at 52 px and

@@ -76,6 +76,29 @@ when defined(android) or defined(mockJni):
     # the real `View` tree, so structural parity is by-construction.
     r.setAttribute(node, ComponentPathAttr, SettingsRowPath)
     r.setAttribute(node, ElementKindAttr, "row")
+    # EMC-M3: click-state kind flip + visible accent paint. Mirrors
+    # task_app/android/leaves.nim's FUH-M2 hover handler pattern but on
+    # the ``click`` event so the FUH-M8 fingerprint probe can detect
+    # a visible pixel mutation within the 33 ms gate.
+    #
+    # Two mutations fire per click:
+    # * ``ElementKindAttr`` → ``"row-pressed"`` emits a sparse delta
+    #   op via the ETS-M2 encoder.
+    # * ``background-color: #7c7aed`` (indigo accent) via ``setStyle``
+    #   routes through the Android NimBridge ``applyStyle`` handler to
+    #   ``View.setBackgroundColor`` (or the equivalent
+    #   ``GradientDrawable`` recolouring) so the rendered row band
+    #   flips to the accent. On the host-side ``-d:mockJni`` lane the
+    #   same setter writes through to the synthetic in-process tree
+    #   that the matrix consumes.
+    #
+    # Persistent post-click state — the matrix's click-response
+    # criterion only measures the click→visible delta.
+    let nodeRef = node
+    let rCaptured = r
+    r.addEventListener(node, "click", proc() =
+      rCaptured.setAttribute(nodeRef, ElementKindAttr, "row-pressed")
+      rCaptured.setStyle(nodeRef, "background-color", "#7c7aed"))
     # Round-3 fix: the row now renders as a Material 3 surface card
     # (neutral background + 8 dp rounded corners + 12 dp padding) so
     # the catalogue items read as discrete tappable rows instead of a
