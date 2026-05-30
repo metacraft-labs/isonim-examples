@@ -114,7 +114,12 @@ proc runFreyaDemo(cfg: LauncherConfig) =
           applyTaskMutation(captTaskVm, target, key, value, scope)
     let storySink = newStoryDispatchSink(mountFn, applyFn,
                                          inner = dispatchingSink)
-    runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink())
+    # ETS-M3 Part B: see ``backends/gpui.nim`` for the gate rationale.
+    var streamElementTreeDelta = false
+    when defined(withElementTreeDelta):
+      streamElementTreeDelta = true
+    runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink(),
+                      streamElementTreeDelta = streamElementTreeDelta)
     dispose()
 
 proc runDemoBridge*(backend: string) =

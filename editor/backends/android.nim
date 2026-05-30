@@ -241,12 +241,26 @@ when defined(macosx) or defined(linux):
               applyTaskMutation(captTaskVm, target, key, value, scope)
         let storySink = newStoryDispatchSink(mountFn, applyFn,
                                              inner = dispatchingSink)
+        # ETS-M3 Part B: see ``backends/gpui.nim`` for the gate rationale.
+        var streamElementTreeDelta = false
+        when defined(withElementTreeDelta):
+          streamElementTreeDelta = true
         runDemoBridgeWith(cfg, src.toAny(), provider,
-                          storySink.toAnyInputSink())
+                          storySink.toAnyInputSink(),
+                          streamElementTreeDelta = streamElementTreeDelta)
         dispose()
     else:
+      # ETS-M3 Part B: no in-process element-tree provider on the
+      # non-mockJni Android path (the on-device runtime owns its own
+      # tree). The delta gate is still honoured at hello time so the
+      # browser-side accept advertises a stable shape across
+      # configurations.
+      var streamElementTreeDelta = false
+      when defined(withElementTreeDelta):
+        streamElementTreeDelta = true
       let src = newAdbScreencapFrameSource(width = w, height = h)
-      runDemoBridgeWith(cfg, src.toAny())
+      runDemoBridgeWith(cfg, src.toAny(),
+                        streamElementTreeDelta = streamElementTreeDelta)
 
   proc runDemoBridge*(backend: string) =
     let cfg = parseLauncherArgs(backend)

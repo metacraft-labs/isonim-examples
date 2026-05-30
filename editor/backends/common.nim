@@ -166,7 +166,8 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
                        inputSink: AnyInputSink = nil;
                        capturePath: string = "";
                        encoder: EncoderKind = ekRawRgba;
-                       encoderHandle: H264EncoderHandle = nil) =
+                       encoderHandle: H264EncoderHandle = nil;
+                       streamElementTreeDelta: bool = false) =
   ## Boot the WebSocket bridge against an already-constructed frame
   ## source. Launchers call this after they've assembled a real demo
   ## frame source (TUI rasterizer / GPUI adapter / Freya adapter / web
@@ -184,6 +185,16 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
   ## ``"appkit"``) so the browser-side e2e test can verify which
   ## capture helper produced the streamed frames. Other launchers
   ## leave it empty.
+  ##
+  ## ETS-M3 Part B: ``streamElementTreeDelta`` enables the
+  ## ``element-tree-delta`` M-subtype wire path. Each per-backend
+  ## launcher passes ``true`` under the ``-d:withElementTreeDelta``
+  ## gate (default-on per config.nims) so the bridge advertises the
+  ## ``e/element-tree`` transport in its hello capability bag. Until
+  ## the browser-side shim echoes the token back in its hello-accept
+  ## reply (ETS-M4), the bridge stays on the legacy full-manifest
+  ## path — gate-on-but-no-accept is bit-for-bit identical to the
+  ## pre-ETS-M2 wire shape, preserving backward compatibility.
   let sink =
     if inputSink != nil: inputSink
     else: newBufferedInputSink().toAny()
@@ -196,6 +207,7 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
     inputSink: sink,
     frameSource: source,
     elementTree: elementTree,
+    streamElementTreeDelta: streamElementTreeDelta,
     capturePath: capturePath,
     encoder: encoder,
     encoderHandle: encoderHandle,

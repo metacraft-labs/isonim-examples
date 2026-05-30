@@ -131,7 +131,18 @@ proc runGpuiDemo(cfg: LauncherConfig) =
           applyTaskMutation(captTaskVm, target, key, value, scope)
     let storySink = newStoryDispatchSink(mountFn, applyFn,
                                          inner = dispatchingSink)
-    runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink())
+    # ETS-M3 Part B: gate the ``element-tree-delta`` wire path on
+    # at launcher boot when the ``-d:withElementTreeDelta`` define is
+    # set (default-on per config.nims, dormant-code-on-loss pattern
+    # mirrors ELT-M8's ``-d:withCodecWebP`` gate). With the gate on,
+    # the bridge advertises ``e/element-tree`` in the hello capability
+    # bag; the browser-side shim opt-in lands at ETS-M4. Until then,
+    # gate-on-no-accept keeps the legacy full-manifest wire shape.
+    var streamElementTreeDelta = false
+    when defined(withElementTreeDelta):
+      streamElementTreeDelta = true
+    runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink(),
+                      streamElementTreeDelta = streamElementTreeDelta)
     dispose()
 
 proc runDemoBridge*(backend: string) =

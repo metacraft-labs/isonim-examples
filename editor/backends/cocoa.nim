@@ -152,11 +152,16 @@ when defined(macosx):
         of ekH264: (if encoderHandle != nil: ekH264 else: ekRawRgba)
         of ekRawRgba: ekRawRgba
 
+      # ETS-M3 Part B: see ``backends/gpui.nim`` for the gate rationale.
+      var streamElementTreeDelta = false
+      when defined(withElementTreeDelta):
+        streamElementTreeDelta = true
       runDemoBridgeWith(cfg, src.toAny(), provider,
                         storySink.toAnyInputSink(),
                         capturePath = captureLabel,
                         encoder = resolvedEncoder,
-                        encoderHandle = encoderHandle)
+                        encoderHandle = encoderHandle,
+                        streamElementTreeDelta = streamElementTreeDelta)
       dispose()
 
   proc runDemoBridge*(backend: string) =

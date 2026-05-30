@@ -109,3 +109,16 @@ switch("path", "$config/../isonim-tui-serve/src")
 # ``--encoder auto``) is on the launcher CLI; without the define
 # the W path silently degrades to V (or F).
 switch("define", "withCodecWebP")
+
+# ETS-M3 Part B: enable the ``element-tree-delta`` wire path by
+# default for every launcher built from this repo (gpui / freya /
+# cocoa / android). Each backend reads ``when defined(withElementTreeDelta)``
+# around its ``streamElementTreeDelta = true`` flip so the gate can
+# still be turned off at build time via ``--define:withElementTreeDelta=false``
+# for legacy-wire reproducibility checks. The gate-on path is
+# backward compatible by construction: the bridge only flips from
+# the legacy full-manifest body to the new delta sub-kind once the
+# browser-side hello-accept (ETS-M4) echoes ``e/element-tree`` in
+# its accept list. Pre-ETS-M4 browsers never advertise the token,
+# so the launcher stays on the legacy wire shape.
+switch("define", "withElementTreeDelta")
