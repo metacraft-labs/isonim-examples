@@ -36,7 +36,21 @@ const
   DefaultWidth = 800
   DefaultHeight = 600
 
-proc runGpuiDemo(cfg: LauncherConfig) =
+proc runGpuiDemo(cfgIn: LauncherConfig) =
+  # EMC-M2 (Option A): when no ``--encoder`` is on the CLI, default
+  # to ``ekWebP`` for the GPUI launcher. The EMC-M1 audit
+  # (``isonim/docs/gpui-serialisation-audit-EMC-M1.md``) recommends
+  # this as the FUH-M5-effort-scale mitigation that closes the 50 ms
+  # frame-latency gate + the 3 click-response cells the FUH-M8 matrix
+  # surfaced. ``resolveEncoderKind`` below maps ``"auto"`` to ``ekWebP``
+  # whenever the host has libwebp reachable; degrades to ``ekRawRgba``
+  # otherwise (so the launcher is safe to invoke on a host without
+  # libwebp). Pass ``--encoder raw_rgba`` to opt back into the legacy
+  # F-packet baseline for A/B comparison.
+  var cfg = cfgIn
+  when defined(withCodecWebP):
+    if cfg.encoder.len == 0:
+      cfg.encoder = "auto"
   let w = if cfg.width > 0: cfg.width else: DefaultWidth
   let h = if cfg.height > 0: cfg.height else: DefaultHeight
 
@@ -131,6 +145,38 @@ proc runGpuiDemo(cfg: LauncherConfig) =
           applyTaskMutation(captTaskVm, target, key, value, scope)
     let storySink = newStoryDispatchSink(mountFn, applyFn,
                                          inner = dispatchingSink)
+
+    # EMC-M2 (Option A from the EMC-M1 audit). Resolve the encoder
+    # preference against host capability, mirroring the cocoa launcher
+    # at ``backends/cocoa.nim:136``. The FUH-M8 matrix observed 55-59 ms
+    # frame latency on the GPUI raw-RGBA path (over the 50 ms gate);
+    # the EMC-M1 audit at ``isonim/docs/gpui-serialisation-audit-EMC-M1.md``
+    # showed the shim FFI dominates (~42-44 ms median) but the
+    # post-shim wire-encode + browser ``putImageData`` accounts for
+    # the remaining ~9-13 ms. Switching the GPUI launcher's default
+    # encoder to ``ekWebP`` (FUH-M5 in-process libwebp, ~5-7 ms encode
+    # + ~50-100 KB wire payload vs ~4-5 MiB raw RGBA) trims that
+    # tail and is the FUH-M5-effort-scale mitigation the audit
+    # recommends.
+    #
+    # With ``-d:withCodecWebP`` on (default per
+    # ``isonim-examples/config.nims``), unspecified ``--encoder``
+    # resolves through the same ``resolveEncoderKind`` table the
+    # cocoa launcher uses. ``--encoder webp`` (and ``--encoder auto``)
+    # both end up at ``ekWebP``; ``--encoder raw_rgba`` keeps the
+    # legacy F-packet baseline for direct A/B comparison.
+    let encoderKind = resolveEncoderKind(cfg)
+    # GPUI never runs the VideoToolbox H.264 encoder (the audit's
+    # measurement scope is Metal-headless render + libwebp encode);
+    # the H264 handle stays nil and the bridge degrades to raw RGBA
+    # if the launcher is ever invoked with ``--encoder h264``.
+    var encoderHandle: H264EncoderHandle = nil
+    let resolvedEncoder =
+      case encoderKind
+      of ekWebP: ekWebP
+      of ekH264: ekRawRgba
+      of ekRawRgba: ekRawRgba
+
     # ETS-M3 Part B: gate the ``element-tree-delta`` wire path on
     # at launcher boot when the ``-d:withElementTreeDelta`` define is
     # set (default-on per config.nims, dormant-code-on-loss pattern
@@ -142,6 +188,8 @@ proc runGpuiDemo(cfg: LauncherConfig) =
     when defined(withElementTreeDelta):
       streamElementTreeDelta = true
     runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink(),
+                      encoder = resolvedEncoder,
+                      encoderHandle = encoderHandle,
                       streamElementTreeDelta = streamElementTreeDelta)
     dispose()
 
