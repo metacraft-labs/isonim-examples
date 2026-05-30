@@ -28,17 +28,32 @@ type
     fps*: int
     staticDir*: string
     demo*: string     ## "task" | "settings" — selects which demo to mount.
-    encoder*: string  ## EPP-M5: "" / "raw_rgba" (default F-packet path),
-                       ## "h264" / "h264_videotoolbox" activates the
-                       ## VideoToolbox V-packet path. The launcher
-                       ## composition validates against host capability
-                       ## via ``selectEncoderKind`` and silently
-                       ## degrades to ``ekRawRgba`` on hosts without a
-                       ## hardware H.264 encoder.
+    encoder*: string  ## EPP-M5 + ELT-M8: encoder selection.
+                       ## "" / "raw_rgba" → F-packet baseline (EPP-M4).
+                       ## "h264" / "h264_videotoolbox" → V-packet path
+                       ## (EPP-M5; VideoToolbox H.264).
+                       ## "webp" / "webp_lossless" → W-packet path
+                       ## (ELT-M8; libwebp lossless via ffmpeg) with
+                       ## per-frame transport selection (W for static
+                       ## UI, V for animation, F for the seed).
+                       ## "auto" → prefer WebP, degrade to H.264, then
+                       ## raw RGBA per host capability.
+                       ## The launcher composition validates against
+                       ## host capability via ``selectEncoderKind`` and
+                       ## degrades silently when the preferred path is
+                       ## unavailable.
     bitrate*: int     ## EPP-M5: H.264 ``AverageBitRate`` target in
                        ## bits/sec. Defaults to 2_000_000 (2 Mbps)
                        ## matching the EPP-M5 brief. Ignored when
-                       ## the launcher resolves to ``ekRawRgba``.
+                       ## the launcher resolves to ``ekRawRgba`` or
+                       ## ``ekWebP``.
+    webpCompressionLevel*: int
+                       ## ELT-M8: libwebp ``-compression_level`` knob
+                       ## (1..6). 0 leaves the default
+                       ## (``DefaultWebPCompressionLevel`` = 3 per the
+                       ## ELT-M7 recommendation). Ignored when the
+                       ## launcher resolves to anything other than
+                       ## ``ekWebP``.
 
 proc parseLauncherArgs*(backendOverride: string;
                         defaultDemo = "task"): LauncherConfig =
@@ -55,7 +70,8 @@ proc parseLauncherArgs*(backendOverride: string;
     staticDir: "static",
     demo: defaultDemo,
     encoder: "",
-    bitrate: 2_000_000)
+    bitrate: 2_000_000,
+    webpCompressionLevel: 0)
   var i = 1
   while i <= paramCount():
     let arg = paramStr(i)
@@ -78,9 +94,17 @@ proc parseLauncherArgs*(backendOverride: string;
     of "--encoder":
       # EPP-M5: ``--encoder h264`` opts into the VideoToolbox path;
       # ``--encoder raw_rgba`` keeps the F-packet baseline (default).
+      # ELT-M8: ``--encoder webp`` opts into the W-packet path with
+      # per-frame transport selection; ``--encoder auto`` picks WebP
+      # if libwebp is reachable, falling back to H.264 then raw RGBA.
       inc i; result.encoder = paramStr(i)
     of "--bitrate":
       inc i; result.bitrate = parseInt(paramStr(i))
+    of "--webp-compression-level":
+      # ELT-M8: ffmpeg libwebp ``-compression_level`` knob. Honoured
+      # only when the launcher resolves to ekWebP. Default (0) =
+      # the facade-side default = ELT-M7's recommended 3.
+      inc i; result.webpCompressionLevel = parseInt(paramStr(i))
     else:
       # Accept both `--demo=task` and `--demo task`.
       if arg.startsWith("--demo="):
@@ -91,6 +115,9 @@ proc parseLauncherArgs*(backendOverride: string;
         result.encoder = arg.substr(len("--encoder="))
       elif arg.startsWith("--bitrate="):
         result.bitrate = parseInt(arg.substr(len("--bitrate=")))
+      elif arg.startsWith("--webp-compression-level="):
+        result.webpCompressionLevel = parseInt(
+          arg.substr(len("--webp-compression-level=")))
       else:
         # Tolerate unknown flags so adapter authors can extend the CLI
         # per-renderer without forcing a global recompile.
@@ -111,13 +138,25 @@ proc resolveStaticDir*(cfgStatic: string): string =
 
 proc resolveEncoderKind*(cfg: LauncherConfig): EncoderKind =
   ## Map the CLI string to an ``EncoderKind`` and degrade to
-  ## ``ekRawRgba`` when the host has no hardware H.264 encoder.
-  ## Centralised here so every launcher binary applies the same
-  ## fallback policy.
+  ## ``ekRawRgba`` (or ``ekH264`` when the host supports it) for
+  ## codecs that aren't available on this build.
+  ##
+  ## ELT-M8 extends the recognised values:
+  ##   "webp", "webp_lossless" → ekWebP (per-frame W/V/F selector;
+  ##     SHIP tier per the ELT-M7 synthesis report).
+  ##   "auto" → prefer ekWebP; ``selectEncoderKind`` degrades to
+  ##     ekH264 or ekRawRgba based on host capability.
   let prefer =
     case cfg.encoder
     of "h264", "h264_videotoolbox", "vt":
       ekH264
+    of "webp", "webp_lossless":
+      ekWebP
+    of "auto":
+      # ELT-M8 auto-mode: WebP is the SHIP tier per the ELT-M7
+      # synthesis. ``selectEncoderKind(ekWebP)`` degrades via the
+      # facade's standard chain (ekWebP → ekH264 → ekRawRgba).
+      ekWebP
     else:
       ekRawRgba
   selectEncoderKind(prefer)
@@ -159,7 +198,8 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
     elementTree: elementTree,
     capturePath: capturePath,
     encoder: encoder,
-    encoderHandle: encoderHandle)
+    encoderHandle: encoderHandle,
+    encoderWebpCompressionLevel: cfg.webpCompressionLevel)
   let s = newServer(bridgeCfg)
   echo "isonim-examples-", cfg.backend, " demo=", cfg.demo,
     " listening on http://127.0.0.1:", cfg.port,

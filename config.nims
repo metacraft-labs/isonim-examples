@@ -100,3 +100,12 @@ switch("path", "$config/../isonim-render-serve/src")
 # sibling-repo path is resolved here so `nim c` finds the
 # `isonim_tui_serve` top-level facade without a nimble install.
 switch("path", "$config/../isonim-tui-serve/src")
+
+# ELT-M8: WebP-lossless production transport. The codec is the SHIP
+# tier per the ELT-M7 synthesis report. Every launcher built from
+# this repo (cocoa today; gpui / freya / android in subsequent
+# milestones) compiles the W-packet adapter in unconditionally. The
+# bridge selects W per frame when ``--encoder webp`` (or
+# ``--encoder auto``) is on the launcher CLI; without the define
+# the W path silently degrades to V (or F).
+switch("define", "withCodecWebP")

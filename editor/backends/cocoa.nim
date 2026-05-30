@@ -126,12 +126,20 @@ when defined(macosx):
       # path. ``selectEncoderKind`` degrades automatically when
       # VideoToolbox is unreachable so the launcher never has to gate
       # on ``when defined(macosx)``.
+      #
+      # ELT-M8: ``--encoder webp`` (and ``--encoder auto``) resolve to
+      # ``ekWebP``; the bridge's per-frame transport selector handles
+      # the W / V / F switching from there. The H.264 handle is
+      # constructed even on the WebP path so the bridge can fall back
+      # to V on animated frames per the ELT-M7 synthesis report's
+      # "static UI → W, animation → V, first paint → F" policy.
       let encoderKind = resolveEncoderKind(cfg)
       var encoderHandle: H264EncoderHandle = nil
-      if encoderKind == ekH264:
+      if encoderKind == ekH264 or
+         (encoderKind == ekWebP and isHardwareEncoderAvailable()):
         encoderHandle = newH264EncoderHandle(dynamicW, dynamicH,
                                               cfg.bitrate)
-        if encoderHandle == nil:
+        if encoderHandle == nil and encoderKind == ekH264:
           # Hardware encoder construction failed at the last mile
           # (rare — selectEncoderKind already probed the host). Surface
           # the degradation so the launcher transcript shows the
@@ -139,7 +147,10 @@ when defined(macosx):
           echo "[cocoa launcher] VideoToolbox encoder init failed; ",
                "falling back to raw RGBA F-packet path."
       let resolvedEncoder =
-        if encoderHandle != nil: ekH264 else: ekRawRgba
+        case encoderKind
+        of ekWebP: ekWebP
+        of ekH264: (if encoderHandle != nil: ekH264 else: ekRawRgba)
+        of ekRawRgba: ekRawRgba
 
       runDemoBridgeWith(cfg, src.toAny(), provider,
                         storySink.toAnyInputSink(),
