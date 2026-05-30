@@ -506,9 +506,21 @@ proc taskList*(r: FreyaRenderer; vm: TaskAppVM): FreyaElement =
   r.setAttribute(listNode, "class", "task-list")
   r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
   r.setAttribute(listNode, ElementKindAttr, "list")
-  # Round-4: span the wrapper width so each row's pinned width=100%
-  # paints across the full canvas. The list keeps `padding=0` so the
-  # row-card backgrounds touch the shell's outer padding.
+  # EMC2-M3: opt the list into the synthetic walker's
+  # ``space-around`` justify behaviour. At narrow viewports (Phone
+  # 390x844) the appShell's vertical flex distribution gives the
+  # list ~720 px of height while the three 52-px rows only occupy
+  # ~172 px (plus gaps). Without justify, rows pack at the top
+  # (y=104..260) and the editor's hover-label hit-test resolves
+  # the canvas centre (y=422) to the LIST element for every
+  # jittered cursor sample — the EMC-M4 / FUH-M8 matrix harness
+  # then captures 0 hover-label samples. With ``space-around``
+  # the rows spread across the list height (row #2 lands near
+  # y=432), so the harness's ±40-px jitter crosses between
+  # rows / blank gap → hovered id changes → hover-label style
+  # mutates → MutationObserver fires. Restores hover-null cell
+  # parity with the gpui task_app Phone cell.
+  r.setAttribute(listNode, "data-justify", "space-around")
   r.setStyle(listNode, "flex-direction", "column")
   # Wave-Q: 10-px row gap so rows visibly separate as cards.
   # M-EVP-14 Wave Z' (Z'-4): bump to 14 so the three task rows visibly

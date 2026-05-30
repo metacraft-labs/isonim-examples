@@ -462,6 +462,18 @@ when defined(macosx):
     r.setAttribute(listNode, "class", "task-list")
     r.setAttribute(listNode, ComponentPathAttr, TaskListPath)
     r.setAttribute(listNode, ElementKindAttr, "list")
+    # EMC2-M3: opt the list into the synthetic walker's
+    # ``space-around`` justify behaviour. Mirror of the freya
+    # task_app leaf change — at narrow viewports the list owns
+    # ~700 px of height while three 48-px rows only consume
+    # ~144 px + gaps, leaving the canvas centre in the LIST's
+    # blank space (so every jittered hover sample resolves to
+    # the same id and the MutationObserver records zero samples).
+    # With ``space-around`` the rows spread across the list, so
+    # the EMC-M4 / FUH-M8 matrix harness captures non-null hover
+    # measurements. See spec EMC2-M3 in
+    # ``codetracer-specs/.../Editor-Matrix-Closer-2.milestones.org``.
+    r.setAttribute(listNode, "data-justify", "space-around")
     # Wave-Q: 10-px gap so the row-card backgrounds visibly separate.
     r.setStyle(listNode, "gap", "10")
     r.setStyle(listNode, "flex-direction", "column")
@@ -476,16 +488,23 @@ when defined(macosx):
     # 700-px clamp.
     r.setAttribute(listNode, "data-fixed-width", "700")
     r.setStyle(listNode, "align-self", "center")
-    let listRef = listNode
-    createRenderEffect proc() =
-      let visible = vm.visibleTasks
-      # Per-row main-axis size is 48 px (data-fixed-height on each
-      # row). Inter-row gap is 10 px (visually emitted by the cocoa
-      # adapter — keep in sync with renderTaskRow). The empty-state
-      # placeholder occupies one row's worth.
-      let rowCount = max(visible.len, 1)
-      let listHeight = rowCount * 48 + (rowCount - 1) * 10 + 8
-      r.setAttribute(listRef, "data-fixed-height", $listHeight)
+    # EMC2-M3: previously the list reactively pinned its own
+    # ``data-fixed-height`` to the rows-plus-gaps content size so
+    # the appShell's vertical-stack heuristic could lay the
+    # children out tightly with any leftover space landing as
+    # background at the bottom (Wave Y-3 fix for the round-17
+    # "~300-px dead band between last row and summary" reviewer
+    # finding). With EMC2-M3's ``data-justify="space-around"`` on
+    # the list, the rows now spread across the list's full
+    # allocated height instead — at Phone (390x844) that puts row
+    # #2 near the canvas centre (y~422) where the editor's
+    # hover-label hit-test can resolve different jittered cursor
+    # samples to different rows. The previous content-tight list
+    # left the centre as blank list area (every sample resolved
+    # to the LIST itself, zero hover-label samples captured).
+    # Drop the dynamic ``data-fixed-height`` so the list becomes
+    # the appShell's flex child again; the EMC2-M3 walker change
+    # then distributes the rows with even surrounding space.
     s.listNode = listNode
 
     # `CocoaElement = Id = distinct pointer` — the nil sentinel is
