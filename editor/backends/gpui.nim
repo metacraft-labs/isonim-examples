@@ -129,9 +129,19 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
     let captTaskVm = taskAppVm
     let captSettingsVm = settingsAppVm
     let demoIsSettings = cfg.demo == "settings"
+    let captSrc = src
     let mountFn = proc(storyId: string; properties: JsonNode)
                   {.closure, gcsafe.} =
       {.cast(gcsafe).}:
+        # ERV-M3: bump the shim's render-generation counter BEFORE
+        # mutating the VM. Any GPUI render that is in flight on the
+        # shim's worker thread was submitted against the prior tree
+        # state; without the bump those bytes would be returned to
+        # the bridge and the user would see the previous story
+        # painted for one or more ticks (the bug ERV-M3 fixes).
+        # See ``gpui_adapter.bumpStoryGeneration`` for the
+        # contract.
+        captSrc.bumpStoryGeneration()
         if demoIsSettings:
           applySettingsStory(captSettingsVm, storyId)
         else:
@@ -139,6 +149,10 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
     let applyFn = proc(target, key: string; value: JsonNode;
                        scope: MutationScope) {.closure, gcsafe.} =
       {.cast(gcsafe).}:
+        # ERV-M3: ``apply-mutation`` events also mutate the VM and
+        # therefore the shadow tree. Bump for the same reason as
+        # ``mountFn`` above.
+        captSrc.bumpStoryGeneration()
         if demoIsSettings:
           applySettingsMutation(captSettingsVm, target, key, value, scope)
         else:
