@@ -1,0 +1,16 @@
+# Cross-repo siblings cloned by setup-dev-env at workspace-lock-pinned
+# revisions (see codetracer-specs/Testing/Cross-Repo-CI-Integration.md).
+isonim
+isonim-android
+isonim-cocoa
+isonim-freya
+isonim-gpui
+isonim-render-serve
+isonim-tui
+isonim-tui-serve
+nim-acp
+nim-agent-harbor
+nim-agents
+nim-everywhere
+nim-pty
+nim-termctl
