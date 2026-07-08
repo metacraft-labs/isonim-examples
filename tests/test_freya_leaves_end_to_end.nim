@@ -87,14 +87,18 @@ suite "EX-M4: Freya leaves drive the canonical core through the real shim":
     check vm.activeCount == 3
     check vm.completedCount == 0
     check childCount(s.listNode) == 3
-    # First row's toggle marker reads "[ ]"; the label span carries the
+    # First row's toggle marker reads "☐"; the label span carries the
     # task name. We probe via `textContent` on the row (which dumps the
     # full subtree text).
     let row0 = nthChild(s.listNode, 0)
     check row0 != nil
     check getAttribute(row0, "data-task-id") == "1"
     check "buy milk" in textContent(row0)
-    check "[ ]" in textContent(row0)
+    # The Freya leaves' Round-10 "designed checkbox" renders a hollow `☐`
+    # for the off state and a filled `✓` for the on state (see
+    # `task_app/freya/leaves.nim`'s `marker` — a deliberate visual
+    # affordance distinct from the TUI flavour's ASCII `[ ]`/`[x]`).
+    check "☐" in textContent(row0)
     # Summary reads "3 of 3 remaining".
     check "3 of 3 remaining" in textContent(s.summaryNode)
 
@@ -108,12 +112,12 @@ suite "EX-M4: Freya leaves drive the canonical core through the real shim":
     check vm.tasks.data.val[0].completed == true
     check vm.activeCount == 2
     check vm.completedCount == 1
-    # After re-render, the matching row carries the [x] marker and the
-    # "completed" class.
+    # After re-render, the matching row carries the on-state `✓` marker
+    # and the "completed" class.
     let row0After = nthChild(s.listNode, 0)
     check row0After != nil
     check getAttribute(row0After, "class") == "completed"
-    check "[x]" in textContent(row0After)
+    check "✓" in textContent(row0After)
     check "2 of 3 remaining" in textContent(s.summaryNode)
 
     # ── 3. Switch filter to Active via the second filter button.
@@ -126,11 +130,12 @@ suite "EX-M4: Freya leaves drive the canonical core through the real shim":
     check getAttribute(s.filterButtons[1], "class") == "selected"
     check getAttribute(s.filterButtons[2], "class") == ""
     check getAttribute(s.filterButtons[1], "aria-pressed") == "true"
-    # Every visible row is active (no [x] marker).
+    # Every visible row is active (off-state `☐` marker, never the
+    # on-state `✓`).
     for i in 0 ..< childCount(s.listNode):
       let row = nthChild(s.listNode, i)
-      check "[x]" notin textContent(row)
-      check "[ ]" in textContent(row)
+      check "✓" notin textContent(row)
+      check "☐" in textContent(row)
 
     # ── 4. Switch filter to Completed; only the toggled task shows.
     fireEvent(s.filterButtons[2], "click")
@@ -138,7 +143,7 @@ suite "EX-M4: Freya leaves drive the canonical core through the real shim":
     check vm.visibleTasks.len == 1
     check childCount(s.listNode) == 1
     let onlyRow = nthChild(s.listNode, 0)
-    check "[x]" in textContent(onlyRow)
+    check "✓" in textContent(onlyRow)
     check "buy milk" in textContent(onlyRow)
     check getAttribute(s.filterButtons[2], "class") == "selected"
 
