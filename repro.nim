@@ -221,33 +221,25 @@
 ##       - ``test_android_launcher_device_only`` (``adb devices`` gate)
 ##       - ``test_android_launcher_element_tree`` (``adb`` device + launcher)
 ##
-## (C) **``test_freya_leaves_end_to_end`` — monitor-shim reactive-core SEGV
-##     (1).** This test COMPILES cleanly and, run DIRECTLY (un-monitored,
-##     even with a fully sanitised ``env -i`` environment), PASSES both
-##     subtests to exit 0 — including the refreshed ``☐`` / ``✓`` checkbox
-##     assertions (the product-fix note below). But under reprobuild's
-##     EXECUTE edge — which ``LD_PRELOAD``s ``librepro_monitor_shim.so`` to
-##     trace file I/O — it DETERMINISTICALLY (3/3) SEGVs during setup, BEFORE
-##     any assertion runs, deep inside isonim's reactive core: the gdb
-##     backtrace is ``runTaskApp`` → ``buildTaskApp`` → ``taskList`` →
-##     ``createComputation`` → ``visibleTasks`` (a computed signal) →
-##     ``trackRead`` (nil read). The crash is NOT in the Freya Rust shim
-##     (which loads fine — the sibling ``isonim-freya`` tests that construct a
-##     ``FreyaRenderer`` run the same shim) and NOT in the refreshed
-##     assertions (it faults in ``runTaskApp`` setup, well before them). It is
-##     a monitor-``LD_PRELOAD``-perturbed nil read in isonim's reactive graph
-##     that this specific Freya composition-root path trips while the sibling
-##     ``FreyaRenderer``-constructing parity tests
-##     (``test_vm_parity_across_renderers`` /
-##     ``test_settings_parity_across_renderers`` — both MODELLED + green under
-##     the monitor) do not. Chasing it would be an isonim reactive-core
-##     investigation (a repo I must NOT edit here); the test itself is sound
-##     (green un-monitored). Deferred as a reprobuild-monitor × isonim-
-##     reactive-core runtime interaction, NOT weakened. The BUILD edge (the
-##     compile) is still exercised via ``test_settings_parity`` /
-##     ``test_vm_parity`` which import the same freya renderer + composition
-##     roots, so the Freya leaves' COMPILE surface stays covered.
-##       - ``test_freya_leaves_end_to_end`` (monitor-shim reactive-core SEGV)
+## (C) **``test_freya_leaves_end_to_end`` — RESOLVED + RE-INCLUDED.** This test
+##     formerly SEGV'd under reprobuild's EXECUTE edge (which ``LD_PRELOAD``s
+##     ``librepro_monitor_shim.so``) deep in isonim's reactive core
+##     (``runTaskApp`` → ``buildTaskApp`` → ``taskList`` → ``createComputation``
+##     → ``visibleTasks`` → ``trackRead`` nil read), though it passed cleanly
+##     un-monitored. That SEGV was the old monitor-shim x86-64 syscall-scanner
+##     defect (the INT3 syscall-trap patcher mis-identifying a ``0f 05`` byte
+##     pair inside a ``call``/``jmp rel32`` displacement — the rmdir-rel32
+##     SIGILL class) perturbing the reactive graph, NOT an isonim bug. That
+##     defect is now durably fixed in ``nim-stackable-hooks`` (the hardened
+##     ``looksLikeLinuxX8664Syscall`` / ``visitLinuxX8664SyscallMemory`` rel32
+##     guard) and the reprobuild flake pin is bumped to the hardened rev.
+##     Re-assessed under the HARDENED shim: the test now passes both subtests to
+##     exit 0 under an ``LD_PRELOAD`` of the freshly-built hardened
+##     ``librepro_monitor_shim.so`` (``[OK] scripted scenario …`` / ``[OK]
+##     render plan …``), identical to its standalone (un-monitored) exit-0 run —
+##     no SEGV. It is therefore RE-INCLUDED in ``testStems`` above and runs
+##     green under the reprobuild EXECUTE edge. NOT weakened — every structural
+##     + count + designed-checkbox-glyph assertion runs.
 ##
 ## All OTHER top-level ``tests/test_*.nim`` are MODELLED + green: the
 ## shared-VM / async-fake-time cores, the settings + task_app cross-renderer
@@ -303,14 +295,15 @@ let freyaShimRpath =
 
 # The HEADLESS-runnable native corpus — every top-level ``tests/test_*.nim``
 # in the ``Justfile`` ``tests`` list MINUS the six launcher-subprocess
-# frame-streaming tests, the two Android device tests, and the one
-# monitor-shim reactive-core SEGV (``test_freya_leaves_end_to_end``) deferred
-# per the module docstring (sets A / B / C) = 28 modelled files. Each
-# compiles + runs to exit 0 under the reprobuild EXECUTE edge (monitor-shim
-# ``LD_PRELOAD``) with the default matrix flags (``--mm:orc
-# -d:release --threads:on``); the ``*_macos_only`` / ``*_android_only`` /
-# cocoa ``*_launcher_element_tree`` files self-``skip()`` / compile to an
-# empty shell via their ``when defined(<os>)`` guards (verified exit 0).
+# frame-streaming tests (set A) and the two Android device tests (set B),
+# per the module docstring = 29 modelled files. (``test_freya_leaves_end_to_end``,
+# formerly set C, is now RE-INCLUDED — the monitor-shim scanner defect that
+# caused its reactive-core SEGV is durably fixed.) Each compiles + runs to
+# exit 0 under the reprobuild EXECUTE edge (monitor-shim ``LD_PRELOAD``) with
+# the default matrix flags (``--mm:orc -d:release --threads:on``); the
+# ``*_macos_only`` / ``*_android_only`` / cocoa ``*_launcher_element_tree``
+# files self-``skip()`` / compile to an empty shell via their
+# ``when defined(<os>)`` guards (verified exit 0).
 const testStems: seq[string] = @[
   # ---- shared-VM / async-fake-time cores ----
   "test_vm_round_trip",
@@ -325,10 +318,13 @@ const testStems: seq[string] = @[
   # ---- task_app per-renderer leaves end-to-end ----
   "test_tui_leaves_end_to_end",
   "test_gpui_leaves_end_to_end",
-  # NOTE: ``test_freya_leaves_end_to_end`` is DEFERRED (set (C) below) — it
-  # deterministically SEGVs in isonim's reactive-core ``trackRead`` path
-  # under reprobuild's monitor-shim ``LD_PRELOAD``, though it passes cleanly
-  # un-monitored. See the DEFERRED section.
+  # ``test_freya_leaves_end_to_end`` is RE-INCLUDED: the reactive-core
+  # ``trackRead`` SEGV that formerly appeared only under reprobuild's
+  # monitor-shim ``LD_PRELOAD`` was the old monitor-shim x86-64 syscall-scanner
+  # defect (now durably fixed in ``nim-stackable-hooks``; reprobuild flake pin
+  # bumped). Under the fixed shim it runs the real Freya composition root
+  # through the sibling Rust shim and passes every subtest.
+  "test_freya_leaves_end_to_end",
   # ---- cross-compile GATE tests (nim check --os:<other> over a fixture) ----
   "test_cocoa_leaves_compile",     # nim check --os:macosx
   "test_android_leaves_compile",   # nim check --os:android -d:mockJni
