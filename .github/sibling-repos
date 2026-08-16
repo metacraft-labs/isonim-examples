@@ -12,5 +12,9 @@ nim-acp
 nim-agent-harbor
 nim-agents
 nim-everywhere
+# Transitive deps isonim re-exports; config.nims adds
+# `../nim-stew` and `../nim-faststreams` but this list omitted them.
+nim-faststreams
+nim-stew
 nim-pty
 nim-termctl

@@ -12,10 +12,34 @@ alias fmt := format
 src-paths := "--path:tests"
 nim-flags := "--styleCheck:usages --styleCheck:error"
 
+# Tests that require a real Android device or emulator reachable over
+# `adb`. Both hard-fail (deliberately — see each file's header and
+# `feedback_real_environment_tests.md`) when `adb devices` reports no
+# device: "a missing adb device is a real test environment defect, not
+# a skip-worthy condition".
+#
+# They are NOT weakened here and their bodies are untouched. They are
+# lifted out of the default `tests` list so the hard failure fires on a
+# lane that DECLARES an attached device (`just test-android-device`,
+# wired to the `ANDROID_DEVICE_RUNNER` repository variable in ci.yml)
+# instead of on every host lane, where it is the environment and not the
+# code under test that is missing. `repro.nim` already classifies these
+# same two files as a real-device env-block.
+#
+# Until CI never actually compiled anything this distinction was
+# invisible: the recipes pipe into `tee`, just's default shell had no
+# pipefail, and the whole suite reported success regardless. With
+# `set shell := [... -e ... pipefail ...]` above, the FIRST failing test
+# aborts the loop — and `test_android_launcher_*` sorts near the top, so
+# leaving them in the default list would hide every other result behind
+# a missing emulator.
+android-device-tests := "tests/test_android_launcher_device_only.nim tests/test_android_launcher_element_tree.nim"
+
 # Test list — every top-level `tests/test_*.nim` (helpers under
 # `tests/helpers/` are libraries, not tests, and intentionally
-# excluded by anchoring the glob at the `tests/` root).
-tests := `find tests -maxdepth 1 -type f -name 'test_*.nim' | sort | tr '\n' ' '`
+# excluded by anchoring the glob at the `tests/` root), minus the
+# device-gated files above.
+tests := `find tests -maxdepth 1 -type f -name 'test_*.nim' ! -name 'test_android_launcher_device_only.nim' ! -name 'test_android_launcher_element_tree.nim' | sort | tr '\n' ' '`
 
 build:
     @mkdir -p test-logs
@@ -27,6 +51,19 @@ build:
     done
 
 test: test-orc test-async-perf-matrix
+
+# Android device lane. Runs the two `adb`-gated tests with their hard
+# failure intact: with no device attached this recipe FAILS, which is
+# exactly what the tests' authors asked for. CI wires it to a runner
+# declared via the `ANDROID_DEVICE_RUNNER` repository variable; locally,
+# run it with an emulator or handset in `adb devices`.
+test-android-device:
+    @mkdir -p test-logs
+    @for t in {{android-device-tests}}; do \
+      echo "[android-device] $t"; \
+      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
+          -r $t 2>&1 | tee -a test-logs/test-android-device.log; \
+    done
 
 test-unit:
     @mkdir -p test-logs
