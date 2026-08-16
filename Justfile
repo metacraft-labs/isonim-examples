@@ -12,74 +12,81 @@ alias fmt := format
 src-paths := "--path:tests"
 nim-flags := "--styleCheck:usages --styleCheck:error"
 
-# Tests that require a real Android device or emulator reachable over
-# `adb`. Both hard-fail (deliberately — see each file's header and
-# `feedback_real_environment_tests.md`) when `adb devices` reports no
-# device: "a missing adb device is a real test environment defect, not
-# a skip-worthy condition".
-#
-# They are NOT weakened here and their bodies are untouched. They are
-# lifted out of the default `tests` list so the hard failure fires on a
-# lane that DECLARES an attached device (`just test-android-device`,
-# wired to the `ANDROID_DEVICE_RUNNER` repository variable in ci.yml)
-# instead of on every host lane, where it is the environment and not the
-# code under test that is missing. `repro.nim` already classifies these
-# same two files as a real-device env-block.
-#
-# Until CI never actually compiled anything this distinction was
-# invisible: the recipes pipe into `tee`, just's default shell had no
-# pipefail, and the whole suite reported success regardless. With
-# `set shell := [... -e ... pipefail ...]` above, the FIRST failing test
-# aborts the loop — and `test_android_launcher_*` sorts near the top, so
-# leaving them in the default list would hide every other result behind
-# a missing emulator.
-android-device-tests := "tests/test_android_launcher_device_only.nim tests/test_android_launcher_element_tree.nim"
 
 # Test list — every top-level `tests/test_*.nim` (helpers under
 # `tests/helpers/` are libraries, not tests, and intentionally
-# excluded by anchoring the glob at the `tests/` root), minus the
-# device-gated files above.
-tests := `find tests -maxdepth 1 -type f -name 'test_*.nim' ! -name 'test_android_launcher_device_only.nim' ! -name 'test_android_launcher_element_tree.nim' | sort | tr '\n' ' '`
+# excluded by anchoring the glob at the `tests/` root).
+tests := `find tests -maxdepth 1 -type f -name 'test_*.nim' | sort | tr '\n' ' '`
 
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 build:
-    @mkdir -p test-logs
-    @echo "isonim-examples has no demo binaries yet - EX-M1+ will add them."
-    @for t in {{tests}}; do \
-      echo "Building $t"; \
-      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
-          -o:test-logs/$(basename $t .nim) $t 2>&1 | tee -a test-logs/build.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    echo "isonim-examples has no demo binaries yet - EX-M1+ will add them."
+    failed=()
+    for t in {{tests}}; do
+      echo "Building $t"
+      if ! nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
+          -o:"test-logs/$(basename "$t" .nim)" "$t" 2>&1 | tee -a test-logs/build.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
 test: test-orc test-async-perf-matrix
 
-# Android device lane. Runs the two `adb`-gated tests with their hard
-# failure intact: with no device attached this recipe FAILS, which is
-# exactly what the tests' authors asked for. CI wires it to a runner
-# declared via the `ANDROID_DEVICE_RUNNER` repository variable; locally,
-# run it with an emulator or handset in `adb devices`.
-test-android-device:
-    @mkdir -p test-logs
-    @for t in {{android-device-tests}}; do \
-      echo "[android-device] $t"; \
-      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
-          -r $t 2>&1 | tee -a test-logs/test-android-device.log; \
-    done
-
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 test-unit:
-    @mkdir -p test-logs
-    @for t in {{tests}}; do \
-      echo "[unit] $t"; \
-      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
-          -r $t 2>&1 | tee -a test-logs/test-unit.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    failed=()
+    for t in {{tests}}; do
+      echo "[unit] $t"
+      if ! nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release -r "$t" 2>&1 | tee -a test-logs/test-unit.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 test-integration:
-    @mkdir -p test-logs
-    @for t in {{tests}}; do \
-      echo "[integration] $t"; \
-      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
-          -r $t 2>&1 | tee -a test-logs/test-integration.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    failed=()
+    for t in {{tests}}; do
+      echo "[integration] $t"
+      if ! nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on -r "$t" 2>&1 | tee -a test-logs/test-integration.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
 test-orc:
     just _matrix orc release on
@@ -131,23 +138,51 @@ test-async-perf-chronos:
 
 test-async-perf-matrix: test-async-perf test-async-perf-asyncdispatch test-async-perf-chronos
 
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 _matrix mm mode threads:
-    @mkdir -p test-logs
-    @for t in {{tests}}; do \
-      echo "[{{mm}}/{{mode}}/threads:{{threads}}] $t"; \
-      nim c {{nim-flags}} {{src-paths}} \
-        --mm:{{mm}} -d:{{mode}} --threads:{{threads}} \
-        -r $t 2>&1 | tee -a test-logs/{{mm}}-{{mode}}-threads-{{threads}}.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    failed=()
+    for t in {{tests}}; do
+      echo "[{{mm}}/{{mode}}/threads:{{threads}}] $t"
+      if ! nim c {{nim-flags}} {{src-paths}} --mm:{{mm}} -d:{{mode}} --threads:{{threads}} -r "$t" 2>&1 | tee -a test-logs/{{mm}}-{{mode}}-threads-{{threads}}.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
 lint: lint-nim lint-nix lint-markdown
 
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 lint-nim:
-    @mkdir -p test-logs
-    @for t in {{tests}}; do \
-      echo "Checking $t"; \
-      nim check {{nim-flags}} {{src-paths}} --mm:orc $t 2>&1 | tee -a test-logs/lint-nim.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    failed=()
+    for t in {{tests}}; do
+      echo "Checking $t"
+      if ! nim check {{nim-flags}} {{src-paths}} --mm:orc "$t" 2>&1 | tee -a test-logs/lint-nim.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
 lint-nix:
     nixfmt --check flake.nix
