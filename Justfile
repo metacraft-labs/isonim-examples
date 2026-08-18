@@ -12,37 +12,81 @@ alias fmt := format
 src-paths := "--path:tests"
 nim-flags := "--styleCheck:usages --styleCheck:error"
 
+
 # Test list — every top-level `tests/test_*.nim` (helpers under
 # `tests/helpers/` are libraries, not tests, and intentionally
 # excluded by anchoring the glob at the `tests/` root).
 tests := `find tests -maxdepth 1 -type f -name 'test_*.nim' | sort | tr '\n' ' '`
 
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 build:
-    @mkdir -p test-logs
-    @echo "isonim-examples has no demo binaries yet - EX-M1+ will add them."
-    @for t in {{tests}}; do \
-      echo "Building $t"; \
-      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
-          -o:test-logs/$(basename $t .nim) $t 2>&1 | tee -a test-logs/build.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    echo "isonim-examples has no demo binaries yet - EX-M1+ will add them."
+    failed=()
+    for t in {{tests}}; do
+      echo "Building $t"
+      if ! nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
+          -o:"test-logs/$(basename "$t" .nim)" "$t" 2>&1 | tee -a test-logs/build.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
 test: test-orc test-async-perf-matrix
 
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 test-unit:
-    @mkdir -p test-logs
-    @for t in {{tests}}; do \
-      echo "[unit] $t"; \
-      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release \
-          -r $t 2>&1 | tee -a test-logs/test-unit.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    failed=()
+    for t in {{tests}}; do
+      echo "[unit] $t"
+      if ! nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release -r "$t" 2>&1 | tee -a test-logs/test-unit.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 test-integration:
-    @mkdir -p test-logs
-    @for t in {{tests}}; do \
-      echo "[integration] $t"; \
-      nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on \
-          -r $t 2>&1 | tee -a test-logs/test-integration.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    failed=()
+    for t in {{tests}}; do
+      echo "[integration] $t"
+      if ! nim c {{nim-flags}} {{src-paths}} --mm:orc -d:release --threads:on -r "$t" 2>&1 | tee -a test-logs/test-integration.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
 test-orc:
     just _matrix orc release on
@@ -94,23 +138,51 @@ test-async-perf-chronos:
 
 test-async-perf-matrix: test-async-perf test-async-perf-asyncdispatch test-async-perf-chronos
 
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 _matrix mm mode threads:
-    @mkdir -p test-logs
-    @for t in {{tests}}; do \
-      echo "[{{mm}}/{{mode}}/threads:{{threads}}] $t"; \
-      nim c {{nim-flags}} {{src-paths}} \
-        --mm:{{mm}} -d:{{mode}} --threads:{{threads}} \
-        -r $t 2>&1 | tee -a test-logs/{{mm}}-{{mode}}-threads-{{threads}}.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    failed=()
+    for t in {{tests}}; do
+      echo "[{{mm}}/{{mode}}/threads:{{threads}}] $t"
+      if ! nim c {{nim-flags}} {{src-paths}} --mm:{{mm}} -d:{{mode}} --threads:{{threads}} -r "$t" 2>&1 | tee -a test-logs/{{mm}}-{{mode}}-threads-{{threads}}.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
 lint: lint-nim lint-nix lint-markdown
 
+# Runs EVERY entry and reports at the end. `set shell := [... -e ...]`
+# above would otherwise abort this loop at the FIRST failing file, hiding
+# every later result behind whichever test happens to sort first --
+# swapping one mask (the pre-pipefail `tee` that discarded exit codes) for
+# another. Failures are collected, not discarded: the recipe still exits
+# non-zero, and it names every file that failed.
 lint-nim:
-    @mkdir -p test-logs
-    @for t in {{tests}}; do \
-      echo "Checking $t"; \
-      nim check {{nim-flags}} {{src-paths}} --mm:orc $t 2>&1 | tee -a test-logs/lint-nim.log; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p test-logs
+    failed=()
+    for t in {{tests}}; do
+      echo "Checking $t"
+      if ! nim check {{nim-flags}} {{src-paths}} --mm:orc "$t" 2>&1 | tee -a test-logs/lint-nim.log; then
+        failed+=("$t")
+      fi
     done
+    if [ ${#failed[@]} -gt 0 ]; then
+      printf '%s\n' "${#failed[@]} file(s) FAILED:" "${failed[@]}" >&2
+      exit 1
+    fi
 
 lint-nix:
     nixfmt --check flake.nix
