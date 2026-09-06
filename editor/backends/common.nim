@@ -15,7 +15,7 @@
 ## globals (callback registry, shim trees) differ per renderer. This
 ## module owns only the CLI parsing + the bridge boot.
 
-import std/[asyncdispatch, os, strutils]
+import std/[asyncdispatch, options, os, strutils]
 
 import isonim_render_serve
 
@@ -161,11 +161,31 @@ proc resolveEncoderKind*(cfg: LauncherConfig): EncoderKind =
       ekRawRgba
   selectEncoderKind(prefer)
 
+proc effectiveEncoderKind*(cfg: LauncherConfig;
+                          explicit: Option[EncoderKind]): EncoderKind =
+  ## Which encoder the bridge should actually run.
+  ##
+  ## An ``explicit`` value from the launcher wins — cocoa and gpui
+  ## post-process ``resolveEncoderKind``'s answer against an H.264
+  ## handle they may or may not have been able to construct, so they
+  ## must be able to override.  Everyone else passes ``none`` and gets
+  ## the user's ``--encoder`` flag honoured.
+  ##
+  ## The ``Option`` is load-bearing.  ``runDemoBridgeWith`` used to
+  ## declare ``encoder: EncoderKind = ekRawRgba``, so a launcher that
+  ## simply did not mention the argument — freya, web, tui, tui_term,
+  ## ios, android: six of the eight — silently forced raw RGBA and
+  ## discarded the flag the CLI had already parsed.  Omission now means
+  ## "ask the CLI", which is the behaviour a launcher author expects
+  ## when they say nothing at all.
+  if explicit.isSome: explicit.get
+  else: resolveEncoderKind(cfg)
+
 proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
                        elementTree: ElementTreeProvider = nil;
                        inputSink: AnyInputSink = nil;
                        capturePath: string = "";
-                       encoder: EncoderKind = ekRawRgba;
+                       encoder: Option[EncoderKind] = none(EncoderKind);
                        encoderHandle: H264EncoderHandle = nil;
                        streamElementTreeDelta: bool = false) =
   ## Boot the WebSocket bridge against an already-constructed frame
@@ -195,6 +215,17 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
   ## reply (ETS-M4), the bridge stays on the legacy full-manifest
   ## path — gate-on-but-no-accept is bit-for-bit identical to the
   ## pre-ETS-M2 wire shape, preserving backward compatibility.
+  ##
+  ## ``encoder`` is an ``Option`` on purpose. Passing ``none`` (which
+  ## is what a launcher that never mentions the argument does) means
+  ## "honour the CLI's ``--encoder``", not "force raw RGBA". The old
+  ## ``EncoderKind = ekRawRgba`` default made six of the eight
+  ## launchers silently discard a flag the CLI had already parsed —
+  ## ``isonim-examples-web --encoder webp`` reported
+  ## ``encoder=raw_rgba`` with no diagnostic. Launchers that must
+  ## override the CLI (cocoa and gpui post-process the resolved kind
+  ## against an H.264 handle) pass ``some(...)`` explicitly.
+  let resolvedEncoder = effectiveEncoderKind(cfg, encoder)
   let sink =
     if inputSink != nil: inputSink
     else: newBufferedInputSink().toAny()
@@ -209,12 +240,12 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
     elementTree: elementTree,
     streamElementTreeDelta: streamElementTreeDelta,
     capturePath: capturePath,
-    encoder: encoder,
+    encoder: resolvedEncoder,
     encoderHandle: encoderHandle,
     encoderWebpCompressionLevel: cfg.webpCompressionLevel)
   let s = newServer(bridgeCfg)
   echo "isonim-examples-", cfg.backend, " demo=", cfg.demo,
     " listening on http://127.0.0.1:", cfg.port,
     " (", source.width, "x", source.height, " @ ", cfg.fps, " fps",
-    ", encoder=", encoderKindName(encoder), ")"
+    ", encoder=", encoderKindName(resolvedEncoder), ")"
   waitFor s.serve()

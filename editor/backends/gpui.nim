@@ -13,7 +13,7 @@
 ## reactive graph repaints the surface in response to VM state
 ## changes.
 
-import std/json
+import std/[json, options]
 
 import isonim_gpui/renderer as gpui_renderer
 import isonim_gpui/bindings as gpui_bindings
@@ -202,7 +202,7 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
     when defined(withElementTreeDelta):
       streamElementTreeDelta = true
     runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink(),
-                      encoder = resolvedEncoder,
+                      encoder = some(resolvedEncoder),
                       encoderHandle = encoderHandle,
                       streamElementTreeDelta = streamElementTreeDelta)
     dispose()

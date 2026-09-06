@@ -12,7 +12,7 @@
 ## Gated entirely `when defined(macosx):`.
 
 when defined(macosx):
-  import std/json
+  import std/[json, options]
 
   import isonim_cocoa/renderer as cocoa_renderer
   import isonim/core/owner
@@ -159,7 +159,7 @@ when defined(macosx):
       runDemoBridgeWith(cfg, src.toAny(), provider,
                         storySink.toAnyInputSink(),
                         capturePath = captureLabel,
-                        encoder = resolvedEncoder,
+                        encoder = some(resolvedEncoder),
                         encoderHandle = encoderHandle,
                         streamElementTreeDelta = streamElementTreeDelta)
       dispose()
