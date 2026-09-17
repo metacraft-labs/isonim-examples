@@ -20,10 +20,28 @@
 ## composition root stays mounted across selects — re-seeding the VM
 ## drives the reactive graph to repaint the harness automatically.
 
+## NH-M1. The mount no longer builds the tree imperatively under a bare
+## `createRoot`: it goes through `isonim_tui`'s `renderTui`, i.e. through
+## `isonim/renderers/native.renderNative`, so the insertion site is a
+## `createRenderEffect` inside the reactive root. That is the seam NH-M2's
+## hot-component proxy needs in order to replace the root component without
+## disposing the root (and with it every signal, resource and cleanup the
+## running demo owns).
+##
+## The accessor is wrapped in `staticNativeRoot` — the direct analogue of web
+## `render()`'s `untrack(proc(): Node = code())`. This is not decoration:
+## MEASURED with a tracked accessor against this exact composition root, the
+## outer effect picks up build-time signal reads and `vm.setInputText` /
+## `vm.setFilter` each rebuild and re-mount the WHOLE tree (render count
+## 1 → 2 → 3), which would invalidate the root handle the frame source, the
+## element-tree provider and the hit-tester all captured. Untracked, the
+## render count stays 1 across the same mutations and every update flows
+## through the leaves' own fine-grained effects, exactly as before NH-M1.
+## `tests/test_render_native_launcher_entry.nim` keeps both halves measured.
+
 import std/json
 
 import isonim_tui
-import isonim/core/owner
 
 import isonim_render_serve
 import isonim_render_serve/adapters/tui_adapter
@@ -55,20 +73,33 @@ proc runTuiDemo(cfg: LauncherConfig) =
     else:
       DefaultRows
 
-  createRoot proc(dispose: proc()) =
+  block:
     let harness = newTerminalTestHarness(cols, rows)
     var taskAppVm: TaskAppVM
     var settingsAppVm: SettingsVM
-    case cfg.demo
-    of "settings":
+    let mountSettings = cfg.demo == "settings"
+    if mountSettings:
       let catalog = buildDemoSettingsCatalog()
       settingsAppVm = newSettingsVM(catalog)
-      discard settings_tui.runSettingsApp(harness, settingsAppVm)
     else:
       taskAppVm = newTaskAppVM()
       seedTaskInboxDefaults(taskAppVm)
-      discard task_tui.runTaskApp(harness, taskAppVm)
-    harness.flush()
+
+    # NH-M1 reactive mount. The two resets reproduce, per branch, exactly what
+    # the previous `runSettingsApp` / `runTaskApp` + `TerminalTestHarness.mount`
+    # pair did: `mount` reset the node-id counter for both demos, and only
+    # `runTaskApp` reset the per-VM task leaves table. They live inside the
+    # accessor so a later re-run (NH-M2) repeats them as the first build did.
+    let capturedTaskVm = taskAppVm
+    let capturedSettingsVm = settingsAppVm
+    let rootHandle = renderTui(harness,
+      staticNativeRoot(proc(): TerminalNode =
+        resetNodeIds()
+        if mountSettings:
+          settings_tui.buildSettingsApp(harness.renderer, capturedSettingsVm)
+        else:
+          resetTuiLeaves()
+          task_tui.buildTaskApp(harness.renderer, capturedTaskVm)))
 
     let capturedHarness = harness
     let bufferGetter = proc(): ScreenBuffer {.closure, gcsafe.} =
@@ -119,7 +150,7 @@ proc runTuiDemo(cfg: LauncherConfig) =
     let storySink = newStoryDispatchSink(mountFn, applyFn,
                                          inner = resizingSink)
     runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink())
-    dispose()
+    rootHandle.dispose()
 
 proc runDemoBridge*(backend: string) =
   let cfg = parseLauncherArgs(backend)

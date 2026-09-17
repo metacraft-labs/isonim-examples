@@ -9,11 +9,25 @@
 ## RS-M12. Wires a `StoryDispatchSink` so the editor's `select-story` /
 ## `apply-mutation` I packets reconfigure the live VM.
 
+## NH-M1. The mount goes through `isonim_freya`'s `renderFreya`, i.e. through
+## `isonim/renderers/native.renderNative`: the root is produced by an accessor
+## invoked inside a `createRenderEffect` within the reactive root, so NH-M2's
+## hot-component proxy can swap the root element without disposing the root.
+## The headless launcher owns the root itself (it feeds it to the frame source
+## and the hit-tester), so the surface step is the `mount` callback;
+## `renderFreyaIntoShimRoot` is the windowed variant that pushes into
+## `freya_set_root_element`.
+##
+## The accessor is wrapped in `staticNativeRoot` (web `render()`'s `untrack`
+## shape) so non-HMR behaviour is unchanged — see the measurement recorded in
+## `editor/backends/tui.nim`'s header and
+## `tests/test_render_native_launcher_entry.nim`.
+
 import std/json
 
 import isonim_freya/renderer as freya_renderer
 import isonim_freya/bindings as freya_bindings
-import isonim/core/owner
+import isonim_freya/reactive_root as freya_reactive_root
 
 import isonim_render_serve
 import isonim_render_serve/adapters/freya_adapter
@@ -36,24 +50,35 @@ proc runFreyaDemo(cfg: LauncherConfig) =
   let w = if cfg.width > 0: cfg.width else: DefaultWidth
   let h = if cfg.height > 0: cfg.height else: DefaultHeight
 
-  createRoot proc(dispose: proc()) =
+  block:
     let r = FreyaRenderer()
-    var root: FreyaElement
     var taskAppVm: TaskAppVM
     var settingsAppVm: SettingsVM
-    case cfg.demo
-    of "settings":
-      freya_bindings.freya_reset_tree()
-      freya_renderer.resetCallbacks()
+    let mountSettings = cfg.demo == "settings"
+    if mountSettings:
       let catalog = buildDemoSettingsCatalog()
       settingsAppVm = newSettingsVM(catalog)
-      root = settings_freya.buildSettingsApp(r, settingsAppVm)
     else:
-      freya_bindings.freya_reset_tree()
-      freya_renderer.resetCallbacks()
       taskAppVm = newTaskAppVM()
       seedTaskInboxDefaults(taskAppVm)
-      root = task_freya.buildTaskApp(r, taskAppVm)
+
+    # NH-M1 reactive mount. The shim-tree / callback-registry resets stay
+    # inside the accessor so a later re-run (NH-M2) repeats them exactly as
+    # the original imperative build did.
+    let capturedTaskVm = taskAppVm
+    let capturedSettingsVm = settingsAppVm
+    var currentRoot: FreyaElement = nil
+    let rootHandle = freya_reactive_root.renderFreya(
+      staticNativeRoot(proc(): FreyaElement =
+        freya_bindings.freya_reset_tree()
+        freya_renderer.resetCallbacks()
+        if mountSettings:
+          settings_freya.buildSettingsApp(r, capturedSettingsVm)
+        else:
+          task_freya.buildTaskApp(r, capturedTaskVm)),
+      NativeRootMount[FreyaElement](proc(node: FreyaElement) =
+        currentRoot = node))
+    let root = currentRoot
 
     var dynamicW = w
     var dynamicH = h
@@ -120,7 +145,7 @@ proc runFreyaDemo(cfg: LauncherConfig) =
       streamElementTreeDelta = true
     runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink(),
                       streamElementTreeDelta = streamElementTreeDelta)
-    dispose()
+    rootHandle.dispose()
 
 proc runDemoBridge*(backend: string) =
   let cfg = parseLauncherArgs(backend)

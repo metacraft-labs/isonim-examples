@@ -13,11 +13,23 @@
 ## reactive graph repaints the surface in response to VM state
 ## changes.
 
+## NH-M1. The mount goes through `isonim_gpui`'s `renderGpui`, i.e. through
+## `isonim/renderers/native.renderNative`: the root is produced by an accessor
+## invoked inside a `createRenderEffect` within the reactive root, so NH-M2's
+## hot-component proxy can swap the root element without disposing the root.
+## GPUI has no ambient root slot, so the surface step is the `mount` callback
+## that republishes the current root to the launcher.
+##
+## The accessor is wrapped in `staticNativeRoot` (web `render()`'s `untrack`
+## shape) so non-HMR behaviour is unchanged — see the measurement recorded in
+## `editor/backends/tui.nim`'s header and
+## `tests/test_render_native_launcher_entry.nim`.
+
 import std/[json, options]
 
 import isonim_gpui/renderer as gpui_renderer
 import isonim_gpui/bindings as gpui_bindings
-import isonim/core/owner
+import isonim_gpui/reactive_root as gpui_reactive_root
 
 import isonim_render_serve
 import isonim_render_serve/adapters/gpui_adapter
@@ -54,24 +66,35 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
   let w = if cfg.width > 0: cfg.width else: DefaultWidth
   let h = if cfg.height > 0: cfg.height else: DefaultHeight
 
-  createRoot proc(dispose: proc()) =
+  block:
     let r = GpuiRenderer()
-    var root: GpuiElement
     var taskAppVm: TaskAppVM
     var settingsAppVm: SettingsVM
-    case cfg.demo
-    of "settings":
-      gpui_bindings.gpui_reset_tree()
-      gpui_renderer.resetCallbacks()
+    let mountSettings = cfg.demo == "settings"
+    if mountSettings:
       let catalog = buildDemoSettingsCatalog()
       settingsAppVm = newSettingsVM(catalog)
-      root = settings_gpui.buildSettingsApp(r, settingsAppVm)
     else:
-      gpui_bindings.gpui_reset_tree()
-      gpui_renderer.resetCallbacks()
       taskAppVm = newTaskAppVM()
       seedTaskInboxDefaults(taskAppVm)
-      root = task_gpui.buildTaskApp(r, taskAppVm)
+
+    # NH-M1 reactive mount. The shim-tree / callback-registry resets stay
+    # inside the accessor so a later re-run (NH-M2) repeats them exactly as
+    # the original imperative build did.
+    let capturedTaskVm = taskAppVm
+    let capturedSettingsVm = settingsAppVm
+    var currentRoot: GpuiElement = nil
+    let rootHandle = gpui_reactive_root.renderGpui(
+      staticNativeRoot(proc(): GpuiElement =
+        gpui_bindings.gpui_reset_tree()
+        gpui_renderer.resetCallbacks()
+        if mountSettings:
+          settings_gpui.buildSettingsApp(r, capturedSettingsVm)
+        else:
+          task_gpui.buildTaskApp(r, capturedTaskVm)),
+      NativeRootMount[GpuiElement](proc(node: GpuiElement) =
+        currentRoot = node))
+    let root = currentRoot
 
     var dynamicW = w
     var dynamicH = h
@@ -205,7 +228,7 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
                       encoder = some(resolvedEncoder),
                       encoderHandle = encoderHandle,
                       streamElementTreeDelta = streamElementTreeDelta)
-    dispose()
+    rootHandle.dispose()
 
 proc runDemoBridge*(backend: string) =
   let cfg = parseLauncherArgs(backend)
