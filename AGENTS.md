@@ -92,7 +92,7 @@ tests/
 flake.nix                               # nix devShell + checks
 Justfile                                # build/test/lint/format
 isonim_examples.nimble                  # single source of truth for version
-AGENTS.md                               # this file (README/CLAUDE symlink)
+AGENTS.md                               # this file (README.md is a symlink to it)
 ```
 
 ## Coding conventions

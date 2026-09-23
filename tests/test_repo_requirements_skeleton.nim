@@ -23,10 +23,12 @@ suite "EX-M0 repo-requirements skeleton":
   test "AGENTS.md exists at repo root":
     check fileExists(repoPath("AGENTS.md"))
 
-  test "CLAUDE.md is a symlink (per repo-requirements)":
+  test "CLAUDE.md is absent (per repo-requirements §7)":
+    # Claude Code reads AGENTS.md itself and a CLAUDE.md shadows it.
+    # `symlinkExists` also catches a dangling symlink.
     let p = repoPath("CLAUDE.md")
-    check fileExists(p)
-    check symlinkExists(p)
+    check not fileExists(p)
+    check not symlinkExists(p)
 
   test "README.md is a symlink to AGENTS.md (matches isonim-tui-serve)":
     let p = repoPath("README.md")
