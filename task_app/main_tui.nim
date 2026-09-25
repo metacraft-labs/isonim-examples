@@ -13,7 +13,7 @@
 ## Migration history: the entire `task_app/` tree (Layer-1 leaves +
 ## Layer-4 composition root) was previously hosted at
 ## `isonim-tui/examples/task_app/`; EX-M2 (see
-## `codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org`)
+## `isonim-specs/isonim-render-stream.status.org`)
 ## promoted it to its canonical location here. Layer-3 VM and Layer-2
 ## view template (consumed via `task_app/core/...`) shipped in EX-M1.
 

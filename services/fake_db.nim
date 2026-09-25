@@ -26,7 +26,7 @@
 ## default.
 ##
 ## EX-M17 spec:
-## `codetracer-specs/Front-Ends/IsoNim/Async-Demo-Story.md`.
+## `isonim-specs/Async-Demo-Story.md`.
 
 import std/[json, options, random, tables]
 

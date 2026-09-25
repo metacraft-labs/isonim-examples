@@ -19,8 +19,8 @@
 ## demo source paths.
 ##
 ## Cross-references:
-##   - spec entry: codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org §EX-M14
-##   - editor chrome: codetracer-specs/Front-Ends/IsoNim/isonim-editor.md §Preview-pane chrome layout
+##   - spec entry: isonim-specs/isonim-render-stream.status.org §EX-M14
+##   - editor chrome: isonim-specs/isonim-editor.md §Preview-pane chrome layout
 ##   - upstream pattern: isonim/examples/wanderlust/stories.nim
 
 import std/strutils

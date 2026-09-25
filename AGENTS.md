@@ -19,7 +19,7 @@ template.
 ## Layered-demo architecture
 
 Every demo follows the four-layer split documented in
-`codetracer-specs/Front-Ends/IsoNim/isonim-cross-platform-architecture.md`.
+`isonim-specs/isonim-cross-platform-architecture.md`.
 Within this repo, the layers are organised on disk so that the shared
 slices live under `<demo>/core/` and the per-platform slices live under
 `<demo>/<platform>/`:
@@ -184,8 +184,8 @@ runs through the real reactive graph.
 ## Specs
 
 - The architecture is governed by
-  [`codetracer-specs/Front-Ends/IsoNim/isonim-cross-platform-architecture.md`](../codetracer-specs/Front-Ends/IsoNim/isonim-cross-platform-architecture.md).
+  [`isonim-specs/isonim-cross-platform-architecture.md`](../isonim-specs/isonim-cross-platform-architecture.md).
 - Per-milestone progress is tracked in
-  [`codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org`](../codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org).
+  [`isonim-specs/isonim-render-stream.status.org`](../isonim-specs/isonim-render-stream.status.org).
 - Repo-level conformance is governed by
   [`metacraft-specs/policies/repo-requirements.md`](../metacraft-specs/policies/repo-requirements.md).

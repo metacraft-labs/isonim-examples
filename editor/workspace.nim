@@ -4,7 +4,7 @@
 ## the RS-M7 streaming-preview module to spawn per-backend bridges.
 ##
 ## EX-M14: documented under the editor-instance milestone in
-## `codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org`.
+## `isonim-specs/isonim-render-stream.status.org`.
 ##
 ## *Per-backend dispatch convention.* This workspace registers one
 ## binary per backend (Web / TUI / GPUI / Freya). Each binary is a

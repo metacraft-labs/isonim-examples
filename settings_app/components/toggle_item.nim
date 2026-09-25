@@ -22,7 +22,7 @@
 ##     for dispatching writes through `vmRef.setToggle(itemId, ...)`.
 ##
 ## EX-M9 milestone reference:
-## `codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org`.
+## `isonim-specs/isonim-render-stream.status.org`.
 
 # Note: imports for `settings_app/core/{types, vm}` and the per-
 # platform leaves module are made by the composition root before this

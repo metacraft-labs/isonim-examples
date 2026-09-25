@@ -19,10 +19,10 @@
 ## without reaching into a parallel schema.
 ##
 ## EX-M8 milestone reference:
-## `codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org`.
+## `isonim-specs/isonim-render-stream.status.org`.
 ##
 ## Cross-platform architecture:
-## `codetracer-specs/Front-Ends/IsoNim/isonim-cross-platform-architecture.md`
+## `isonim-specs/isonim-cross-platform-architecture.md`
 ## §"3-layer alternation".
 
 type

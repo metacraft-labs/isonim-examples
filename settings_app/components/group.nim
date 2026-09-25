@@ -39,10 +39,10 @@
 ## ``toggleLeaf``, ``numberLeaf``, ``choiceLeaf``.
 ##
 ## EX-M9 milestone reference:
-## `codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org`.
+## `isonim-specs/isonim-render-stream.status.org`.
 ##
 ## Cross-platform architecture:
-## `codetracer-specs/Front-Ends/IsoNim/isonim-cross-platform-architecture.md`
+## `isonim-specs/isonim-cross-platform-architecture.md`
 ## §"3-layer alternation".
 
 # Note: imports for `settings_app/core/{types, vm}` and the per-

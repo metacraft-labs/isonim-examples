@@ -12,7 +12,7 @@ strip" lets the user switch which renderer drives the preview.
 
 It is built with IsoNim itself (dogfooding the framework). The
 authoritative design intent lives in
-`codetracer-specs/Front-Ends/IsoNim/isonim-editor.md`.
+`isonim-specs/isonim-editor.md`.
 
 ## Design Goals
 

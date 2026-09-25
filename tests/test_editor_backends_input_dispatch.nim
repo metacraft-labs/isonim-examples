@@ -23,7 +23,7 @@
 ## launchers all rely on.
 ##
 ## Spec: EPP-M7 in
-## ``codetracer-specs/Front-Ends/IsoNim/Editor-Preview-Performance.milestones.org``.
+## ``isonim-specs/Editor-Preview-Performance.milestones.org``.
 
 import std/unittest
 

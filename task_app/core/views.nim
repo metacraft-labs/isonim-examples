@@ -22,7 +22,7 @@
 ## shim that briefly lived in `isonim-tui` for the EX-M1 transition.
 ##
 ## Cross-platform architecture:
-## `codetracer-specs/Front-Ends/IsoNim/isonim-cross-platform-architecture.md`
+## `isonim-specs/isonim-cross-platform-architecture.md`
 ## §"Layer 2 — High-level view".
 
 # Note: imports for `vm` (TaskAppVM, FilterMode) and the renderer/leaves

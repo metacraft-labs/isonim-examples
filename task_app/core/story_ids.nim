@@ -15,7 +15,7 @@
 ## ``item.group & " / " & item.name`` for every task_app story.
 ##
 ## Spec: RS-M12 § *Scope* —
-## ``codetracer-specs/Front-Ends/IsoNim/isonim-render-stream.status.org``.
+## ``isonim-specs/isonim-render-stream.status.org``.
 
 const
   # ---- Pages ----
