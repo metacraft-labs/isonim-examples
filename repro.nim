@@ -272,6 +272,7 @@
 
 import std/os
 import repro_project_dsl
+import repro_dsl_stdlib/foreign_env
 
 # ``ct_test_nim_unittest`` supplies the ``buildNimUnittest.build(...)`` typed
 # tool used by every test BUILD edge and the ``edge.testBinary.run(...)`` UFCS
@@ -351,6 +352,9 @@ const testStems: seq[string] = @[
 
 package isonim_examples:
   defaultToolProvisioning "path"
+
+  devEnv:
+    useFlakeDevShell()
 
   uses:
     # Toolchain floor — the PATH-resolvable binaries the build needs. ``nim``

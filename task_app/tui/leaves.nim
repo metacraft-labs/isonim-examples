@@ -143,9 +143,8 @@ proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   ##
   ## The RadioSet is still constructed (and kept in
   ## `s.filterButtons`) so the headless / playwright tests that drive
-  ## the filter via radio APIs continue to work — the widget is parked
-  ## off-screen via the leaf node tree but unused for visual rendering
-  ## inside the editor preview cell.
+  ## the filter via radio APIs continue to work. Its selection logic is also
+  ## driven by the mounted, focusable text segments below.
   let s = leavesFor(vm)
   let rs = newRadioSet(r, onChange = makeFilterChangeHandler(vm))
   let bAll = newRadioButton(r, "All",       value = "all",
@@ -210,6 +209,22 @@ proc filterBar*(r: TerminalRenderer; vm: TaskAppVM): TerminalNode =
   r.appendChild(lineNode, segCom)
   r.appendChild(lineNode, pad)
   r.appendChild(lineNode, wallR)
+
+  # Keep input on the visible row. The detached RadioSet owns selection
+  # state, but cannot itself participate in the mounted tree's focus chain.
+  proc bindChoice(segment: TerminalNode; button: RadioButtonWidget) =
+    r.setAttribute(segment, "data-focusable", "true")
+    r.setAttribute(segment, "data-filter-value", button.value)
+    r.addEventListener(segment, "keydown", proc(ev: TerminalEvent) =
+      if ev.kind == ekKey and
+          (ev.key.key in ["space", "enter", "return"] or
+           (ev.key.kind == kkChar and ev.key.rune == uint32(' '.ord))):
+        button.requestSelect())
+    r.addEventListener(segment, "click", proc(ev: TerminalEvent) =
+      button.requestSelect())
+  bindChoice(segAll, bAll)
+  bindChoice(segAct, bAct)
+  bindChoice(segCom, bCom)
 
   # The compositor's per-segment fusion only fires when at least one
   # child has a style override. Pin a no-op style on the walls so the

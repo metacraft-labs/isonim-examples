@@ -34,3 +34,6 @@ tests/browser/playwright-report/
 node_modules/
 package-lock.json
 package.json
+
+# Repro local build and environment state.
+/.repro/
