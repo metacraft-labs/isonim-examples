@@ -460,3 +460,8 @@ test-editor-visual-gates: editor-build
           --view $view \
           --out-dir screenshots || exit 1; \
     done
+
+# Entering the dev shell from another git repository must write nothing there.
+# Runs `nix develop`, so it is not part of the in-shell test recipes.
+test-dev-shell:
+    bash tests/test_dev_shell_writes_nothing_elsewhere.sh

@@ -18,6 +18,7 @@ screenshots/
 tests/test_*
 !tests/test_*.nim
 !tests/test_*.cfg
+!tests/test_*.sh
 
 # Nim caches.
 *.dSYM
