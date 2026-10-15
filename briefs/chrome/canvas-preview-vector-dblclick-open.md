@@ -80,7 +80,8 @@ Captured by `editor-screenshot.mjs` view
   - Title text `Vector Editor`.
   - Boolean op buttons (`union`, `subtract`, `intersect`,
     `exclude`).
-  - Save button.
+  - No Save button (saving is automatic); the toolbar carries
+    `data-vector-source-stage` / `data-vector-pending-source-edits`.
 
 ### Correct target
 
@@ -126,7 +127,7 @@ Captured by `editor-screenshot.mjs` view
    expansion + Task Check Icon highlight match the vector editor
    target.
 4. **Toolbar polish** — back button + title + boolean ops +
-   Save form a clean header without crowding.
+   Export SVG form a clean header without crowding.
 5. **Tool palette + properties + layers all rendered** — same
    visual baseline as `vector-editor-empty.md`.
 6. **Usage panel** — if visible, it shows the natural usage

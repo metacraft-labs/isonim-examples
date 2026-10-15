@@ -45,7 +45,7 @@ viewports `wide` and `laptop`: files
 
 ## Design Goals
 
-- The vector editor's chrome (title + boolean ops + Save + Export
+- The vector editor's chrome (title + boolean ops + Export
   SVG) lives in its **own top toolbar** (shell chrome bar is hidden
   for `evVectorEditor` by `shell.nim`).
 - Tool palette runs vertically on the left; properties panel sits
@@ -62,8 +62,9 @@ viewports `wide` and `laptop`: files
 - Tool palette / properties / layers: `bgSidebar` surface, hairline
   borders between sections.
 - Active tool button: accent background; inactive: transparent.
-- Save button: shows pending vs saved state via
-  `data-vector-source-stage`.
+- No Save control: edits are written automatically. The toolbar
+  carries the write state as `data-vector-source-stage` and
+  `data-vector-pending-source-edits`.
 
 ## What is Expected on the Screenshot
 
@@ -76,7 +77,8 @@ viewports `wide` and `laptop`: files
 - A title node reading `Vector Editor`.
 - Boolean op buttons in document order: `union`, `subtract`,
   `intersect`, `exclude` — each with `data-vector-action="<op>"`.
-- A Save button with `aria-label="Save vector source edits"`.
+- No Save button (saving is automatic); the toolbar carries
+  `data-vector-source-stage` / `data-vector-pending-source-edits`.
 
 ### Tool palette (left column)
 
