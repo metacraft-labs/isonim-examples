@@ -67,7 +67,7 @@ proc recvOnePacket(sock: AsyncSocket; state: DecState):
   let fd = AsyncFD(getFd(sock))
   var msg = state.dec.popMessage()
   while not msg.complete:
-    let chunk = await recvSome(fd, 16384)
+    let chunk = await recvSome(fd, RecvChunkBytes)
     if chunk.len == 0: break
     state.dec.feed(chunk)
     msg = state.dec.popMessage()

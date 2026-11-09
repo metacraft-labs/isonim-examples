@@ -62,7 +62,7 @@ proc recvOnePacket(sock: AsyncSocket; state: DecState):
         state.pkt.feedString(msg.payload)
         continue
       let fd = AsyncFD(getFd(sock))
-      let chunk = await recvSome(fd, 16384)
+      let chunk = await recvSome(fd, RecvChunkBytes)
       if chunk.len == 0:
         return (false, '\0', "")
       state.dec.feed(chunk)
