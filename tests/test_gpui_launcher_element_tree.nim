@@ -2,11 +2,12 @@
 ##
 ## Drives the *real* ``build/backends/isonim-examples-gpui`` binary via
 ## ``startProcess``, opens a *real* WebSocket connection to its bridge
-## port, decodes the live F / M / I packet stream, and asserts:
+## port, decodes the live packet stream (M / I plus frames tagged
+## F / W / V, see ``FrameTags``), and asserts:
 ##
 ##   1. The first M is ``hello`` with ``capabilities.elementTree =
-##      true``; an ``element-tree`` M packet arrives before the first F
-##      packet. The manifest's ``elements`` array contains the three
+##      true``; an ``element-tree`` M packet arrives before the first
+##      frame packet. The manifest's ``elements`` array contains the three
 ##      seeded task rows + a filter bar + a summary entry (the
 ##      EX-M23b acceptance baseline).
 ##   2. After ten further frames with no VM action, no further
@@ -37,6 +38,15 @@ const
   ManifestDeadlineMs = 1500
   StateChangeDeadlineMs = 1500
   IdleFrameCount = 10
+
+# The tags a frame can arrive under. The GPUI launcher defaults to
+# ``--encoder auto`` (``editor/backends/gpui.nim``), which resolves to the
+# WebP encoder whenever libwebp is reachable; the bridge then picks a tag
+# per frame: 'W' (WebP), 'V' (video) or 'F' (raw RGBA, still used for the
+# first full frame). Counting only 'F' sees one frame per connection.
+# The tag layouts are documented in isonim-render-serve's ``packet.nim``,
+# ``packet_webp.nim`` and ``packet_video.nim``.
+const FrameTags = {'F', 'W', 'V'}
 
 # ---------------------------------------------------------------------------
 # WS client — hand-rolled, real RFC 6455 framing (mirror of
@@ -181,9 +191,10 @@ suite "EX-M23b / RS-M11b: GPUI launcher element-tree":
                   "elementTree"].getBool == true,
                   "GPUI launcher must advertise capabilities.elementTree=true"
                 helloSeen = true
-          of 'F':
+          of FrameTags:
             doAssert false,
-              "F packet arrived before the first element-tree manifest"
+              "frame packet '" & payload[0] &
+              "' arrived before the first element-tree manifest"
           else: discard
         sock.close()
         raise newException(IOError, "no manifest arrived within deadline")
@@ -234,7 +245,7 @@ suite "EX-M23b / RS-M11b: GPUI launcher element-tree":
                 inc manifestsBeforeFirstFrame
               else:
                 inc manifestsAfterFirstFrame
-          of 'F':
+          of FrameTags:
             inc framesObserved
           else: discard
         sock.close()
@@ -282,7 +293,7 @@ suite "EX-M23b / RS-M11b: GPUI launcher element-tree":
                 inc manifestsAfter
                 if epochTime() - changeAt < postDeadline:
                   break
-          of 'F':
+          of FrameTags:
             inc framesObserved
             if not changeSent and manifestsBefore >= 1 and framesObserved >= 2:
               await sendInputPacket(sock, resizePkt)
