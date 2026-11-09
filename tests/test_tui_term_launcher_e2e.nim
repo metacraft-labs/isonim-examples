@@ -20,45 +20,15 @@
 ## No mocks. The launcher binary IS the producer; this test
 ## exercises the same code path the editor exercises in production.
 
-import std/[asyncdispatch, asyncnet, base64, json, nativesockets, net,
+import std/[asyncdispatch, asyncnet, json, nativesockets, net,
             os, osproc, random, sets, strutils, times, unittest]
 
 import isonim_tui_serve
+import ./helpers/ws_client
 
 const
   ManifestDeadlineMs = 2000
   StorySwitchDeadlineMs = 3000
-
-proc recvSome(fd: AsyncFD; size: int): Future[string] {.async.} =
-  var buf = newString(size)
-  let n = await asyncdispatch.recvInto(fd, addr buf[0], size)
-  if n <= 0: return ""
-  buf.setLen(n)
-  result = buf
-
-proc handshake(s: AsyncSocket; host: string; port: int) {.async.} =
-  let key = encode("0123456789abcdef0123")
-  let req = "GET / HTTP/1.1\r\n" &
-            "Host: " & host & ":" & $port & "\r\n" &
-            "Upgrade: websocket\r\n" &
-            "Connection: Upgrade\r\n" &
-            "Sec-WebSocket-Key: " & key & "\r\n" &
-            "Sec-WebSocket-Version: 13\r\n\r\n"
-  await s.send(req)
-  let fd = AsyncFD(getFd(s))
-  var resp = ""
-  while not resp.contains("\r\n\r\n"):
-    let chunk = await recvSome(fd, 4096)
-    if chunk.len == 0: break
-    resp.add(chunk)
-  doAssert resp.startsWith("HTTP/1.1 101"),
-    "handshake failed: " & resp
-
-proc connectWs(port: int): Future[AsyncSocket] {.async.} =
-  let sock = newAsyncSocket()
-  await sock.connect("127.0.0.1", Port(port))
-  await handshake(sock, "127.0.0.1", port)
-  result = sock
 
 type DecState = ref object
   dec: WsFrameDecoder
@@ -66,6 +36,16 @@ type DecState = ref object
 
 proc newDecState(): DecState =
   DecState(dec: initWsFrameDecoder(), pkt: initPacketParser())
+
+proc connectWs(port: int): Future[tuple[sock: AsyncSocket;
+                                       dec: DecState]] {.async.} =
+  ## Open a WebSocket to the launcher bridge. The decoder comes back
+  ## already holding the frame bytes that arrived together with the
+  ## upgrade response (see ``helpers/ws_client``).
+  let (sock, early) = await connectWsRaw(port)
+  let dec = newDecState()
+  dec.dec.feed(early)
+  result = (sock: sock, dec: dec)
 
 proc recvOnePacket(sock: AsyncSocket; state: DecState):
                    Future[tuple[ok: bool; kind: char;
@@ -196,8 +176,7 @@ suite "RS-M13: tui-term launcher end-to-end":
       let l = launch()
       defer: l.stop()
       proc flow(): Future[TuiElementTreeManifest] {.async.} =
-        let sock = await connectWs(l.port)
-        let dec = newDecState()
+        let (sock, dec) = await connectWs(l.port)
         let start = epochTime()
         while epochTime() - start < (ManifestDeadlineMs.float / 1000.0):
           let r = await recvOnePacket(sock, dec)
@@ -290,8 +269,7 @@ suite "RS-M13: tui-term launcher end-to-end":
         return (manifest: manifest, display: display)
 
       proc flow(): Future[void] {.async.} =
-        let sock = await connectWs(l.port)
-        let dec = newDecState()
+        let (sock, dec) = await connectWs(l.port)
         # Boot manifest + display.
         let boot = await fetchBootAndDisplay(sock, dec)
         check pathSet(boot.manifest).len >= 5
@@ -337,8 +315,7 @@ suite "RS-M13: tui-term launcher end-to-end":
 
       proc drainOneConnection(deadlineMs: int):
                               Future[string] {.async.} =
-        let sock = await connectWs(l.port)
-        let dec = newDecState()
+        let (sock, dec) = await connectWs(l.port)
         var display = ""
         var manifestSeen = false
         let start = epochTime()

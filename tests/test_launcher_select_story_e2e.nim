@@ -27,10 +27,11 @@
 ## mockJni-aware launcher when ``$ISONIM_EXAMPLES_ANDROID_BIN``
 ## points at a mockJni build.
 
-import std/[asyncdispatch, asyncnet, base64, json, nativesockets, net,
+import std/[asyncdispatch, asyncnet, json, nativesockets, net,
             os, osproc, random, sets, strutils, times, unittest]
 
 import isonim_render_serve
+import ./helpers/ws_client
 
 const ManifestDeadlineMs = 1500
 const PostSelectDeadlineMs = 2500
@@ -39,42 +40,21 @@ const PostSelectDeadlineMs = 2500
 # WS plumbing — same shape as the existing launcher tests.
 # ---------------------------------------------------------------------------
 
-proc recvSome(fd: AsyncFD; size: int): Future[string] {.async.} =
-  var buf = newString(size)
-  let n = await asyncdispatch.recvInto(fd, addr buf[0], size)
-  if n <= 0: return ""
-  buf.setLen(n)
-  result = buf
-
-proc handshake(s: AsyncSocket; host: string; port: int) {.async.} =
-  let key = encode("0123456789abcdef0123")
-  let req = "GET / HTTP/1.1\r\n" &
-            "Host: " & host & ":" & $port & "\r\n" &
-            "Upgrade: websocket\r\n" &
-            "Connection: Upgrade\r\n" &
-            "Sec-WebSocket-Key: " & key & "\r\n" &
-            "Sec-WebSocket-Version: 13\r\n\r\n"
-  await s.send(req)
-  let fd = AsyncFD(getFd(s))
-  var resp = ""
-  while not resp.contains("\r\n\r\n"):
-    let chunk = await recvSome(fd, 4096)
-    if chunk.len == 0: break
-    resp.add(chunk)
-  doAssert resp.startsWith("HTTP/1.1 101"),
-    "handshake failed: " & resp
-
-proc connectWs(port: int): Future[AsyncSocket] {.async.} =
-  let sock = newAsyncSocket()
-  await sock.connect("127.0.0.1", Port(port))
-  await handshake(sock, "127.0.0.1", port)
-  result = sock
-
 type DecState = ref object
   dec: WsFrameDecoder
 
 proc newDecState(): DecState =
   DecState(dec: initWsFrameDecoder())
+
+proc connectWs(port: int): Future[tuple[sock: AsyncSocket;
+                                       dec: DecState]] {.async.} =
+  ## Open a WebSocket to the launcher bridge. The decoder comes back
+  ## already holding the frame bytes that arrived together with the
+  ## upgrade response (see ``helpers/ws_client``).
+  let (sock, early) = await connectWsRaw(port)
+  let dec = newDecState()
+  dec.dec.feed(early)
+  result = (sock: sock, dec: dec)
 
 proc recvOnePacket(sock: AsyncSocket; state: DecState):
                    Future[string] {.async.} =
@@ -203,8 +183,7 @@ proc fetchManifestsForStories(l: Launcher; storyIds: seq[string]):
   ## order. The launcher's reactive graph re-seeds on every select,
   ## driving a fresh manifest within the cadence rule's deadline.
   proc flow(): Future[seq[ElementTreeManifest]] {.async.} =
-    let sock = await connectWs(l.port)
-    let dec = newDecState()
+    let (sock, dec) = await connectWs(l.port)
     # Drain through the initial manifest (the default mount) so the
     # next `element-tree` we observe is the post-select one.
     let startBoot = epochTime()
