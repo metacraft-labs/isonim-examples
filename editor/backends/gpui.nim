@@ -25,7 +25,7 @@
 ## `editor/backends/tui.nim`'s header and
 ## `tests/test_render_native_launcher_entry.nim`.
 
-import std/[json, options]
+import std/[json, options, tables]
 
 import isonim_gpui/renderer as gpui_renderer
 import isonim_gpui/bindings as gpui_bindings
@@ -43,6 +43,8 @@ import settings_app/main_gpui as settings_gpui
 
 import ./common
 import ./story_dispatch_demo
+import ./gpui_story_targets
+import ./story_card_gpui
 
 const
   DefaultWidth = 800
@@ -99,13 +101,16 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
     var dynamicW = w
     var dynamicH = h
 
+    # The frame source's root is the tree the launcher currently shows: the
+    # demo's composition root, or a story card (see `mountFn`). Everything that
+    # reads the tree reads `src.root`, so a story switch changes all of them.
     let src = newGpuiFrameSource(r, root, dynamicW, dynamicH)
-    let capturedRoot = root
+    let demoRoot = root
 
     let provider = ElementTreeProvider(
       buildImpl: proc(): ElementTreeManifest {.gcsafe.} =
         {.cast(gcsafe).}:
-          buildGpuiElementTreeManifest(capturedRoot,
+          buildGpuiElementTreeManifest(src.root,
             dynamicW, dynamicH))
 
     # EPP-M7. Compose a real dispatching sink instead of the
@@ -138,13 +143,12 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
     # one with a registered Nim closure (filter pill, task row,
     # add button) handles the click, mutates the VM, and the
     # reactive graph repaints on the next frame.
-    let capturedHitRoot = capturedRoot
     let hitTester = proc(x, y: int): GpuiElement {.gcsafe.} =
       {.cast(gcsafe).}:
-        capturedHitRoot
+        src.root
     let hitChain = proc(x, y: int): seq[GpuiElement] {.gcsafe.} =
       {.cast(gcsafe).}:
-        hitTestPath(capturedHitRoot, dynamicW, dynamicH, x, y)
+        hitTestPath(src.root, dynamicW, dynamicH, x, y)
     let inputAdapter = newGpuiInputSink(hitTester, hitChain)
     let dispatchingSink = newDispatchingLauncherSink(onResize,
                                                      inputAdapter.toAny())
@@ -153,6 +157,10 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
     let captSettingsVm = settingsAppVm
     let demoIsSettings = cfg.demo == "settings"
     let captSrc = src
+    let captDemoRoot = demoRoot
+    # Story cards built so far, by story id. A card is built once; selecting
+    # the same story again only switches the frame source back to it.
+    var storyCards = initTable[string, GpuiElement]()
     let mountFn = proc(storyId: string; properties: JsonNode)
                   {.closure, gcsafe.} =
       {.cast(gcsafe).}:
@@ -165,10 +173,28 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
         # See ``gpui_adapter.bumpStoryGeneration`` for the
         # contract.
         captSrc.bumpStoryGeneration()
-        if demoIsSettings:
-          applySettingsStory(captSettingsVm, storyId)
-        else:
+        # The launcher's own dispatch table decides the target. An id it does
+        # not handle is never shown as the Task App Inbox: a registered story
+        # gets its preview card, and any other id gets the explicit
+        # "not available in GPUI" state.
+        let target = classifyGpuiStory(storyId, demoIsSettings)
+        case target
+        of gstTaskApp:
+          captSrc.root = captDemoRoot
           applyTaskStory(captTaskVm, storyId)
+        of gstSettingsApp:
+          captSrc.root = captDemoRoot
+          applySettingsStory(captSettingsVm, storyId)
+        of gstPreview, gstUnavailable:
+          if storyId notin storyCards:
+            if target == gstPreview:
+              let preview = resolveGpuiPreview(storyId)
+              storyCards[storyId] = storyCardGpui(r, preview.title, preview.bodyText)
+            else:
+              stderr.writeLine "launcher: story \"" & storyId &
+                               "\" is not available in GPUI"
+              storyCards[storyId] = storyUnavailableGpui(r, storyId)
+          captSrc.root = storyCards[storyId]
     let applyFn = proc(target, key: string; value: JsonNode;
                        scope: MutationScope) {.closure, gcsafe.} =
       {.cast(gcsafe).}:

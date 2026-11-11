@@ -12,6 +12,11 @@
 ## .nim file being compiled (e.g. tests/) which is not what we want.
 switch("path", "$config")
 switch("path", "$config/../isonim/src")
+# The isonim repository root, for the wanderlust story registry
+# (`examples/wanderlust/stories`). That registry is the one the isonim
+# editor's web preview resolves page stories through, so the GPUI launcher
+# renders the same story list rather than a copy of it.
+switch("path", "$config/../isonim")
 switch("path", "$config/../nim-everywhere/src")
 switch("path", "$config/../nim-stew")
 switch("path", "$config/../nim-faststreams")
