@@ -187,7 +187,8 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
                        capturePath: string = "";
                        encoder: Option[EncoderKind] = none(EncoderKind);
                        encoderHandle: H264EncoderHandle = nil;
-                       streamElementTreeDelta: bool = false) =
+                       streamElementTreeDelta: bool = false;
+                       frameSourceTag: string = "") =
   ## Boot the WebSocket bridge against an already-constructed frame
   ## source. Launchers call this after they've assembled a real demo
   ## frame source (TUI rasterizer / GPUI adapter / Freya adapter / web
@@ -240,6 +241,7 @@ proc runDemoBridgeWith*(cfg: LauncherConfig; source: AnyFrameSource;
     elementTree: elementTree,
     streamElementTreeDelta: streamElementTreeDelta,
     capturePath: capturePath,
+    frameSourceTag: frameSourceTag,
     encoder: resolvedEncoder,
     encoderHandle: encoderHandle,
     encoderWebpCompressionLevel: cfg.webpCompressionLevel)

@@ -250,10 +250,13 @@ proc runGpuiDemo(cfgIn: LauncherConfig) =
     var streamElementTreeDelta = false
     when defined(withElementTreeDelta):
       streamElementTreeDelta = true
+    # PSZ-M3 note 20: declare the frame source so the editor can label a
+    # synthetic preview. On Linux the GPUI adapter draws the synthetic raster.
     runDemoBridgeWith(cfg, src.toAny(), provider, storySink.toAnyInputSink(),
                       encoder = some(resolvedEncoder),
                       encoderHandle = encoderHandle,
-                      streamElementTreeDelta = streamElementTreeDelta)
+                      streamElementTreeDelta = streamElementTreeDelta,
+                      frameSourceTag = gpuiFrameSourceTag())
     rootHandle.dispose()
 
 proc runDemoBridge*(backend: string) =
