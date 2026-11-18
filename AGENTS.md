@@ -211,6 +211,15 @@ web preview, so sending a prompt, switching conversations, Retry and New
 conversation all work there. `just test-browser-conversation` drives those
 stories in a headless browser.
 
+For agents, `conversation_app/measure_readiness.nim` loads editor states
+under chosen profiles on simulated time and prints every readiness mark as
+JSON, so designs are compared by numbers:
+
+```sh
+nim c -r -d:release conversation_app/measure_readiness.nim \
+  --profiles:instant,4g,slow-3g "--states:Typical (4G),Large (4G)"
+```
+
 `withNetwork(services, profile)` puts any implementation behind a simulated
 connection (`isonim/services/network`: latency, bandwidth, jitter, failure
 rate; presets from `InstantNetwork` to `Slow3GNetwork`). The integration test
