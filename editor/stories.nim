@@ -28,6 +28,8 @@ import std/strutils
 import isonim/editor/types
 import isonim/editor/views/icons as editor_icons
 
+import conversation_app/editor_states
+
 const
   TaskAppSource* = "task_app/core/vm.nim"
   TaskAppViewsSource* = "task_app/core/views.nim"
@@ -43,6 +45,8 @@ const
   EditorChromeIconsVmSource* = "editor_chrome/core/vm.nim"
 
   DemoEditorWorkspaceSource* = "isonim-examples/editor/stories.nim"
+  ConversationAppViewsSource* = "conversation_app/core/views.nim"
+  ConversationAppStatesSource* = "conversation_app/editor_states.nim"
 
 # ---------------------------------------------------------------------------
 # Source-file mapping per story name. Returns the canonical demo-source
@@ -74,6 +78,7 @@ func sourceFileFor*(group, name: string; kind: StoryKind): string =
       case name
       of "Preferences", "Appearance Group", "Editor Group": SettingsAppCatalogSource
       else: SettingsAppCatalogSource
+    of ConversationStoryGroup: ConversationAppViewsSource
     else: TaskAppViewsSource
   of skFoundation:
     case group
@@ -99,6 +104,7 @@ func appOf*(group: string): string =
   if group.startsWith("Task App"): "task_app"
   elif group.startsWith("Settings App"): "settings_app"
   elif group.startsWith("Editor Chrome"): "editor_chrome"
+  elif group.startsWith("Conversation App"): "conversation_app"
   else: ""
 
 # ---------------------------------------------------------------------------
@@ -179,6 +185,20 @@ proc buildDemoStoryGroups*(): seq[StoryGroup] =
                 description: "Tabs-to-spaces, tab width, line endings",
                 kind: skPage, group: "Settings App / Pages"),
     ])
+
+  # The conversation app's pages are mounted live (see
+  # `editor/conversation_mount.nim`): each is the ViewModel over the
+  # stand-in services with the state's parameters and network profile.
+  var conversationItems: seq[StoryItem]
+  for state in conversationEditorStates():
+    conversationItems.add StoryItem(name: state.name,
+      description: state.description, kind: skPage,
+      group: ConversationStoryGroup)
+  groups.add StoryGroup(
+    name: ConversationStoryGroup, kind: skPage, expanded: true,
+    description: "The conversation app over its stand-in services, " &
+      "under different data, failures and network conditions.",
+    items: conversationItems)
 
   # ---- 3. Components -----------------------------------------------------
   groups.add StoryGroup(
@@ -2024,6 +2044,16 @@ func previewDocumentHtmlFor(item: StoryItem; title, body: string;
   result.add renderPreviewContentHtml(item)
   result.add "</main></body></html>"
 
+func conversationDocumentHtml(item: StoryItem; title: string;
+                              platform: Platform): string =
+  ## An empty page for a mounted story: the editor's mount hook renders the
+  ## live screen into its body.
+  "<!doctype html><html><head><meta charset=\"utf-8\"/><title>" & title &
+    "</title><style>html,body{margin:0;height:100%;background:#0F1117}" &
+    "</style></head><body data-backend=\"" & $platform &
+    "\" data-story=\"" & item.group & "/" & item.name &
+    "\" data-mounted-story=\"true\"></body></html>"
+
 proc demoPreviewHook*(story: StoryRef; platform: Platform): ProjectPreview =
   ## Project-owned preview hook for the demo editor. The `platform`
   ## argument carries the currently-selected `PreviewBackend`; the
@@ -2045,7 +2075,11 @@ proc demoPreviewHook*(story: StoryRef; platform: Platform): ProjectPreview =
     sourceLine: 1,
     fixtureName: item.group & "." & item.name,
     renderKind: item.kind.renderKind)
-  let html = previewDocumentHtmlFor(item, title, body, platform)
+  let html =
+    if item.group == ConversationStoryGroup:
+      conversationDocumentHtml(item, title, platform)
+    else:
+      previewDocumentHtmlFor(item, title, body, platform)
   ProjectPreview(
     status: ppsRendered,
     story: resolvedStory,

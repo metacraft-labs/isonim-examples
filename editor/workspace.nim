@@ -19,10 +19,12 @@ import std/os
 import isonim/editor/types
 import isonim/editor/workspace as editor_workspace
 import isonim/editor/streaming_preview
+from isonim/editor/viewmodels import PreviewMountHook
 
 import ./stories
+import ./conversation_mount
 
-export editor_workspace, streaming_preview, stories
+export editor_workspace, streaming_preview, stories, conversation_mount
 
 const
   DemoEditorTitle* = "IsoNim Examples Editor"
@@ -134,7 +136,8 @@ proc defaultDemoBuildDir*(): string =
 # ---------------------------------------------------------------------------
 
 proc newDemoEditorWorkspace*(initialPlatform: Platform = pbWeb;
-                              previewHook: ProjectPreviewHook = demoPreviewHook):
+                              previewHook: ProjectPreviewHook = demoPreviewHook;
+                              previewMount: PreviewMountHook = demoPreviewMount):
                               EditorWorkspace =
   ## Build the `EditorWorkspace` the demo editor mounts. Read-only
   ## permissions for EX-M14 — the milestone's edit mode stays
@@ -150,6 +153,7 @@ proc newDemoEditorWorkspace*(initialPlatform: Platform = pbWeb;
     canvasItems = canvas,
     flowSteps = flow,
     previewHook = previewHook,
+    previewMount = previewMount,
     permissions = EditorWorkspacePermissions(
       readSource: true,
       writeSource: false,

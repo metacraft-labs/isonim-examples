@@ -202,6 +202,15 @@ Perceived-performance techniques, each visible in `vm.nim`:
 - readiness marks: `conversations:first`, `conversations`, `transcript` per
   load and `reply:first`, `reply` per prompt (`isonim/services/readiness`).
 
+In the editor (`just editor-serve`, then Pages → "Conversation App / Pages")
+each story is an editor state from `conversation_app/editor_states.nim`:
+typical data under instant, 4G and slow-3G connections, empty, large (500
+conversations backfilled in pages), a failing first screen, and a reply that
+breaks off. `editor/conversation_mount.nim` mounts the live screen into the
+web preview, so sending a prompt, switching conversations, Retry and New
+conversation all work there. `just test-browser-conversation` drives those
+stories in a headless browser.
+
 `withNetwork(services, profile)` puts any implementation behind a simulated
 connection (`isonim/services/network`: latency, bandwidth, jitter, failure
 rate; presets from `InstantNetwork` to `Slow3GNetwork`). The integration test

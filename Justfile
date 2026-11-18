@@ -393,6 +393,12 @@ editor-serve-all: editor-build build-backends
      echo "  launcher logs in /tmp/isonim-launcher-*.log"; \
      node tools/editor-server.mjs
 
+# The conversation app's editor stories, mounted live over the stand-in
+# services. Needs only the editor bundle and its server (no launchers);
+# serves on port 8191. One-time setup: `cd tests/browser && npm ci`.
+test-browser-conversation: editor-build
+    cd tests/browser && npx playwright test -c playwright.config.conversation.ts
+
 # Screenshot all editor views at all sizes -> build/editor/screenshots/.
 editor-screenshot:
     node tools/editor-screenshot.mjs
