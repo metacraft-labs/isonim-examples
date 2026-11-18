@@ -162,6 +162,55 @@ section), the web sidebar+pane (only the active group's items), and
 the GPUI two-column grid (only the active group's items in the right
 column). Cocoa / Android remain visibly disabled on Linux per spec.
 
+## ViewModels over injected services: the conversation app
+
+`conversation_app/` is the reference for writing a ViewModel against
+services it is given, and for designing how fast a screen fills with data
+while the UI is still a prototype. It is a conversation list beside a
+transcript; the assistant's reply to a prompt is a streamed response.
+
+```text
+conversation_app/core/
+  services.nim          # the service interface the ViewModel calls
+  real_service.nim      # the product's service logic (store + language model)
+  standin.nim           # the ONE stand-in, parametric (data, reply, failures)
+  network_services.nim  # the interface behind a simulated connection
+  vm.nim                # the ViewModel
+  views.nim             # the View, generic over the renderer
+```
+
+The same ViewModel runs over four sets of services: the real service in
+the product; a recording mock in unit tests
+(`tests/test_conversation_vm_with_mocks.nim`); the real service with only
+the language model scripted in the headless integration test
+(`tests/test_conversation_headless_integration.nim`); and the stand-in in
+the IsoNim Editor. The stand-in runs the product's own service logic over a
+fixture store, so every control works in a preview: a sent prompt stays in
+the transcript, a new conversation appears in the list. An editor state is
+the stand-in's parameters plus a network profile; it never sets ViewModel
+signals.
+
+Perceived-performance techniques, each visible in `vm.nim`:
+
+- placeholders: skeleton rows and bubbles until data arrives, a typing
+  indicator until the reply's first increment;
+- batching: one `loadInitialScreen` call returns the first page of the list
+  and the first transcript together;
+- initial screen first, then backfill: the rest of the list is fetched in
+  pages after the first screen is up;
+- streaming: the reply is a `ServiceStream[string]` rendered as it grows;
+- readiness marks: `conversations:first`, `conversations`, `transcript` per
+  load and `reply:first`, `reply` per prompt (`isonim/services/readiness`).
+
+`withNetwork(services, profile)` puts any implementation behind a simulated
+connection (`isonim/services/network`: latency, bandwidth, jitter, failure
+rate; presets from `InstantNetwork` to `Slow3GNetwork`). The integration test
+prints the readiness marks per profile as JSON:
+
+```sh
+nim c -r --path:tests tests/test_conversation_headless_integration.nim
+```
+
 ## Testing async ViewModels
 
 The canonical example is `tests/test_async_perf_demo.nim`. Read it to
